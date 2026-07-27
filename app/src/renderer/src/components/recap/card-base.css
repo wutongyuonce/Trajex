@@ -1,0 +1,70 @@
+.card {
+  position: absolute; inset: 0;
+  border-radius: 14px;
+  background: linear-gradient(165deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.015) 100%);
+  border: 1px solid var(--hairline-strong);
+  box-shadow:
+    0 30px 80px rgba(0,0,0,0.5),
+    0 12px 32px rgba(0,0,0,0.3),
+    inset 0 1px 0 rgba(255,255,255,0.08);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.card[data-themed]::before {
+  content: '';
+  position: absolute; pointer-events: none; z-index: 0;
+  width: 60%; height: 50%; bottom: 0; right: 0;
+  background: radial-gradient(ellipse at 100% 100%, var(--tg-mid) 0%, transparent 70%);
+  opacity: 0.6;
+  transition: background var(--theme-ease);
+}
+.card[data-themed]::after {
+  content: '';
+  position: absolute; pointer-events: none; z-index: 0;
+  left: 0; right: 0; bottom: 0; height: 1px;
+  background: linear-gradient(to right, transparent 0%, var(--tg) 50%, transparent 100%);
+  opacity: 0.6;
+  transition: background var(--theme-ease);
+}
+
+.eyebrow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 22px 28px 0;
+  font-family: var(--font-mono); font-size: 12px;
+  color: var(--muted); letter-spacing: 0.01em;
+  position: relative; z-index: 1;
+}
+.eyebrow .diamond {
+  width: 6px; height: 6px;
+  background: var(--tc); transform: rotate(45deg);
+  box-shadow: 0 0 8px var(--tg); flex-shrink: 0;
+  transition: background var(--theme-ease), box-shadow var(--theme-ease);
+}
+.eyebrow-spacer { flex: 1; }
+.eyebrow .slot {
+  color: var(--muted-2); font-variant-numeric: tabular-nums;
+}
+
+.card-title {
+  padding: 18px 36px 6px;
+  font-family: var(--font-serif); font-size: 30px;
+  letter-spacing: -0.015em; font-weight: 500;
+  color: var(--fg); line-height: 1.2;
+  position: relative; z-index: 1;
+}
+.card-deck-text {
+  padding: 0 36px 22px;
+  font-size: 15px; color: var(--fg-3);
+  line-height: 1.55; font-style: italic;
+  font-family: var(--font-serif);
+  position: relative; z-index: 1;
+}
+
+.section-label {
+  font-family: var(--font-serif); font-style: italic;
+  font-size: 13px; color: var(--muted);
+}

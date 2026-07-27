@@ -1,0 +1,101 @@
+{
+  "schema_version": "obelisk.recap.v1",
+  "kind": "weekly",
+  "generated_at": "2026-06-14T03:00:00+08:00",
+
+  "period": {
+    "label": "Week 24",
+    "start": "2026-06-08",
+    "end": "2026-06-14",
+    "timezone": "Asia/Shanghai"
+  },
+
+  "source": {
+    "project": "-Users-tomiya-Code-quiet-zero",
+    "session_ids": ["defd4ccd-b2d7-4c07-a32b-0a7b74e8aace", "9d259960-8eae-4bae-947c-081420bb5626"],
+    "memory_ids": ["mem-1781021027286-51v0qh"]
+  },
+
+  "metrics": {
+    "sessions": 12,
+    "messages": 847,
+    "tokens": 2400000,
+    "active_days": [0.85, 0.92, 0.72, 0.45, 0.88, 0.30, 0],
+    "streak_days": 19,
+    "workflows": 3,
+    "workflow_agents": 42,
+    "corrections": 12
+  },
+
+  "persona": {
+    "archetype": "architect",
+    "title": "The Architect",
+    "claim": "从零设计了一个完整的 memory 系统。",
+    "tone": "affectionate_teasing"
+  },
+
+  "cards": [
+    {
+      "type": "cover",
+      "badge": "Week 24",
+      "title": "The Architect",
+      "claim": "从零设计了一个完整的 memory 系统。",
+      "activity": [0.85, 0.92, 0.72, 0.45, 0.88, 0.30, 0],
+      "footer": "12 sessions · 2.4M tokens"
+    },
+    {
+      "type": "thinking_path",
+      "title": "Five questions, five turns.",
+      "items": [
+        { "day": "Mon", "prompt": "为什么要把 session 编译成 wiki？", "turn": "raw SQLite, no wiki" },
+        { "day": "Tue", "prompt": "buildWhere 是什么", "turn": "unified filter opts, not DSL" },
+        { "day": "Wed", "prompt": "failures() 90% 误报", "turn": "is_error in JSONL" },
+        { "day": "Thu", "prompt": "memory 层需要清理机制吗", "turn": "soft-delete, human-only" },
+        { "day": "Fri", "prompt": "热力图不选中默认显示本月", "turn": "GitHub-style activity timeline" }
+      ]
+    },
+    {
+      "type": "vibe",
+      "title": "A short character study.",
+      "voice_lines": [
+        { "label": "catchphrase", "text": "这太丑了", "count": 4 },
+        { "label": "highest praise", "text": "可以" },
+        { "label": "late night", "text": "你在干什么", "time": "02:47 AM" }
+      ],
+      "meter": {
+        "label": "patience",
+        "value": 0.78,
+        "caption": "saint"
+      },
+      "quote": {
+        "text": "若无必要，勿增实体。",
+        "caption": "your most philosophical moment"
+      }
+    },
+    {
+      "type": "workflow",
+      "title": "Three workflows. Forty-two agents.",
+      "deck": "你召唤了机器军团。结果各有不同。",
+      "stats": "3 workflows · 42 agents",
+      "items": [
+        { "name": "hono-plugin-review", "reaction": "完美" },
+        { "name": "vue-migration", "reaction": "你这页面完全和之前的不一样…" },
+        { "name": "split-render-js", "reaction": "可以" }
+      ],
+      "verdict": "Mostly tolerated."
+    },
+    {
+      "type": "closing",
+      "headline": "19 days",
+      "receipts": ["847 messages exchanged", "12 corrections · 47 approvals"],
+      "most_said_phrase": "好的开始做吧",
+      "signoff": "See you next week."
+    }
+  ],
+
+  "evidence": [
+    { "id": "ev-1", "session_id": "defd4ccd-b2d7-4c07-a32b-0a7b74e8aace", "message_uuid": "some-uuid-1", "summary": "User said '若无必要，勿增实体' when discussing query builder" },
+    { "id": "ev-2", "session_id": "defd4ccd-b2d7-4c07-a32b-0a7b74e8aace", "message_uuid": "some-uuid-2", "summary": "User said '这太丑了' about panel design" },
+    { "id": "ev-3", "summary": "12 corrections vs 47 approvals in session messages" }
+  ]
+}

@@ -1,0 +1,32 @@
+name: CLI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  package:
+    name: Node 22 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build:cli
+      - name: Verify CLI package and runtime contract
+        run: node --experimental-test-module-mocks --test tests/cli-package.test.mjs tests/runtime-cli-envelope.test.mjs tests/runtime.test.mjs
+
+      - name: Verify POSIX bootstrap installer
+        if: runner.os != 'Windows'
+        run: node --test tests/cli-bootstrap-install.test.mjs

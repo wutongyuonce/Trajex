@@ -1,0 +1,24 @@
+{
+  "name": "@obelisk-apps/cli",
+  "version": "0.2.1",
+  "description": "Local Obelisk runtime for coding agents.",
+  "license": "AGPL-3.0",
+  "type": "module",
+  "bin": {
+    "obelisk": "dist/cli/src/obelisk.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

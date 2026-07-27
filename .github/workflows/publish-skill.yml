@@ -1,0 +1,51 @@
+name: Publish Skill
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm ci
+
+      - run: npm run build:skill
+
+      - name: Push to obelisk-skill
+        env:
+          DEPLOY_KEY: ${{ secrets.SKILL_REPO_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_KEY" > ~/.ssh/skill_deploy
+          chmod 600 ~/.ssh/skill_deploy
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/skill_deploy -o StrictHostKeyChecking=no"
+
+          SKILL_DIR=$(mktemp -d)
+          git clone --depth 1 git@github.com:tommy0103/obelisk-skill.git "$SKILL_DIR" || {
+            # First push: init an empty repo
+            git init "$SKILL_DIR"
+            git -C "$SKILL_DIR" remote add origin git@github.com:tommy0103/obelisk-skill.git
+          }
+
+          # Keep repository metadata, then stage the skill under skills/obelisk.
+          bash packaging/stage-skill-repo.sh "$SKILL_DIR"
+
+          cd "$SKILL_DIR"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to publish"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "publish: $(date -u +%Y-%m-%dT%H:%M:%SZ) from tommy0103/obelisk@${GITHUB_SHA::7}"
+          git push --force origin HEAD:main

@@ -1,0 +1,14 @@
+.DS_Store
+plans/
+.skillopt-backups
+node_modules/
+dist-renderer/
+release/
+.dev.docs
+.claude/
+dist/
+app/out/
+HANDOFF.md
+.obelisk/
+app/build/
+app/scripts/

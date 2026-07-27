@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "obelisk": {
+      "source": "tommy0103/obelisk-skill",
+      "sourceType": "github",
+      "skillPath": "skills/obelisk/SKILL.md",
+      "computedHash": "3f8e5bd50cd3bdfe6658243a3379bf4c44379a60bed3c1c946195529db1b8dfd"
+    }
+  }
+}

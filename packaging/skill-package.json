@@ -1,0 +1,6 @@
+{
+  "name": "obelisk-skill",
+  "version": "0.1.0",
+  "description": "Obelisk agent skill documentation for the @obelisk-apps/cli runtime. Built by `npm run build:skill`; sources live in the main repo.",
+  "license": "MIT"
+}

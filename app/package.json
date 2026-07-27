@@ -1,0 +1,88 @@
+{
+  "name": "obelisk",
+  "version": "0.2.1",
+  "description": "Memory management for Obelisk — let Claude Code search its own memory",
+  "homepage": "https://github.com/tommy0103/obelisk",
+  "author": {
+    "name": "Obelisk contributors",
+    "email": "tommy0103@users.noreply.github.com"
+  },
+  "main": "out/main/index.js",
+  "scripts": {
+    "start": "electron-vite preview",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build && electron-builder",
+    "pack": "electron-vite build && electron-builder --dir",
+    "dist": "electron-vite build && electron-builder --mac --win --linux",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:win": "electron-vite build && electron-builder --win",
+    "dist:linux": "electron-vite build && electron-builder --linux",
+    "generate:session-share": "node scripts/generate-session-share.mjs",
+    "verify:icons": "node scripts/verify-icons.mjs",
+    "test:electron": "electron-vite build && electron --no-sandbox tests/electron-concurrency.mjs",
+    "test:electron:timeline": "electron-vite build && electron --no-sandbox tests/electron-session-virtualization.mjs",
+    "test:electron:reader-state": "electron-vite build && electron --no-sandbox tests/electron-session-reader-state.mjs"
+  },
+  "build": {
+    "appId": "com.obelisk.app",
+    "productName": "Obelisk",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "maintainer": "Obelisk contributors <tommy0103@users.noreply.github.com>"
+    },
+    "deb": {
+      "compression": "bzip2"
+    },
+    "files": [
+      "out/**"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../packages/core/src/schema.sql",
+        "to": "scripts/schema.sql"
+      }
+    ]
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "chokidar": "^4.0.3"
+  },
+  "devDependencies": {
+    "@tanstack/vue-virtual": "^3.13.32",
+    "@types/better-sqlite3": "^7.6.13",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "electron-vite": "^5.0.0",
+    "vite": "^6.0.0",
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
+  },
+  "type": "module"
+}

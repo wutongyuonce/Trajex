@@ -1,0 +1,261 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import chokidarModule from 'chokidar';
+
+const DEFAULT_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const DEFAULT_DEBOUNCE_MS = 2000;
+const DEFAULT_STABILITY_MS = 500;
+const DEFAULT_HEARTBEAT_MS = 30000;
+const DEFAULT_WATCH_RETRY_MS = 5000;
+const DEFAULT_DEFERRED_RETRY_MS = 250;
+
+type TimerHandle = ReturnType<typeof setTimeout>;
+
+interface Timers {
+  setTimeout: (fn: () => void, ms?: number) => TimerHandle;
+  clearTimeout: (handle: TimerHandle) => void;
+  setInterval?: (fn: () => void, ms?: number) => TimerHandle;
+  clearInterval?: (handle: TimerHandle) => void;
+}
+
+interface Watcher {
+  close(): unknown;
+}
+
+interface IndexerBuildResult {
+  deferred?: boolean;
+}
+
+type IndexerBuild = (args: {
+  reason?: string;
+  changedPaths?: string[];
+}) => IndexerBuildResult | void | Promise<IndexerBuildResult | void>;
+
+interface IndexerServiceOptions {
+  projectsDir?: string;
+  watchDirs?: string | string[];
+  debounceMs?: number;
+  stabilityMs?: number;
+  heartbeatMs?: number;
+  watchRetryMs?: number;
+  deferredRetryMs?: number;
+  buildIndex?: IndexerBuild;
+  writeHeartbeat?: () => unknown;
+  watchProjects?: (onChange: (changedPath: string) => void) => Watcher | null;
+  chokidar?: any;
+  timers?: Timers;
+  logger?: { warn?: (msg: string) => void };
+}
+
+function createIndexerService({
+  projectsDir = DEFAULT_PROJECTS_DIR,
+  watchDirs = [projectsDir],
+  debounceMs = DEFAULT_DEBOUNCE_MS,
+  stabilityMs = DEFAULT_STABILITY_MS,
+  heartbeatMs = DEFAULT_HEARTBEAT_MS,
+  watchRetryMs = DEFAULT_WATCH_RETRY_MS,
+  deferredRetryMs = DEFAULT_DEFERRED_RETRY_MS,
+  buildIndex,
+  writeHeartbeat = () => {},
+  watchProjects,
+  chokidar,
+  timers = {
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+  },
+  logger = console,
+}: IndexerServiceOptions = {}) {
+  if (typeof buildIndex !== 'function') throw new Error('createIndexerService() requires buildIndex');
+  const watch = watchProjects || ((onChange) => {
+    const roots = [...new Set((Array.isArray(watchDirs) ? watchDirs : [watchDirs]).filter(Boolean))];
+    const existingRoots = roots.filter(root => fs.existsSync(root));
+    if (!existingRoots.length) return null;
+    const watchers: any[] = [];
+    for (const root of existingRoots) {
+      const onFileChange = (filename) => {
+        const name = filename ? String(filename) : '';
+        if (!name || name.endsWith('.jsonl') || name.endsWith('.json')) {
+          onChange(name && !path.isAbsolute(name) ? path.join(root, name) : name);
+        }
+      };
+      const watcher = (chokidar || chokidarModule).watch(root, {
+        cwd: root,
+        ignoreInitial: true,
+        awaitWriteFinish: {
+          stabilityThreshold: Math.max(stabilityMs, 500),
+          pollInterval: 100,
+        },
+        ignored: (targetPath, stats) => {
+          if (stats?.isDirectory()) return false;
+          if (!stats) return false;
+          return !String(targetPath).endsWith('.jsonl') && !String(targetPath).endsWith('.json');
+        },
+      });
+      watcher
+        .on('add', onFileChange)
+        .on('change', onFileChange)
+        .on('unlink', onFileChange)
+        .on('error', (error) => {
+          logger.warn?.(`Obelisk watcher failed: ${(error as Error).message}`);
+        });
+      watchers.push(watcher);
+    }
+    return {
+      close() {
+        return Promise.all(watchers.map(w => Promise.resolve(w.close?.())));
+      },
+    };
+  });
+
+  let buildTimer: TimerHandle | null = null;
+  let stabilityTimer: TimerHandle | null = null;
+  let heartbeatTimer: TimerHandle | null = null;
+  let watchRetryTimer: TimerHandle | null = null;
+  let deferredRetryTimer: TimerHandle | null = null;
+  let watcher: Watcher | null = null;
+  let stopped = false;
+  let running = false;
+  let pending = false;
+  let lastReason: string | null = null;
+  let changedPaths = new Set<string>();
+  let idlePromise = Promise.resolve();
+
+  const addChangedPath = (changedPath?: string | string[]) => {
+    if (Array.isArray(changedPath)) {
+      for (const p of changedPath) addChangedPath(p);
+      return;
+    }
+    const name = changedPath ? String(changedPath) : '';
+    if (name) changedPaths.add(name);
+  };
+
+  const takeChangedPaths = () => {
+    if (!changedPaths.size) return undefined;
+    const paths = [...changedPaths];
+    changedPaths = new Set();
+    return paths;
+  };
+
+  const publishHeartbeat = () => {
+    try {
+      return writeHeartbeat();
+    } catch (error) {
+      logger.warn?.(`Obelisk heartbeat failed: ${(error as Error).message}`);
+      return false;
+    }
+  };
+
+  const runBuildNow = (reason = "manual", paths: string[] | undefined = undefined) => {
+    addChangedPath(paths);
+    if (stopped) return idlePromise;
+    if (running) {
+      pending = true;
+      return idlePromise;
+    }
+    running = true;
+    pending = false;
+    const buildChangedPaths = takeChangedPaths();
+    idlePromise = (async () => {
+      const result = await buildIndex({ reason, changedPaths: buildChangedPaths });
+      if (result?.deferred) {
+        addChangedPath(buildChangedPaths);
+        if (!stopped && !deferredRetryTimer) {
+          deferredRetryTimer = timers.setTimeout(() => {
+            deferredRetryTimer = null;
+            runBuildNow('writer-lease');
+          }, deferredRetryMs);
+        }
+        return;
+      }
+      publishHeartbeat();
+    })()
+      .catch((error) => {
+        // A build in flight when the service is stopped (e.g. a manual rebuild
+        // tears down the worker) is a deliberate cancellation, not a failure.
+        if (!stopped) logger.warn?.(`Obelisk index build failed: ${(error as Error).message}`);
+      })
+      .finally(() => {
+        running = false;
+        if (pending && !stopped) {
+          pending = false;
+          runBuildNow('pending');
+        }
+      });
+    return idlePromise;
+  };
+
+  const scheduleBuild = (reason = "change", changedPath: string | undefined = undefined) => {
+    if (stopped) return;
+    addChangedPath(changedPath);
+    lastReason = reason;
+    if (running) pending = true;
+    if (deferredRetryTimer) timers.clearTimeout(deferredRetryTimer);
+    deferredRetryTimer = null;
+    if (buildTimer) timers.clearTimeout(buildTimer);
+    if (stabilityTimer) timers.clearTimeout(stabilityTimer);
+    buildTimer = timers.setTimeout(() => {
+      buildTimer = null;
+      if (stabilityMs <= 0) {
+        runBuildNow(lastReason || reason);
+        return;
+      }
+      stabilityTimer = timers.setTimeout(() => {
+        stabilityTimer = null;
+        runBuildNow(lastReason || reason);
+      }, stabilityMs);
+    }, debounceMs);
+  };
+
+  const startWatching = () => {
+    if (stopped || watcher) return;
+    watcher = watch((changedPath) => scheduleBuild('watch', changedPath));
+    if (!watcher) {
+      watchRetryTimer = timers.setTimeout(() => {
+        watchRetryTimer = null;
+        startWatching();
+      }, watchRetryMs);
+    }
+  };
+
+  const start = ({ buildOnStart = true } = {}) => {
+    stopped = false;
+    publishHeartbeat();
+    if (buildOnStart) scheduleBuild('startup');
+    startWatching();
+    if (typeof timers.setInterval === 'function') {
+      heartbeatTimer = timers.setInterval(() => {
+        publishHeartbeat();
+      }, heartbeatMs);
+    }
+  };
+
+  const stop = () => {
+    stopped = true;
+    pending = false;
+    if (buildTimer) timers.clearTimeout(buildTimer);
+    buildTimer = null;
+    if (stabilityTimer) timers.clearTimeout(stabilityTimer);
+    stabilityTimer = null;
+    if (watchRetryTimer) timers.clearTimeout(watchRetryTimer);
+    watchRetryTimer = null;
+    if (deferredRetryTimer) timers.clearTimeout(deferredRetryTimer);
+    deferredRetryTimer = null;
+    if (heartbeatTimer && typeof timers.clearInterval === 'function') timers.clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+    if (watcher?.close) watcher.close();
+    watcher = null;
+  };
+
+  return {
+    start,
+    stop,
+    scheduleBuild,
+    runBuildNow,
+    idle: () => idlePromise,
+  };
+}
+
+export { createIndexerService };

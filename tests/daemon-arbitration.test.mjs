@@ -1,0 +1,116 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { acquireWriterLease, writerLockPathFor } from '../packages/core/src/writer-lease.ts';
+import { runCli } from './cli-test-helpers.mjs';
+
+const require = createRequire(import.meta.url);
+const { DatabaseSync } = require('node:sqlite');
+
+test('a passive query does not mutate the index while a fresh daemon owns writes', () => {
+  const home = mkdtempSync(join(tmpdir(), 'obelisk-daemon-arbitration-'));
+  const obeliskDir = join(home, '.obelisk');
+  const dbPath = join(obeliskDir, 'obelisk.sqlite');
+  mkdirSync(obeliskDir, { recursive: true });
+
+  const db = new DatabaseSync(dbPath);
+  db.exec('CREATE TABLE index_state (jsonl_path TEXT PRIMARY KEY, mtime REAL, lines_processed INTEGER)');
+  const marker = db.prepare('INSERT INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)');
+  const now = Date.now();
+  marker.run('__app_heartbeat__', now);
+  db.close();
+
+  const queryPath = join(home, 'query.mjs');
+  writeFileSync(queryPath, "return 'read-only';");
+  const result = runCli(['--query', queryPath], { home });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(JSON.parse(result.stdout), 'read-only');
+
+  const check = new DatabaseSync(dbPath, { readOnly: true });
+  const tables = check.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name);
+  check.close();
+  assert.deepEqual(tables, ['index_state']);
+});
+
+test('attune refuses to mutate the index while a fresh daemon owns writes', () => {
+  const home = mkdtempSync(join(tmpdir(), 'obelisk-daemon-attune-'));
+  const obeliskDir = join(home, '.obelisk');
+  const dbPath = join(obeliskDir, 'obelisk.sqlite');
+  mkdirSync(obeliskDir, { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  db.exec('CREATE TABLE index_state (jsonl_path TEXT PRIMARY KEY, mtime REAL, lines_processed INTEGER)');
+  const marker = db.prepare('INSERT INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)');
+  const now = Date.now();
+  marker.run('__app_heartbeat__', now);
+  db.close();
+
+  const attunePath = join(home, 'attune.mjs');
+  writeFileSync(attunePath, 'return true;');
+  const result = runCli(['--attune', attunePath], { home });
+  assert.equal(result.status, 1);
+  assert.match(JSON.parse(result.stdout).error, /daemon owns index writes/i);
+
+  const check = new DatabaseSync(dbPath, { readOnly: true });
+  const tables = check.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name);
+  check.close();
+  assert.deepEqual(tables, ['index_state']);
+});
+
+test('a passive query stays read-only when another process holds the writer lease', () => {
+  const home = mkdtempSync(join(tmpdir(), 'obelisk-writer-owned-'));
+  const obeliskDir = join(home, '.obelisk');
+  const dbPath = join(obeliskDir, 'obelisk.sqlite');
+  mkdirSync(obeliskDir, { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  db.exec('CREATE TABLE index_state (jsonl_path TEXT PRIMARY KEY, mtime REAL, lines_processed INTEGER)');
+  db.close();
+
+  const lease = acquireWriterLease({
+    lockPath: writerLockPathFor(dbPath),
+    openDb: path => new DatabaseSync(path),
+  });
+  assert.ok(lease);
+  try {
+    const queryPath = join(home, 'query.mjs');
+    writeFileSync(queryPath, "return 'writer-busy';");
+    const result = runCli(['--query', queryPath], { home });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(JSON.parse(result.stdout), 'writer-busy');
+  } finally {
+    lease.release();
+  }
+
+  const check = new DatabaseSync(dbPath, { readOnly: true });
+  const tables = check.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name);
+  check.close();
+  assert.deepEqual(tables, ['index_state']);
+});
+
+test('a passive query fails closed when daemon ownership cannot be read', () => {
+  const home = mkdtempSync(join(tmpdir(), 'obelisk-daemon-ownership-error-'));
+  const obeliskDir = join(home, '.obelisk');
+  const dbPath = join(obeliskDir, 'obelisk.sqlite');
+  mkdirSync(obeliskDir, { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  db.exec('CREATE TABLE index_state (jsonl_path TEXT PRIMARY KEY)');
+  db.close();
+
+  const lease = acquireWriterLease({
+    lockPath: writerLockPathFor(dbPath),
+    openDb: path => new DatabaseSync(path),
+  });
+  assert.ok(lease);
+  try {
+    const queryPath = join(home, 'query.mjs');
+    writeFileSync(queryPath, "return 'ownership-unknown';");
+    const result = runCli(['--query', queryPath], { home });
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(JSON.parse(result.stdout).error, /no such column: mtime/i);
+  } finally {
+    lease.release();
+  }
+});

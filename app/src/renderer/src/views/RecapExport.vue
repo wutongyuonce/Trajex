@@ -11,7 +11,7 @@ import recapJson from '../mock/recap-2026-W24.json';
 
 const route = useRoute();
 const recapData = ref(recapJson);
-window.__OBELISK_RECAP_EXPORT_READY__ = false;
+window.__TRAJEX_RECAP_EXPORT_READY__ = false;
 const cardIdx = computed(() => parseInt(route.query.card) || 0);
 const exportFilename = computed(() => typeof route.query.file === 'string' ? route.query.file : '');
 const archKey = computed(() => route.query.arch || recapData.value.persona?.archetype || recapJson.persona.archetype);
@@ -34,7 +34,7 @@ const cssVars = computed(() => ({
 }));
 
 function setExportReady(value) {
-  window.__OBELISK_RECAP_EXPORT_READY__ = value;
+  window.__TRAJEX_RECAP_EXPORT_READY__ = value;
 }
 
 async function markExportReady() {
@@ -48,8 +48,8 @@ async function loadExportRecap(filename) {
   const seq = ++loadSeq;
   setExportReady(false);
   try {
-    if (filename && window.obelisk?.recapRead) {
-      const data = await window.obelisk.recapRead(filename);
+    if (filename && window.trajex?.recapRead) {
+      const data = await window.trajex.recapRead(filename);
       if (seq === loadSeq && data?.cards?.length) {
         recapData.value = data;
       } else if (seq === loadSeq) {

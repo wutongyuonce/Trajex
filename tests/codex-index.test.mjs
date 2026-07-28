@@ -29,7 +29,7 @@ function evt(type, message, ts) {
 }
 
 function clearDebounce(home) {
-  const db = new DatabaseSync(join(home, '.obelisk', 'obelisk.sqlite'));
+  const db = new DatabaseSync(join(home, '.trajex', 'trajex.sqlite'));
   db.prepare("DELETE FROM index_state WHERE jsonl_path='__last_build__'").run();
   db.close();
 }
@@ -47,7 +47,7 @@ function codexCounts(home) {
 }
 
 test('codex full build then incremental rebuild replaces the total count without duplicates', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-codex-idx-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-codex-idx-'));
   const dir = join(home, '.codex', 'sessions', '2026', '06', '15');
   mkdirSync(dir, { recursive: true });
   const jsonl = join(dir, `rollout-2026-06-15T10-00-00-${ID}.jsonl`);

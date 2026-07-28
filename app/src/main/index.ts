@@ -90,7 +90,7 @@ function getRuntimePaths(persisted = loadPersistedSettings()) {
     providerRegistry,
     claudeDir,
     codexDir,
-    dbPath: path.join(OBELISK_DIR, 'obelisk.sqlite'),
+    dbPath: path.join(TRAJEX_DIR, 'trajex.sqlite'),
     projectsDir: path.join(claudeDir, 'projects'),
   };
 }
@@ -176,7 +176,7 @@ function runAppDbWrite(work: () => void): boolean {
   if (!db) return false;
   const lease = acquireAppWriterLease(getRuntimePaths().dbPath, 250);
   if (!lease) {
-    throw new Error('Obelisk index writer is busy; memory change was not applied');
+    throw new Error('Trajex index writer is busy; memory change was not applied');
   }
   try {
     work();
@@ -192,9 +192,9 @@ function notifyIndexUpdated(result: { affectedSessionIds?: unknown } = {}) {
     : [];
   const payload = { affectedSessionIds };
   for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send('obelisk:index-updated', payload);
+    win.webContents.send('trajex:index-updated', payload);
     for (const sessionId of affectedSessionIds) {
-      win.webContents.send('obelisk:session-updated', { sessionId });
+      win.webContents.send('trajex:session-updated', { sessionId });
     }
   }
 }
@@ -249,7 +249,7 @@ function startBackgroundResources({ runStartupBuild = false } = {}) {
     const service = startIndexerService({ buildOnStart: false });
     if (runStartupBuild) service.runBuildNow('startup');
   }
-  if (!obeliskWatcher) startObeliskWatcher();
+  if (!trajexWatcher) startTrajexWatcher();
 }
 
 async function stopIndexerServiceAndWait({ waitForIdle = true } = {}) {
@@ -266,9 +266,9 @@ async function stopBackgroundResources({ stopWorker = false } = {}) {
     indexerWorker.stop();
     indexerWorker = null;
   }
-  if (obeliskWatcher) {
-    const watcher = obeliskWatcher;
-    obeliskWatcher = null;
+  if (trajexWatcher) {
+    const watcher = trajexWatcher;
+    trajexWatcher = null;
     if (typeof watcher.close === 'function') await Promise.resolve(watcher.close());
   }
   closeDb();
@@ -302,7 +302,7 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL || process.env.OBELISK_DEV_SERVER_URL || 'http://localhost:5173');
+    win.loadURL(process.env.ELECTRON_RENDERER_URL || process.env.TRAJEX_DEV_SERVER_URL || 'http://localhost:5173');
     if (shouldOpenDevTools) {
       win.webContents.openDevTools();
     }
@@ -311,16 +311,16 @@ function createWindow() {
   }
 }
 
-const OBELISK_DIR = path.join(os.homedir(), '.obelisk');
-const RECAP_DIR = path.join(OBELISK_DIR, 'recap');
-let obeliskWatcher: import("chokidar").FSWatcher | null = null;
+const TRAJEX_DIR = path.join(os.homedir(), '.trajex');
+const RECAP_DIR = path.join(TRAJEX_DIR, 'recap');
+let trajexWatcher: import("chokidar").FSWatcher | null = null;
 
-function startObeliskWatcher() {
-  if (obeliskWatcher) return obeliskWatcher;
-  if (!fs.existsSync(OBELISK_DIR)) {
-    fs.mkdirSync(OBELISK_DIR, { recursive: true });
+function startTrajexWatcher() {
+  if (trajexWatcher) return trajexWatcher;
+  if (!fs.existsSync(TRAJEX_DIR)) {
+    fs.mkdirSync(TRAJEX_DIR, { recursive: true });
   }
-  obeliskWatcher = chokidar.watch(OBELISK_DIR, {
+  trajexWatcher = chokidar.watch(TRAJEX_DIR, {
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
     ignored: (p, stats) => {
@@ -329,16 +329,16 @@ function startObeliskWatcher() {
       return !p.endsWith('.md') && !p.endsWith('.json');
     },
   });
-  obeliskWatcher.on('add', onObeliskChange);
-  obeliskWatcher.on('change', onObeliskChange);
-  obeliskWatcher.on('unlink', onObeliskChange);
-  return obeliskWatcher;
+  trajexWatcher.on('add', onTrajexChange);
+  trajexWatcher.on('change', onTrajexChange);
+  trajexWatcher.on('unlink', onTrajexChange);
+  return trajexWatcher;
 }
 
-function onObeliskChange(filePath) {
+function onTrajexChange(filePath) {
   if (filePath.startsWith(RECAP_DIR)) {
     for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('obelisk:recap-updated', filePath);
+      win.webContents.send('trajex:recap-updated', filePath);
     }
   }
 }
@@ -682,7 +682,7 @@ async function waitForExportReady(webContents, timeoutMs = 2500) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     try {
-      const ready = await webContents.executeJavaScript('window.__OBELISK_RECAP_EXPORT_READY__ === true', true);
+      const ready = await webContents.executeJavaScript('window.__TRAJEX_RECAP_EXPORT_READY__ === true', true);
       if (ready) return true;
     } catch {}
     await new Promise(r => setTimeout(r, 50));
@@ -696,7 +696,7 @@ ipcMain.handle('capture:export', async (event, { cardIdx, archetype, filename } 
   const query = buildRecapExportQuery({ cardIdx, archetype, filename });
   const image = await createExportCapture(win, query);
   const { filePath } = await dialog.showSaveDialog(win, {
-    defaultPath: `obelisk-recap-${cardIdx + 1}.png`,
+    defaultPath: `trajex-recap-${cardIdx + 1}.png`,
     filters: [{ name: 'PNG', extensions: ['png'] }],
   });
   if (!filePath) return null;
@@ -733,7 +733,7 @@ ipcMain.handle('recap:read', (_, filename) => {
 
 // --- Settings ---
 
-const SETTINGS_PATH = path.join(OBELISK_DIR, 'settings.json');
+const SETTINGS_PATH = path.join(TRAJEX_DIR, 'settings.json');
 
 function loadPersistedSettings() {
   try {
@@ -743,7 +743,7 @@ function loadPersistedSettings() {
 }
 
 function savePersistedSettings(settings) {
-  if (!fs.existsSync(OBELISK_DIR)) fs.mkdirSync(OBELISK_DIR, { recursive: true });
+  if (!fs.existsSync(TRAJEX_DIR)) fs.mkdirSync(TRAJEX_DIR, { recursive: true });
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
 }
 
@@ -903,7 +903,7 @@ ipcMain.handle('settings:rebuildIndex', async () => {
             writerLeaseMode: writerLease ? 'caller-held' : 'acquire',
           });
         } catch (error) {
-          console.warn?.(`Obelisk DB reopen after rebuild failed: ${(error as Error).message}`);
+          console.warn?.(`Trajex DB reopen after rebuild failed: ${(error as Error).message}`);
         }
       }
     } finally {

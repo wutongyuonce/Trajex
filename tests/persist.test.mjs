@@ -17,7 +17,7 @@ const { DatabaseSync } = require('node:sqlite');
 const SCHEMA = readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
 
 function fixtureUnit() {
-  const dir = mkdtempSync(join(tmpdir(), 'obelisk-persist-'));
+  const dir = mkdtempSync(join(tmpdir(), 'trajex-persist-'));
   const path = join(dir, 'sid-p.jsonl');
   const lines = [
     { type: 'ai-title', aiTitle: 'Persist Session' },

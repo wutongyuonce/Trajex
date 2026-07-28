@@ -20,8 +20,8 @@ class TestDatabase {
 }
 
 test('app indexer persists every provider through one registry-driven loop', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-provider-indexer-'));
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const home = mkdtempSync(join(tmpdir(), 'trajex-provider-indexer-'));
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   const registry = createProviderRegistry([{
     name: 'alpha',
     descriptor: { id: 'alpha', name: 'Alpha', vendor: 'Test', defaultRoot: '/alpha', color: '#123456' },

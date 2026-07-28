@@ -2,12 +2,12 @@
  * Claude Code Provider adapter。
  *
  * 模块定位：发现 ~/.claude 下的主会话、subagent 与 workflow 文件，并把 Claude
- * 私有 JSONL/JSON 语义投影为 TranscriptRecord。它不访问 Obelisk SQLite。
+ * 私有 JSONL/JSON 语义投影为 TranscriptRecord。它不访问 Trajex SQLite。
  */
 // Claude Code provider adapter in Core (see docs/adr/0001).
 //
 // Pure: discovers Claude transcript files and parses one into a record stream.
-// It never touches the Obelisk database. The per-line logic mirrors the original
+// It never touches the Trajex database. The per-line logic mirrors the original
 // indexJsonl exactly, but yields canonical TranscriptRecords instead of writing rows; the shared
 // persist layer consumes them. Session aggregates here reflect only THIS chunk
 // (started_at/ended_at/message_count); persist merges them with any existing row.

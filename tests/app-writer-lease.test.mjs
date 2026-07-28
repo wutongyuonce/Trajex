@@ -23,13 +23,13 @@ class TestDatabase {
 }
 
 test('an app build defers without opening the target database when another writer owns the lease', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-writer-lease-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-writer-lease-'));
   const claudeDir = join(home, '.claude');
   const projectsDir = join(claudeDir, 'projects');
   const projectDir = join(projectsDir, '-tmp-project');
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   mkdirSync(projectDir, { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
+  mkdirSync(join(home, '.trajex'), { recursive: true });
   writeFileSync(join(projectDir, 'session.jsonl'), JSON.stringify({
     uuid: 'message-1',
     type: 'user',
@@ -59,13 +59,13 @@ test('an app build defers without opening the target database when another write
 });
 
 test('a failed force cleanup leaves the existing index intact', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-force-atomic-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-force-atomic-'));
   const claudeDir = join(home, '.claude');
   const projectsDir = join(claudeDir, 'projects');
   const projectDir = join(projectsDir, '-tmp-project');
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   mkdirSync(projectDir, { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
+  mkdirSync(join(home, '.trajex'), { recursive: true });
   writeFileSync(join(projectDir, 'session.jsonl'), JSON.stringify({
     uuid: 'message-1',
     type: 'user',

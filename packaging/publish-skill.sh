@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SKILL_ARTIFACT="dist/obelisk-skill"
-SKILL_REPO="dist/obelisk-skill-repo"
-REMOTE="git@github.com:tommy0103/obelisk-skill.git"
+SKILL_ARTIFACT="dist/trajex-skill"
+SKILL_REPO="dist/trajex-skill-repo"
+REMOTE="git@github.com:tommy0103/trajex-skill.git"
 
 if [ ! -f "$SKILL_ARTIFACT/SKILL.md" ] || [ ! -d "$SKILL_ARTIFACT/references" ]; then
   echo "Error: run 'npm run build:skill' first" >&2

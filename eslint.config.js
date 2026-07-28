@@ -1,4 +1,4 @@
-// Flat ESLint config for the Obelisk root (Core + CLI + packaging + tests).
+// Flat ESLint config for the Trajex root (Core + CLI + packaging + tests).
 // Scope: the root ESM/TS sources, including packages/core/src/ and
 // packages/cli/src/. The Electron app has its own package and toolchain and is
 // intentionally excluded (see docs/adr/0003).
@@ -15,7 +15,7 @@ export default tseslint.config(
       'dist/**',
       'release/**',
       '.dev.docs/**',
-      '.obelisk/**',
+      '.trajex/**',
       '.claude/**',
     ],
   },

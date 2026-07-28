@@ -65,7 +65,7 @@ test('an automatic rollback rethrows the primary error without issuing another r
     error => error === primary,
   );
   assert.equal(rollbackCalls, 0);
-  assert.equal(primary.obelisk.transactionActive, false);
+  assert.equal(primary.trajex.transactionActive, false);
 });
 
 test('an active transaction is rolled back once before the primary error is rethrown', () => {
@@ -87,8 +87,8 @@ test('an active transaction is rolled back once before the primary error is reth
 
   assert.throws(() => runWriteTransaction(db, () => { throw primary; }), error => error === primary);
   assert.equal(rollbackCalls, 1);
-  assert.equal(primary.obelisk.rollbackSucceeded, true);
-  assert.equal(primary.obelisk.transactionActive, false);
+  assert.equal(primary.trajex.rollbackSucceeded, true);
+  assert.equal(primary.trajex.transactionActive, false);
 });
 
 test('an unknown post-error transaction state is unsafe for the next file', () => {
@@ -101,7 +101,7 @@ test('an unknown post-error transaction state is unsafe for the next file', () =
   };
 
   assert.throws(() => runWriteTransaction(db, () => { throw primary; }), error => error === primary);
-  assert.equal(primary.obelisk.transactionActive, null);
+  assert.equal(primary.trajex.transactionActive, null);
   assert.equal(hasUnusableTransaction(primary), true);
 });
 
@@ -119,12 +119,12 @@ test('node:sqlite generic error codes preserve BUSY classification from the mess
     active = false;
     throw primary;
   }), error => error === primary);
-  assert.equal(primary.obelisk.code, 'SQLITE_BUSY');
+  assert.equal(primary.trajex.code, 'SQLITE_BUSY');
   assert.equal(isRetryableWriteFailure(primary), true);
 });
 
 test('a real node:sqlite BEGIN lock is classified as a deferrable BUSY', () => {
-  const dbPath = join(mkdtempSync(join(tmpdir(), 'obelisk-node-sqlite-busy-')), 'index.sqlite');
+  const dbPath = join(mkdtempSync(join(tmpdir(), 'trajex-node-sqlite-busy-')), 'index.sqlite');
   const holder = new DatabaseSync(dbPath);
   const contender = new DatabaseSync(dbPath);
   holder.exec('PRAGMA busy_timeout=0; CREATE TABLE test (value TEXT); BEGIN IMMEDIATE');
@@ -133,7 +133,7 @@ test('a real node:sqlite BEGIN lock is classified as a deferrable BUSY', () => {
   try {
     assert.throws(
       () => runWriteTransaction(nodeSqliteTransactionAdapter(contender), () => {}),
-      error => isBeginBusyFailure(error) && error.obelisk.code === 'SQLITE_BUSY',
+      error => isBeginBusyFailure(error) && error.trajex.code === 'SQLITE_BUSY',
     );
   } finally {
     holder.exec('ROLLBACK');
@@ -160,7 +160,7 @@ test('a BEGIN failure with an active transaction is not deferrable', () => {
 
   assert.throws(() => runWriteTransaction(db, () => {}), error => error === primary);
   assert.equal(rollbackCalls, 1);
-  assert.equal(primary.obelisk.transactionActive, true);
+  assert.equal(primary.trajex.transactionActive, true);
   assert.equal(hasUnusableTransaction(primary), true);
   assert.equal(isBeginBusyFailure(primary), false);
 });

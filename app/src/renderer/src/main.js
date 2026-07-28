@@ -1,4 +1,4 @@
-// Vue 3 application entry point for Obelisk.
+// Vue 3 application entry point for Trajex.
 
 import { createApp } from 'vue';
 import App from './App.vue';
@@ -29,7 +29,7 @@ const globalDataRefresh = createGlobalDataRefreshCoordinator({
 
 function reportGlobalRefreshFailure(request) {
   void request.catch(error => {
-    console.error('Failed to refresh Obelisk catalogues:', error);
+    console.error('Failed to refresh Trajex catalogues:', error);
   });
 }
 
@@ -49,11 +49,11 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-window.obelisk?.onIndexUpdated?.(() => {
+window.trajex?.onIndexUpdated?.(() => {
   reportGlobalRefreshFailure(globalDataRefresh.invalidate());
 });
 
-window.obelisk?.onSessionUpdated?.(({ sessionId } = {}) => {
+window.trajex?.onSessionUpdated?.(({ sessionId } = {}) => {
   const route = router.currentRoute.value;
   const currentSessionId = route.name === 'SessionDetail' ? String(route.params.id || '') : null;
   noteSessionUpdated(sessionLiveState, sessionId, currentSessionId);

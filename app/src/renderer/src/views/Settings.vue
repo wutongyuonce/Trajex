@@ -16,18 +16,18 @@ onMounted(async () => {
 });
 
 async function loadSettings() {
-  if (!window.obelisk?.getSettings) return;
-  const s = await window.obelisk.getSettings();
+  if (!window.trajex?.getSettings) return;
+  const s = await window.trajex.getSettings();
   sources.value = s.sources || [];
   dbPath.value = s.dbPath || '';
-  recapPath.value = s.recapDir || '~/.obelisk/recap';
+  recapPath.value = s.recapDir || '~/.trajex/recap';
   autoRefresh.value = s.autoRefresh !== false;
   memoryCount.value = s.memoryCount || 0;
 }
 
 async function browseSourcePath(source) {
-  if (!window.obelisk?.browseFolder) return;
-  const result = await window.obelisk.browseFolder();
+  if (!window.trajex?.browseFolder) return;
+  const result = await window.trajex.browseFolder();
   if (result) {
     await saveSetting(source.settingKey || `providerRoots.${source.id}`, result);
     await loadSettings();
@@ -35,8 +35,8 @@ async function browseSourcePath(source) {
 }
 
 async function browseRecapPath() {
-  if (!window.obelisk?.browseFolder) return;
-  const result = await window.obelisk.browseFolder();
+  if (!window.trajex?.browseFolder) return;
+  const result = await window.trajex.browseFolder();
   if (result) {
     recapPath.value = result;
     await saveSetting('recapDir', result);
@@ -49,8 +49,8 @@ async function toggleAutoRefresh() {
 }
 
 async function saveSetting(key, value) {
-  if (window.obelisk?.setSetting) {
-    await window.obelisk.setSetting(key, value);
+  if (window.trajex?.setSetting) {
+    await window.trajex.setSetting(key, value);
   }
 }
 
@@ -59,12 +59,12 @@ async function commitRecapPath() {
 }
 
 async function rebuildIndex() {
-  if (rebuilding.value || !window.obelisk?.rebuildIndex) return;
+  if (rebuilding.value || !window.trajex?.rebuildIndex) return;
   rebuilding.value = true;
   await nextTick();
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
-    await window.obelisk.rebuildIndex();
+    await window.trajex.rebuildIndex();
     await loadSettings();
   } finally {
     rebuilding.value = false;
@@ -72,8 +72,8 @@ async function rebuildIndex() {
 }
 
 async function revealDb() {
-  if (window.obelisk?.revealPath) {
-    window.obelisk.revealPath(dbPath.value);
+  if (window.trajex?.revealPath) {
+    window.trajex.revealPath(dbPath.value);
   }
 }
 
@@ -97,7 +97,7 @@ function fmtRelative(iso) {
       <section class="settings-section">
         <div class="settings-section-head">
           <h2>Data Sources</h2>
-          <p>Where Obelisk reads your agent session history.</p>
+          <p>Where Trajex reads your agent session history.</p>
         </div>
 
         <div
@@ -146,7 +146,7 @@ function fmtRelative(iso) {
       <section class="settings-section">
         <div class="settings-section-head">
           <h2>Index location</h2>
-          <p>SQLite database where Obelisk caches the unified session index.</p>
+          <p>SQLite database where Trajex caches the unified session index.</p>
         </div>
         <div class="path-input" style="max-width: 480px;">
           <input class="path-field" type="text" :value="dbPath" spellcheck="false" readonly/>
@@ -158,7 +158,7 @@ function fmtRelative(iso) {
       <section class="settings-section">
         <div class="settings-section-head">
           <h2>Auto-refresh</h2>
-          <p>Obelisk re-reads when new session files appear.</p>
+          <p>Trajex re-reads when new session files appear.</p>
         </div>
         <label class="toggle-label" @click.prevent="toggleAutoRefresh">
           <span class="toggle-track" :class="{ on: autoRefresh }">
@@ -177,7 +177,7 @@ function fmtRelative(iso) {
         <div class="form-row">
           <div>
             <div class="form-label">Recap output directory</div>
-            <div class="form-label-hint">Watched by Obelisk for new <code>recap-*.json</code> files.</div>
+            <div class="form-label-hint">Watched by Trajex for new <code>recap-*.json</code> files.</div>
           </div>
           <div class="form-control">
             <div class="path-input">
@@ -204,7 +204,7 @@ function fmtRelative(iso) {
         <div class="form-row">
           <div class="form-label">Version</div>
           <div class="form-control version-text">
-            Obelisk {{ version }}
+            Trajex {{ version }}
           </div>
         </div>
         <div class="form-row">

@@ -25,9 +25,9 @@ function memoryDb({ projectPath = '/tmp/quiet-zero-test' } = {}) {
     INSERT INTO memories (id, session_id, project, path, summary, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
-  insert.run('mem-1', 'sid-1', 'quiet-zero', '.obelisk/memories/parallel-agents.md', 'Decision: use parallel agents for independent review facets.', '2026-06-09T12:00:00Z');
-  insert.run('mem-2', 'sid-2', 'quiet-zero', '.obelisk/memories/sqlite-memory.md', 'Decision: store markdown memory records in SQLite.', '2026-06-10T12:00:00Z');
-  insert.run('mem-3', 'sid-3', 'other-project', '.obelisk/memories/parallel-agents.md', 'Other project note about parallel agents.', '2026-06-11T12:00:00Z');
+  insert.run('mem-1', 'sid-1', 'quiet-zero', '.trajex/memories/parallel-agents.md', 'Decision: use parallel agents for independent review facets.', '2026-06-09T12:00:00Z');
+  insert.run('mem-2', 'sid-2', 'quiet-zero', '.trajex/memories/sqlite-memory.md', 'Decision: store markdown memory records in SQLite.', '2026-06-10T12:00:00Z');
+  insert.run('mem-3', 'sid-3', 'other-project', '.trajex/memories/parallel-agents.md', 'Other project note about parallel agents.', '2026-06-11T12:00:00Z');
   db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
   return db;
 }
@@ -210,8 +210,8 @@ test('attune api exposes only memory mutation helpers', () => {
 });
 
 test('remember stores absolute project-relative memory path', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'obelisk-memory-project-'));
-  const memoryDir = join(projectDir, '.obelisk', 'memories');
+  const projectDir = mkdtempSync(join(tmpdir(), 'trajex-memory-project-'));
+  const memoryDir = join(projectDir, '.trajex', 'memories');
   mkdirSync(memoryDir, { recursive: true });
   const memoryPath = join(memoryDir, 'decision.md');
   writeFileSync(memoryPath, '# Decision\n');
@@ -219,7 +219,7 @@ test('remember stores absolute project-relative memory path', () => {
   const api = createAttuneApi(db);
 
   const result = api.remember({
-    path: '.obelisk/memories/decision.md',
+    path: '.trajex/memories/decision.md',
     session_id: 'sid-1',
     summary: 'Decision: store normalized memory paths.',
   });
@@ -230,8 +230,8 @@ test('remember stores absolute project-relative memory path', () => {
 });
 
 test('remember updates FTS recall for the registered memory immediately', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'obelisk-memory-project-'));
-  const memoryDir = join(projectDir, '.obelisk', 'memories');
+  const projectDir = mkdtempSync(join(tmpdir(), 'trajex-memory-project-'));
+  const memoryDir = join(projectDir, '.trajex', 'memories');
   mkdirSync(memoryDir, { recursive: true });
   const memoryPath = join(memoryDir, 'query-plan.md');
   writeFileSync(memoryPath, '# Query Plan\n');
@@ -239,7 +239,7 @@ test('remember updates FTS recall for the registered memory immediately', () => 
   const api = createAttuneApi(db);
 
   const registered = api.remember({
-    path: '.obelisk/memories/query-plan.md',
+    path: '.trajex/memories/query-plan.md',
     session_id: 'sid-2',
     summary: 'Decision: use faceted query plans for synthesis recall.',
   });
@@ -272,8 +272,8 @@ test('forget soft-deletes memory records from active recall', () => {
 });
 
 test('remember requires English summaries', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'obelisk-memory-project-'));
-  const memoryDir = join(projectDir, '.obelisk', 'memories');
+  const projectDir = mkdtempSync(join(tmpdir(), 'trajex-memory-project-'));
+  const memoryDir = join(projectDir, '.trajex', 'memories');
   mkdirSync(memoryDir, { recursive: true });
   const memoryPath = join(memoryDir, 'decision.md');
   writeFileSync(memoryPath, '# Decision\n');
@@ -282,7 +282,7 @@ test('remember requires English summaries', () => {
 
   assert.throws(
     () => api.remember({
-      path: '.obelisk/memories/decision.md',
+      path: '.trajex/memories/decision.md',
       session_id: 'sid-1',
       summary: '决策：记忆摘要必须使用英文。',
     }),
@@ -293,13 +293,13 @@ test('remember requires English summaries', () => {
 });
 
 test('remember rejects missing memory files', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'obelisk-memory-project-'));
+  const projectDir = mkdtempSync(join(tmpdir(), 'trajex-memory-project-'));
   const db = memoryDb({ projectPath: projectDir });
   const api = createAttuneApi(db);
 
   assert.throws(
     () => api.remember({
-      path: '.obelisk/memories/missing.md',
+      path: '.trajex/memories/missing.md',
       session_id: 'sid-1',
       summary: 'Decision: this should not be registered.',
     }),

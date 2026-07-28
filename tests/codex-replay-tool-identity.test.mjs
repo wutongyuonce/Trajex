@@ -30,7 +30,7 @@ function writeRollout(path, meta, source) {
 }
 
 test('a replayed Codex call cannot steal the visible message tool association', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'obelisk-codex-replay-'));
+  const dir = mkdtempSync(join(tmpdir(), 'trajex-codex-replay-'));
   const parentPath = join(dir, 'parent.jsonl');
   const replayPath = join(dir, 'replay.jsonl');
   writeRollout(parentPath, {

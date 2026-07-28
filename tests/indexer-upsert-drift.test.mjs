@@ -19,7 +19,7 @@ const { DatabaseSync } = require('node:sqlite');
 const SCHEMA = readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
 
 function fixtureUnit() {
-  const dir = mkdtempSync(join(tmpdir(), 'obelisk-drift-'));
+  const dir = mkdtempSync(join(tmpdir(), 'trajex-drift-'));
   const jsonlPath = join(dir, 'sess.jsonl');
   const lines = [
     { uuid: 'u-1', type: 'user', timestamp: '2026-06-10T10:00:00Z', cwd: '/tmp/proj', message: { role: 'user', content: 'first question' } },

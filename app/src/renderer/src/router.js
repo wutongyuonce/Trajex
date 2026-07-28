@@ -1,4 +1,4 @@
-// Vue Router configuration for Obelisk.
+// Vue Router configuration for Trajex.
 // Routes map to the main content views; sidebar navigation drives route changes.
 
 import { createRouter, createWebHashHistory } from 'vue-router';

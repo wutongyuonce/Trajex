@@ -1,5 +1,5 @@
 /**
- * Core SQLite 连接生命周期。
+ * SQLite 连接生命周期。
  *
  * 模块定位：为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责
  * schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
@@ -16,10 +16,11 @@ const path = require('node:path');
 const os = require('node:os');
 const { DatabaseSync } = require('node:sqlite'); // node:sqlite 是 Node 22+ 内置的 SQLite 绑定 ，但它只在运行时存在，TypeScript 类型系统不认识。所以不能用 import 写法
 
-const OBELISK_DIR = path.join(os.homedir(), '.obelisk');
-const DB_PATH = path.join(OBELISK_DIR, 'obelisk.sqlite');
+const TRAJEX_DIR = path.join(os.homedir(), '.trajex');
+const DB_PATH = path.join(TRAJEX_DIR, 'trajex.sqlite');
 // 将同目录下的 schema.sql 文件内容读取为字符串，存入常量 SCHEMA 。
 const SCHEMA = fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'); // new URL('./schema.sql', import.meta.url) — ESM 中获取当前文件同目录下另一个文件的 绝对 URL 。
+
 
 function openDb(): NodeSqliteDb {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -51,4 +52,4 @@ function rebuildMemoryFts(db: SqliteDb): void {
 }
 
 
-export { CLAUDE_DIR, CODEX_DIR, OBELISK_DIR, DB_PATH, TEXT_LIMIT, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines, fs, path, os };
+export { CLAUDE_DIR, CODEX_DIR, TRAJEX_DIR, DB_PATH, TEXT_LIMIT, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines, fs, path, os };

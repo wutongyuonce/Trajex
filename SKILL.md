@@ -1,20 +1,20 @@
 ---
-name: obelisk-installer
-description: Install the official Obelisk CLI and then install the Obelisk agent skill. Use only for initial setup or repair when the `obelisk` command is missing.
+name: trajex-installer
+description: Install the official Trajex CLI and then install the Trajex agent skill. Use only for initial setup or repair when the `trajex` command is missing.
 allowed-tools:
   - Bash
 ---
 
-# Install Obelisk
+# Install Trajex
 
-This is a one-time bootstrap guide. It installs the local Obelisk runtime, then
+This is a one-time bootstrap guide. It installs the local Trajex runtime, then
 uses that runtime to install the official agent skill from
-`github.com/tommy0103/obelisk-skill`.
+`github.com/tommy0103/trajex-skill`.
 
 ## 1. Check for the CLI
 
 ```bash
-command -v obelisk >/dev/null 2>&1 && obelisk --version
+command -v trajex >/dev/null 2>&1 && trajex --version
 ```
 
 If this succeeds, skip to step 3. Do not reinstall a working CLI unless the user
@@ -28,28 +28,28 @@ the user's approval before running one of these official installation methods.
 With npm:
 
 ```bash
-npm install --global @obelisk-apps/cli
+npm install --global @trajex-apps/cli
 ```
 
 On macOS, Linux, or WSL, the official installer performs the same CLI-only
 installation and never installs an agent skill:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tommy0103/obelisk/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/tommy0103/trajex/main/install.sh | sh
 ```
 
-Never use `sudo`, install a daemon, or download Obelisk from another source.
+Never use `sudo`, install a daemon, or download Trajex from another source.
 
 Verify the result:
 
 ```bash
-obelisk --version
+trajex --version
 ```
 
 ## 3. Choose the skill installation scope
 
 The standard skills installer defaults to the current project. Before running
-it, tell the user about that default and ask whether `/obelisk` should be
+it, tell the user about that default and ask whether `/trajex` should be
 installed:
 
 - **For the current project only** — available only in the project where the
@@ -64,19 +64,19 @@ Run the command that matches the user's answer:
 Current project:
 
 ```bash
-obelisk install
+trajex install
 ```
 
 Global:
 
 ```bash
-obelisk install --global
+trajex install --global
 ```
 
 Pass through any additional target options the user requested. The command
 uses the standard skills installer, so follow its prompts instead of copying
 skill files by hand.
 
-After installation, tell the user to reload their agent if the new `/obelisk`
+After installation, tell the user to reload their agent if the new `/trajex`
 skill is not discovered immediately. This bootstrap document is not the query
 skill and must not answer session-history questions itself.

@@ -57,26 +57,26 @@ function makeDbClass(shouldPoison) {
 }
 
 function twoFileHome(alphaContent, betaContent) {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-tx-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-tx-'));
   const projectDir = join(home, '.claude', 'projects', '-tmp-proj');
   mkdirSync(projectDir, { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
+  mkdirSync(join(home, '.trajex'), { recursive: true });
   const msg = (uuid, content) => JSON.stringify({
     uuid, type: 'user', timestamp: '2026-06-10T10:00:00Z', cwd: '/tmp/proj',
     message: { role: 'user', content },
   }) + '\n';
   writeFileSync(join(projectDir, 'alpha.jsonl'), msg('a1', alphaContent));
   writeFileSync(join(projectDir, 'beta.jsonl'), msg('b1', betaContent));
-  return { home, dbPath: join(home, '.obelisk', 'obelisk.sqlite'), projectsDir: join(home, '.claude', 'projects') };
+  return { home, dbPath: join(home, '.trajex', 'trajex.sqlite'), projectsDir: join(home, '.claude', 'projects') };
 }
 
 function subagentHome(description = 'first description') {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-meta-tx-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-meta-tx-'));
   const projectDir = join(home, '.claude', 'projects', '-tmp-proj');
   const subagentDir = join(projectDir, 'session', 'subagents');
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   mkdirSync(subagentDir, { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
+  mkdirSync(join(home, '.trajex'), { recursive: true });
   const message = uuid => JSON.stringify({
     uuid,
     type: 'user',

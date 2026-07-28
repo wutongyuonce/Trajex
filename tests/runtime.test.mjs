@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 
 function tempHome() {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-runtime-home-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-runtime-home-'));
   mkdirSync(join(home, '.claude'), { recursive: true });
   return home;
 }
@@ -88,7 +88,7 @@ test('runtime indexes Codex root sessions into the shared query helpers', () => 
       payload: {
         id: codexId,
         timestamp: '2026-06-14T16:19:59.842Z',
-        cwd: '/tmp/obelisk-runtime',
+        cwd: '/tmp/trajex-runtime',
         cli_version: '0.135.0-alpha.1',
         source: 'vscode',
         git: { branch: 'feat/codex' },
@@ -121,7 +121,7 @@ test('runtime indexes Codex root sessions into the shared query helpers', () => 
     JSON.stringify({
       timestamp: '2026-06-14T16:20:04.000Z',
       type: 'response_item',
-      payload: { type: 'function_call_output', call_id: 'call_codex_1', output: '/tmp/obelisk-runtime' },
+      payload: { type: 'function_call_output', call_id: 'call_codex_1', output: '/tmp/trajex-runtime' },
     }),
     '',
   ].join('\n'));
@@ -160,8 +160,8 @@ test('runtime indexes Codex root sessions into the shared query helpers', () => 
   assert.deepEqual(payload.sessions, [{
     id: `codex:${codexId}`,
     source: 'codex',
-    project: '-tmp-obelisk-runtime',
-    project_path: normalize('/tmp/obelisk-runtime'),
+    project: '-tmp-trajex-runtime',
+    project_path: normalize('/tmp/trajex-runtime'),
     git_branch: 'feat/codex',
     version: '0.135.0-alpha.1',
     message_count: 3,
@@ -178,7 +178,7 @@ test('runtime indexes Codex root sessions into the shared query helpers', () => 
   assert.equal(payload.tool.session_id, `codex:${codexId}`);
   assert.equal(payload.tool.message_uuid, `codex:${codexId}:000005`);
   assert.equal(payload.toolResult.message_uuid, `codex:${codexId}:000005`);
-  assert.equal(payload.toolResult.content, '/tmp/obelisk-runtime');
+  assert.equal(payload.toolResult.content, '/tmp/trajex-runtime');
   assert.ok(payload.overviewSources.some(s => s.source === 'codex' && s.session_count === 1));
 });
 
@@ -195,7 +195,7 @@ test('runtime skips Codex guardian review threads', () => {
       payload: {
         id: guardianId,
         timestamp: '2026-06-14T18:12:00.000Z',
-        cwd: '/tmp/obelisk-runtime',
+        cwd: '/tmp/trajex-runtime',
         cli_version: '0.135.0-alpha.1',
         thread_source: 'subagent',
         source: { subagent: { other: 'guardian' } },
@@ -204,7 +204,7 @@ test('runtime skips Codex guardian review threads', () => {
     JSON.stringify({
       timestamp: '2026-06-14T18:12:01.000Z',
       type: 'turn_context',
-      payload: { cwd: '/tmp/obelisk-runtime', model: 'codex-auto-review' },
+      payload: { cwd: '/tmp/trajex-runtime', model: 'codex-auto-review' },
     }),
     JSON.stringify({
       timestamp: '2026-06-14T18:12:02.000Z',
@@ -262,7 +262,7 @@ test('runtime removes stale Codex guardian rows when the JSONL was already index
       payload: {
         id: guardianId,
         timestamp: '2026-06-14T18:12:00.000Z',
-        cwd: '/tmp/obelisk-runtime',
+        cwd: '/tmp/trajex-runtime',
         cli_version: '0.135.0-alpha.1',
         thread_source: 'subagent',
         source: { subagent: { other: 'guardian' } },
@@ -276,7 +276,7 @@ test('runtime removes stale Codex guardian rows when the JSONL was already index
     '',
   ].join('\n'));
 
-  const db = new DatabaseSync(join(home, '.obelisk', 'obelisk.sqlite'));
+  const db = new DatabaseSync(join(home, '.trajex', 'trajex.sqlite'));
   db.prepare('INSERT INTO sessions (id,jsonl_path,source,message_count) VALUES (?,?,?,?)').run(guardianSessionId, jsonlPath, 'codex', 1);
   db.prepare('INSERT INTO messages (uuid,session_id,type,timestamp,role,text,content_type,source) VALUES (?,?,?,?,?,?,?,?)')
     .run(`${guardianSessionId}:000002`, guardianSessionId, 'user', '2026-06-14T18:12:01.000Z', 'user', 'stale approval guardian prompt', 'text', 'codex');
@@ -332,7 +332,7 @@ test('runtime maps Codex child threads onto subagents', () => {
       payload: {
         id: parentId,
         timestamp: '2026-06-14T16:19:59.842Z',
-        cwd: '/tmp/obelisk-runtime',
+        cwd: '/tmp/trajex-runtime',
         cli_version: '0.135.0-alpha.1',
         source: 'vscode',
       },
@@ -359,7 +359,7 @@ test('runtime maps Codex child threads onto subagents', () => {
       payload: {
         id: childId,
         timestamp: '2026-06-14T17:41:42.924Z',
-        cwd: '/tmp/obelisk-runtime',
+        cwd: '/tmp/trajex-runtime',
         cli_version: '0.135.0-alpha.1',
         source: {
           subagent: {

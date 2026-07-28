@@ -1,4 +1,4 @@
-// Data loading layer -- bridges Electron IPC (window.obelisk.*) to reactive store.
+// Data loading layer -- bridges Electron IPC (window.trajex.*) to reactive store.
 // All DB access goes through this module.
 
 import { markRaw } from 'vue';
@@ -44,10 +44,10 @@ function commitStoredSessionMetadata(sessionId, metadata) {
  */
 export async function fetchInitialData() {
   const [rawMemories, rawSessions, stats, projects] = await Promise.all([
-    window.obelisk.getMemories(),
-    window.obelisk.getSessions({ source: 'all', limit: 1000 }),
-    window.obelisk.getStats(),
-    window.obelisk.getProjects()
+    window.trajex.getMemories(),
+    window.trajex.getSessions({ source: 'all', limit: 1000 }),
+    window.trajex.getStats(),
+    window.trajex.getProjects()
   ]);
   return { rawMemories, rawSessions, stats, projects };
 }
@@ -90,12 +90,12 @@ export function commitInitialData({ rawMemories, rawSessions, stats, projects })
  */
 export async function loadSessionDetail(sessionId) {
   const [messages, toolCalls, toolResults, subagents, workflows, summaries] = await Promise.all([
-    window.obelisk.getSessionMessages(sessionId),
-    window.obelisk.getSessionToolCalls(sessionId),
-    window.obelisk.getSessionToolResults(sessionId),
-    window.obelisk.getSessionSubagents(sessionId),
-    window.obelisk.getSessionWorkflows(sessionId),
-    window.obelisk.getSessionSummaries(sessionId),
+    window.trajex.getSessionMessages(sessionId),
+    window.trajex.getSessionToolCalls(sessionId),
+    window.trajex.getSessionToolResults(sessionId),
+    window.trajex.getSessionSubagents(sessionId),
+    window.trajex.getSessionWorkflows(sessionId),
+    window.trajex.getSessionSummaries(sessionId),
   ]);
   const detail = assembleSessionDetail({ messages, toolCalls, toolResults, subagents, workflows, summaries });
   const snapshot = {
@@ -114,10 +114,10 @@ export async function loadSessionDetail(sessionId) {
 
 export async function fetchSessionDetailPatch(sessionId) {
   const current = sessionMessageSnapshots.get(sessionId);
-  if (!current || typeof window.obelisk.getSessionPatch !== 'function') {
+  if (!current || typeof window.trajex.getSessionPatch !== 'function') {
     return { sessionId, current: null, patch: null };
   }
-  const patch = await window.obelisk.getSessionPatch(sessionId, current.cursor);
+  const patch = await window.trajex.getSessionPatch(sessionId, current.cursor);
   return { sessionId, current, patch };
 }
 
@@ -181,9 +181,9 @@ function commitSessionDetail(sessionId, { messages, workflows = [], summaries = 
  */
 export async function loadSubagentDetail(agentId) {
   const [messages, toolCalls, toolResults] = await Promise.all([
-    window.obelisk.getSubagentMessages(agentId),
-    window.obelisk.getSubagentToolCalls(agentId),
-    window.obelisk.getSubagentToolResults(agentId),
+    window.trajex.getSubagentMessages(agentId),
+    window.trajex.getSubagentToolCalls(agentId),
+    window.trajex.getSubagentToolResults(agentId),
   ]);
   return assembleSessionDetail({
     messages,
@@ -209,7 +209,7 @@ export function isTextTruncated(text) {
  */
 export async function loadFullText(uuid) {
   try {
-    return await window.obelisk.getMessageFullText(uuid);
+    return await window.trajex.getMessageFullText(uuid);
   } catch {
     return null;
   }
@@ -221,7 +221,7 @@ export async function loadFullText(uuid) {
  */
 export async function loadMemoryMarkdown(memoryPath) {
   try {
-    const content = await window.obelisk.readMemoryFile(memoryPath);
+    const content = await window.trajex.readMemoryFile(memoryPath);
     return content || null;
   } catch {
     return null;
@@ -232,7 +232,7 @@ export async function loadMemoryMarkdown(memoryPath) {
  * Archive a memory by id. Updates state after successful IPC call.
  */
 export async function archiveMemory(id) {
-  await window.obelisk.archiveMemory(id);
+  await window.trajex.archiveMemory(id);
   const mem = state.memories.find(m => m.id === id);
   if (mem) {
     mem.archived = true;
@@ -244,7 +244,7 @@ export async function archiveMemory(id) {
  * Restore an archived memory by id. Updates state after successful IPC call.
  */
 export async function restoreMemory(id) {
-  await window.obelisk.restoreMemory(id);
+  await window.trajex.restoreMemory(id);
   const mem = state.memories.find(m => m.id === id);
   if (mem) {
     mem.archived = false;

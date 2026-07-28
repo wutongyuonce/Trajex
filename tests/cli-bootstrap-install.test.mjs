@@ -17,15 +17,15 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 test('root SKILL.md bootstraps the CLI before installing the official skill', () => {
   const source = readFileSync(join(repoRoot, 'SKILL.md'), 'utf8');
 
-  assert.match(source, /@obelisk-apps\/cli/);
+  assert.match(source, /@trajex-apps\/cli/);
   assert.match(source, /install\.sh/);
-  assert.match(source, /obelisk --version/);
-  assert.match(source, /obelisk install/);
+  assert.match(source, /trajex --version/);
+  assert.match(source, /trajex install/);
   assert.match(source, /defaults to the current project/i);
   assert.match(source, /ask whether .*should be\s+installed/is);
-  assert.match(source, /obelisk install --global/);
+  assert.match(source, /trajex install --global/);
   assert.match(source, /Do not silently choose the current-project default/);
-  assert.doesNotMatch(source, /obelisk --query/);
+  assert.doesNotMatch(source, /trajex --query/);
 });
 
 test('README presents agent-led installation before manual npm setup', () => {
@@ -47,19 +47,19 @@ test('README presents agent-led installation before manual npm setup', () => {
 });
 
 test('install.sh installs and verifies only the CLI', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-install-script-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-install-script-'));
   const fakeBin = join(home, 'bin');
   const npmCapture = join(home, 'npm-args');
-  const obeliskCapture = join(home, 'obelisk-args');
+  const trajexCapture = join(home, 'trajex-args');
   mkdirSync(fakeBin, { recursive: true });
 
   const npm = join(fakeBin, 'npm');
   writeFileSync(npm, `#!/bin/sh\nprintf '%s\\n' "$@" > "${npmCapture}"\n`);
   chmodSync(npm, 0o755);
 
-  const obelisk = join(fakeBin, 'obelisk');
-  writeFileSync(obelisk, `#!/bin/sh\nprintf '%s\\n' "$@" > "${obeliskCapture}"\nprintf '0.1.0\\n'\n`);
-  chmodSync(obelisk, 0o755);
+  const trajex = join(fakeBin, 'trajex');
+  writeFileSync(trajex, `#!/bin/sh\nprintf '%s\\n' "$@" > "${trajexCapture}"\nprintf '0.1.0\\n'\n`);
+  chmodSync(trajex, 0o755);
 
   const result = spawnSync('sh', [join(repoRoot, 'install.sh')], {
     cwd: repoRoot,
@@ -75,7 +75,7 @@ test('install.sh installs and verifies only the CLI', () => {
   assert.deepEqual(readFileSync(npmCapture, 'utf8').trim().split('\n'), [
     'install',
     '--global',
-    '@obelisk-apps/cli',
+    '@trajex-apps/cli',
   ]);
-  assert.deepEqual(readFileSync(obeliskCapture, 'utf8').trim().split('\n'), ['--version']);
+  assert.deepEqual(readFileSync(trajexCapture, 'utf8').trim().split('\n'), ['--version']);
 });

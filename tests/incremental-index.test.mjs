@@ -26,7 +26,7 @@ function line(uuid, type, ts) {
 }
 
 function clearBuildDebounce(home) {
-  const db = new DatabaseSync(join(home, '.obelisk', 'obelisk.sqlite'));
+  const db = new DatabaseSync(join(home, '.trajex', 'trajex.sqlite'));
   db.prepare("DELETE FROM index_state WHERE jsonl_path='__last_build__'").run();
   db.close();
 }
@@ -39,7 +39,7 @@ function counts(home) {
 }
 
 test('incremental buildIndex resumes from cursor and accumulates message_count', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-incr-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-incr-'));
   const projDir = join(home, '.claude', 'projects', '-tmp-proj');
   mkdirSync(projDir, { recursive: true });
   const jsonl = join(projDir, 'sess.jsonl');
@@ -67,7 +67,7 @@ test('incremental buildIndex resumes from cursor and accumulates message_count',
 });
 
 test('force build purges sessions for deleted files and preserves memories', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-force-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-force-'));
   const projDir = join(home, '.claude', 'projects', '-tmp-proj');
   mkdirSync(projDir, { recursive: true });
   const keep = join(projDir, 'keep.jsonl');
@@ -76,10 +76,10 @@ test('force build purges sessions for deleted files and preserves memories', () 
   writeFileSync(gone, line('g1', 'user', '2026-06-10T10:00:00Z') + '\n');
   assert.equal(runRuntime(['--build'], home).status, 0);
 
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   let db = new DatabaseSync(dbPath);
   // Seed a durable memory that must survive a clean rebuild.
-  db.prepare("INSERT INTO memories (id, path, summary, created_at) VALUES ('mem-keep', '/tmp/proj/.obelisk/memories/x.md', 'durable note', '2026-06-10T10:00:00Z')").run();
+  db.prepare("INSERT INTO memories (id, path, summary, created_at) VALUES ('mem-keep', '/tmp/proj/.trajex/memories/x.md', 'durable note', '2026-06-10T10:00:00Z')").run();
   assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions').get().c, 2, 'both sessions indexed initially');
   db.close();
 

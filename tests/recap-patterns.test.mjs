@@ -21,10 +21,10 @@ test('skill routes only the explicit recap intent to the split recap overview', 
   assert.match(skill, /references\/recap\/overview\.md/);
   assert.match(skill, /first word is `recap`/i);
   assert.match(skill, /Everything after `recap` is the recap target/);
-  assert.match(skill, /`\/obelisk recap this week`/);
-  assert.match(skill, /`\/obelisk recap this month`/);
-  assert.match(skill, /`\/obelisk recap last week`/);
-  assert.match(skill, /`\/obelisk recap last month`/);
+  assert.match(skill, /`\/trajex recap this week`/);
+  assert.match(skill, /`\/trajex recap this month`/);
+  assert.match(skill, /`\/trajex recap last week`/);
+  assert.match(skill, /`\/trajex recap last month`/);
   assert.match(skill, /do not load\s+`references\/recap\/overview\.md`/);
   assert.doesNotMatch(skill, /NetEase-style chart/);
   assert.doesNotMatch(skill, /playful personal progress recap/);
@@ -38,8 +38,8 @@ test('README lists the recap folder without making recap the core retrieval path
     assert.match(readme, new RegExp(`skill-doc/references/recap/pattern${n}-${name}\\.md`));
     assert.match(readme, new RegExp(`skill-doc/references/recap/writing${n}-${name}\\.md`));
   }
-  assert.match(readme, /optional .*\/obelisk recap/i);
-  assert.match(readme, /explicit `\/obelisk recap` intent/);
+  assert.match(readme, /optional .*\/trajex recap/i);
+  assert.match(readme, /explicit `\/trajex recap` intent/);
   assert.match(readme, /card-by-card/i);
 });
 
@@ -82,8 +82,8 @@ test('recap overview stays narrow and leaves card details to per-card files', as
   assert.ok(ref.split('\n').length < 90);
   assert.match(ref, /The per-card files own retrieval details/i);
   assert.doesNotMatch(ref, /schema_version/);
-  assert.doesNotMatch(ref, /obelisk\.recap\.v1/);
-  assert.doesNotMatch(ref, /~\/\.obelisk\/recap\//);
+  assert.doesNotMatch(ref, /trajex\.recap\.v1/);
+  assert.doesNotMatch(ref, /~\/\.trajex\/recap\//);
   assert.doesNotMatch(ref, /references\/schema\.md/);
   assert.doesNotMatch(ref, /## JSON Shape/);
 
@@ -127,8 +127,8 @@ test('cover and closing writing own JSON initialization and final save rules', a
   const closing = await read('skill-doc/references/recap/writing5-closing.md');
 
   assert.match(cover, /First JSON Write/i);
-  assert.match(cover, /schema_version: "obelisk\.recap\.v1"/);
-  assert.match(cover, /~\/\.obelisk\/recap\//);
+  assert.match(cover, /schema_version: "trajex\.recap\.v1"/);
+  assert.match(cover, /~\/\.trajex\/recap\//);
   assert.match(cover, /recap-\{YYYY\}-W\{WW\}\.json/);
   assert.match(cover, /recap-\{YYYY\}-\{MM\}\.json/);
   assert.match(closing, /Final save rules/i);

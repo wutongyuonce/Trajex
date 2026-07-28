@@ -56,11 +56,11 @@ async function waitForSuccess(child) {
 }
 
 async function run() {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-electron-concurrency-'));
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const home = mkdtempSync(join(tmpdir(), 'trajex-electron-concurrency-'));
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   const projectsDir = join(home, '.claude', 'projects');
   const projDir = join(projectsDir, '-proj');
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
+  mkdirSync(join(home, '.trajex'), { recursive: true });
   mkdirSync(projDir, { recursive: true });
 
   function msg(uuid) {

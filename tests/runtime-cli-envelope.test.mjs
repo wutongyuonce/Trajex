@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import { runCli as runRuntime } from './cli-test-helpers.mjs';
 
 function tempHome() {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-cli-envelope-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-cli-envelope-'));
   mkdirSync(join(home, '.claude'), { recursive: true });
   return home;
 }
@@ -35,8 +35,8 @@ test('--build emits { ok: true, db } pointing at the resolved db path', () => {
   assert.equal(payload.ok, true);
   assert.equal(typeof payload.db, 'string');
   assert.ok(
-    payload.db.endsWith(join('.obelisk', 'obelisk.sqlite')),
-    `db path should resolve under HOME/.obelisk, got ${payload.db}`,
+    payload.db.endsWith(join('.trajex', 'trajex.sqlite')),
+    `db path should resolve under HOME/.trajex, got ${payload.db}`,
   );
 });
 

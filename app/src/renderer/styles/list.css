@@ -116,7 +116,7 @@
     content: ''; position: absolute; left: 0; top: 0; bottom: 0;
     width: 2px; background: var(--muted-2);
   }
-  .srow-obelisk {
+  .srow-trajex {
     position: absolute; left: 0; bottom: 0;
     width: 3px; border-radius: 1.5px 1.5px 0 0;
   }

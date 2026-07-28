@@ -21,8 +21,8 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_CLAUDE_DIR = path.join(os.homedir(), '.claude');
-const DEFAULT_OBELISK_DIR = path.join(os.homedir(), '.obelisk');
-const DEFAULT_DB_PATH = path.join(DEFAULT_OBELISK_DIR, 'obelisk.sqlite');
+const DEFAULT_TRAJEX_DIR = path.join(os.homedir(), '.trajex');
+const DEFAULT_DB_PATH = path.join(DEFAULT_TRAJEX_DIR, 'trajex.sqlite');
 
 function resolveSchemaPath() {
   const candidates = [
@@ -31,7 +31,7 @@ function resolveSchemaPath() {
     process.resourcesPath ? path.join(process.resourcesPath, 'scripts', 'schema.sql') : null,
   ].filter((c): c is string => Boolean(c));
   const found = candidates.find(p => fs.existsSync(p));
-  if (!found) throw new Error('Obelisk schema.sql not found');
+  if (!found) throw new Error('Trajex schema.sql not found');
   return found;
 }
 
@@ -39,6 +39,7 @@ function installSchema(db, schemaPath = resolveSchemaPath()) {
   db.exec(fs.readFileSync(schemaPath, 'utf8'));
   migrateCoreSchemaColumns(db);
 }
+
 
 function openIndexDb({ dbPath = DEFAULT_DB_PATH, schemaPath = resolveSchemaPath(), DatabaseImpl = Database }: { dbPath?: string; schemaPath?: string; DatabaseImpl?: new (dbPath: string) => any } = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -50,16 +51,16 @@ function openIndexDb({ dbPath = DEFAULT_DB_PATH, schemaPath = resolveSchemaPath(
 
 function copyMemoriesFromDb(db, sourceDbPath) {
   if (!sourceDbPath || !fs.existsSync(sourceDbPath)) return false;
-  db.prepare('ATTACH DATABASE ? AS previous_obelisk').run(sourceDbPath);
+  db.prepare('ATTACH DATABASE ? AS previous_trajex').run(sourceDbPath);
   try {
     const hasMemories = db.prepare(`
-      SELECT name FROM previous_obelisk.sqlite_master
+      SELECT name FROM previous_trajex.sqlite_master
       WHERE type='table' AND name='memories'
     `).get();
     if (!hasMemories) return false;
 
     const sourceColumns = new Set(
-      db.prepare('PRAGMA previous_obelisk.table_info(memories)').all().map(column => column.name),
+      db.prepare('PRAGMA previous_trajex.table_info(memories)').all().map(column => column.name),
     );
     const targetColumns = [
       'id',
@@ -79,11 +80,11 @@ function copyMemoriesFromDb(db, sourceDbPath) {
       .join(',');
     db.exec(`
       INSERT OR REPLACE INTO memories (${targetColumns.join(',')})
-      SELECT ${selectList} FROM previous_obelisk.memories
+      SELECT ${selectList} FROM previous_trajex.memories
     `);
     return true;
   } finally {
-    db.exec('DETACH DATABASE previous_obelisk');
+    db.exec('DETACH DATABASE previous_trajex');
   }
 }
 
@@ -375,7 +376,7 @@ function buildIndex({
           skipped.push({
             path: unit.key,
             error: (error as Error).message,
-            diagnostics: (error as { obelisk?: unknown }).obelisk,
+            diagnostics: (error as { trajex?: unknown }).trajex,
           });
           console.warn(`Warning: failed to index ${provider.name} unit ${unit.key}: ${(error as Error).message}`);
           return 'skip';

@@ -5,7 +5,7 @@ import type {
   UsageStatsOptions,
 } from '../shared/ipc-types.ts';
 
-contextBridge.exposeInMainWorld('obelisk', {
+contextBridge.exposeInMainWorld('trajex', {
   getSessions: (opts?: unknown) => ipcRenderer.invoke('db:getSessions', opts),
   getSessionMessages: (id: string) => ipcRenderer.invoke('db:getSessionMessages', id),
   getSessionToolCalls: (id: string) => ipcRenderer.invoke('db:getSessionToolCalls', id),
@@ -29,13 +29,13 @@ contextBridge.exposeInMainWorld('obelisk', {
   getUsageStats: (opts?: UsageStatsOptions) => ipcRenderer.invoke('db:getUsageStats', opts),
   onIndexUpdated: (callback: (payload: unknown) => void) => {
     const listener = (_: IpcRendererEvent, payload: unknown) => callback(payload);
-    ipcRenderer.on('obelisk:index-updated', listener);
-    return () => ipcRenderer.removeListener('obelisk:index-updated', listener);
+    ipcRenderer.on('trajex:index-updated', listener);
+    return () => ipcRenderer.removeListener('trajex:index-updated', listener);
   },
   onSessionUpdated: (callback: (payload: unknown) => void) => {
     const listener = (_: IpcRendererEvent, payload: unknown) => callback(payload);
-    ipcRenderer.on('obelisk:session-updated', listener);
-    return () => ipcRenderer.removeListener('obelisk:session-updated', listener);
+    ipcRenderer.on('trajex:session-updated', listener);
+    return () => ipcRenderer.removeListener('trajex:session-updated', listener);
   },
   captureExport: (opts?: unknown) => ipcRenderer.invoke('capture:export', opts),
   copyImage: (opts?: unknown) => ipcRenderer.invoke('capture:copy', opts),
@@ -43,8 +43,8 @@ contextBridge.exposeInMainWorld('obelisk', {
   recapRead: (filename: string) => ipcRenderer.invoke('recap:read', filename),
   onRecapUpdated: (callback: (filePath: unknown) => void) => {
     const listener = (_: IpcRendererEvent, filePath: unknown) => callback(filePath);
-    ipcRenderer.on('obelisk:recap-updated', listener);
-    return () => ipcRenderer.removeListener('obelisk:recap-updated', listener);
+    ipcRenderer.on('trajex:recap-updated', listener);
+    return () => ipcRenderer.removeListener('trajex:recap-updated', listener);
   },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   browseFolder: () => ipcRenderer.invoke('settings:browseFolder'),

@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { createCodexProvider, parse } from '../packages/core/src/providers/codex.ts';
 
 function writeFixture(lines) {
-  const dir = mkdtempSync(join(tmpdir(), 'obelisk-codex-parse-'));
+  const dir = mkdtempSync(join(tmpdir(), 'trajex-codex-parse-'));
   const path = join(dir, 'rollout.jsonl');
   writeFileSync(path, lines.map(l => JSON.stringify(l)).join('\n') + '\n');
   return path;
@@ -86,7 +86,7 @@ test('codex parse() retracts a guardian thread via delete-session and emits noth
 });
 
 test('codex provider folds session_index metadata into its canonical session record', () => {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-codex-index-meta-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-codex-index-meta-'));
   const sessionsDir = join(root, 'sessions', '2026', '06', '10');
   mkdirSync(sessionsDir, { recursive: true });
   const path = join(sessionsDir, `rollout-${META.id}.jsonl`);

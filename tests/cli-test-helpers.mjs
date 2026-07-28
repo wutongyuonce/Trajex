@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-export const cliEntry = join(repoRoot, 'packages', 'cli', 'dist', 'cli', 'src', 'obelisk.js');
+export const cliEntry = join(repoRoot, 'packages', 'cli', 'dist', 'cli', 'src', 'trajex.js');
 
 export function runCli(args, { home, env = {}, cwd = repoRoot } = {}) {
   return spawnSync(process.execPath, [

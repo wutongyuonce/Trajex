@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * Obelisk CLI 进程入口。
+ * Trajex CLI 进程入口。
  *
- * 模块定位：全局 `obelisk` 命令的薄传输层；只负责参数分发、脚本读取和 JSON 输出，
- * 所有索引、查询、记忆及 SQLite 规则均委托给 @obelisk/core。
+ * 模块定位：全局 `trajex` 命令的薄传输层；只负责参数分发、脚本读取和 JSON 输出，
+ * 所有索引、查询、记忆及 SQLite 规则均委托给 @trajex/core。
  *
- * 调用链路：终端 → obelisk.ts → core.ts → indexer/query/db。
+ * 调用链路：终端 → trajex.ts → core.ts → indexer/query/db。
  */
 
 
@@ -71,7 +71,7 @@ async function main() {
     const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
     const child = spawnSync(
       npx,
-      ['--yes', 'skills', 'add', 'tommy0103/obelisk-skill', ...args.slice(1)],
+      ['--yes', 'skills', 'add', 'tommy0103/trajex-skill', ...args.slice(1)],
       { stdio: 'inherit', shell: process.platform === 'win32' },
     );
     if (child.error) {
@@ -82,7 +82,7 @@ async function main() {
     }
     return;
   }
-  process.stderr.write('Usage:\n  obelisk install [skills options]\n  obelisk --build\n  obelisk --search "text"\n  obelisk --query <file.js>\n  obelisk --attune <file.js>\n');
+  process.stderr.write('Usage:\n  trajex install [skills options]\n  trajex --build\n  trajex --search "text"\n  trajex --query <file.js>\n  trajex --attune <file.js>\n');
   process.exitCode = 1;
 }
 

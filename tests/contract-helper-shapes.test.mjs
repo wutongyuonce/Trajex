@@ -89,7 +89,7 @@ function fixture() {
     VALUES (?, ?, ?, ?, ?)`).run('su-1', 'sid-1', '2026-06-10T10:06:00Z', 'away_summary', 'a summary');
 
   db.prepare(`INSERT INTO memories (id, session_id, project, path, summary, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)`).run('mem-1', 'sid-1', 'quiet-zero', '.obelisk/memories/x.md', 'Decision: contract fixture memory.', '2026-06-10T10:07:00Z');
+    VALUES (?, ?, ?, ?, ?, ?)`).run('mem-1', 'sid-1', 'quiet-zero', '.trajex/memories/x.md', 'Decision: contract fixture memory.', '2026-06-10T10:07:00Z');
 
   return db;
 }
@@ -183,7 +183,7 @@ test('forget() result shape matches api-reference.md', () => {
 });
 
 test('raw() shape matches api-reference.md', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'obelisk-raw-'));
+  const dir = mkdtempSync(join(tmpdir(), 'trajex-raw-'));
   const jsonlPath = join(dir, 'session.jsonl');
   const line = JSON.stringify({ uuid: 'm-raw', type: 'user', message: { role: 'user', content: 'raw line body' } });
   writeFileSync(jsonlPath, line + '\n');

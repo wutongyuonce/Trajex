@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = resolve(repoRoot, 'skill-doc');
-const target = resolve(repoRoot, 'dist/obelisk-skill');
+const target = resolve(repoRoot, 'dist/trajex-skill');
 
 rmSync(target, { recursive: true, force: true });
 mkdirSync(target, { recursive: true });

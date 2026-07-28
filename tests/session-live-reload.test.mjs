@@ -115,7 +115,7 @@ test('a skipped live patch does not advance the visible patch baseline', async t
   const firstPatchReady = new Promise(resolve => { firstPatchStarted = resolve; });
 
   globalThis.window = {
-    obelisk: {
+    trajex: {
       getSessionMessages: async () => rows,
       getSessionToolCalls: async () => [],
       getSessionToolResults: async () => [],

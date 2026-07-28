@@ -37,8 +37,8 @@ const cssVars = computed(() => ({
 }));
 
 async function loadRecap(filename) {
-  if (!filename || !window.obelisk?.recapRead) return;
-  const data = await window.obelisk.recapRead(filename);
+  if (!filename || !window.trajex?.recapRead) return;
+  const data = await window.trajex.recapRead(filename);
   if (data?.cards?.length) {
     recapData.value = data;
     currentArch.value = data.persona?.archetype || 'architect';
@@ -50,8 +50,8 @@ let unsubRecap;
 onMounted(async () => {
   const filename = route.params.id;
   if (filename) await loadRecap(filename);
-  if (window.obelisk?.onRecapUpdated) {
-    unsubRecap = window.obelisk.onRecapUpdated((fp) => {
+  if (window.trajex?.onRecapUpdated) {
+    unsubRecap = window.trajex.onRecapUpdated((fp) => {
       if (fp.endsWith(route.params.id)) loadRecap(route.params.id);
     });
   }
@@ -60,14 +60,14 @@ onUnmounted(() => { unsubRecap?.(); });
 watch(() => route.params.id, (id) => { if (id) loadRecap(id); });
 
 async function exportImage() {
-  await window.obelisk.captureExport({
+  await window.trajex.captureExport({
     cardIdx: currentIdx.value,
     archetype: currentArch.value,
     filename: recapFilename.value,
   });
 }
 async function copyImage() {
-  await window.obelisk.copyImage({
+  await window.trajex.copyImage({
     cardIdx: currentIdx.value,
     archetype: currentArch.value,
     filename: recapFilename.value,

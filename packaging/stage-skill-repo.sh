@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_DIR="${1:-}"
-ARTIFACT_DIR="${2:-$ROOT_DIR/dist/obelisk-skill}"
+ARTIFACT_DIR="${2:-$ROOT_DIR/dist/trajex-skill}"
 
 if [ -z "$TARGET_DIR" ]; then
   echo "Usage: packaging/stage-skill-repo.sh <target-repo> [skill-artifact]" >&2
@@ -28,7 +28,7 @@ find "$TARGET_DIR" -mindepth 1 \
   ! -path "$TARGET_DIR/.git/*" \
   -delete
 
-mkdir -p "$TARGET_DIR/skills/obelisk"
-cp -R "$ARTIFACT_DIR"/. "$TARGET_DIR/skills/obelisk/"
+mkdir -p "$TARGET_DIR/skills/trajex"
+cp -R "$ARTIFACT_DIR"/. "$TARGET_DIR/skills/trajex/"
 cp "$ROOT_DIR/packaging/skill-README.md" "$TARGET_DIR/README.md"
 cp "$ROOT_DIR/packaging/skill-LICENSE" "$TARGET_DIR/LICENSE"

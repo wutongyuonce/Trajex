@@ -44,7 +44,7 @@ test('session assembly keeps Skill evidence standalone and embeds matching workf
       { uuid: 'workflow-1', type: 'assistant', content_type: 'tool_use', text: '' },
     ],
     toolCalls: [
-      { id: 'call-skill', message_uuid: 'skill-1', name: 'Skill', presentation: 'skill', input_json: '{"skill":"obelisk"}' },
+      { id: 'call-skill', message_uuid: 'skill-1', name: 'Skill', presentation: 'skill', input_json: '{"skill":"trajex"}' },
       { id: 'call-workflow', message_uuid: 'workflow-1', name: 'Workflow', presentation: 'default', input_json: '{}' },
     ],
     toolResults: [{ tool_use_id: 'call-workflow', content: 'complete', is_error: 0 }],

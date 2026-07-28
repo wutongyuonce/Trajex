@@ -148,9 +148,9 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
         onError: (error, { provider, unit }) => {
           if (isBeginBusyFailure(error)) return 'stop';
           if (hasUnusableTransaction(error)) throw error;
-          const detail = error as { message?: unknown; obelisk?: unknown } | null;
+          const detail = error as { message?: unknown; trajex?: unknown } | null;
           const message = errorMessage(error);
-          skippedFiles.push({ path: unit.key, error: message, diagnostics: detail?.obelisk });
+          skippedFiles.push({ path: unit.key, error: message, diagnostics: detail?.trajex });
           process.stderr.write(`Warning: failed to index ${provider.name} unit ${unit.key}: ${message}\n`);
           return 'skip';
         },

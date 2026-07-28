@@ -19,7 +19,7 @@ function drain(gen) {
 }
 
 function writeKimiFixture() {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-kimi-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-kimi-'));
   const sessionDir = join(root, 'sessions', 'workspace-1', 'session-native-1');
   const mainDir = join(sessionDir, 'agents', 'main');
   const childDir = join(sessionDir, 'agents', 'agent-7');
@@ -146,7 +146,7 @@ test('kimi provider ignores a torn final wire line until it is completed', () =>
 });
 
 test('kimi provider normalizes think parts and drops empty thinking placeholders', () => {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-kimi-think-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-kimi-think-'));
   const sessionDir = join(root, 'sessions', 'workspace-1', 'session-think-1');
   const mainDir = join(sessionDir, 'agents', 'main');
   const wirePath = join(mainDir, 'wire.jsonl');
@@ -192,7 +192,7 @@ test('kimi provider normalizes think parts and drops empty thinking placeholders
 });
 
 test('kimi provider replays clear and undo markers with Kimi transcript semantics', () => {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-kimi-undo-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-kimi-undo-'));
   const sessionDir = join(root, 'sessions', 'workspace-1', 'session-undo-1');
   const mainDir = join(sessionDir, 'agents', 'main');
   mkdirSync(mainDir, { recursive: true });
@@ -224,7 +224,7 @@ test('kimi provider replays clear and undo markers with Kimi transcript semantic
 });
 
 test('kimi provider scopes changed-path discovery to one session and bypasses an unchanged cursor', () => {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-kimi-changed-path-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-kimi-changed-path-'));
   const firstDir = join(root, 'sessions', 'workspace-1', 'session-1');
   const secondDir = join(root, 'sessions', 'workspace-1', 'session-2');
   for (const sessionDir of [firstDir, secondDir]) {
@@ -245,7 +245,7 @@ test('kimi provider scopes changed-path discovery to one session and bypasses an
 });
 
 test('kimi provider presents user-slash activations as real user prompts', () => {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-kimi-user-slash-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-kimi-user-slash-'));
   const sessionDir = join(root, 'sessions', 'workspace-1', 'session-user-slash-1');
   const mainDir = join(sessionDir, 'agents', 'main');
   mkdirSync(mainDir, { recursive: true });
@@ -255,7 +255,7 @@ test('kimi provider presents user-slash activations as real user prompts', () =>
     { type: 'context.append_message', time: 2, message: {
       role: 'user', content: 'User activated the skill and loaded its full instructions.', toolCalls: [],
       origin: {
-        kind: 'skill_activation', trigger: 'user-slash', skillName: 'obelisk',
+        kind: 'skill_activation', trigger: 'user-slash', skillName: 'trajex',
         skillArgs: '  synthesize my history  ',
       },
     } },
@@ -282,7 +282,7 @@ test('kimi provider presents user-slash activations as real user prompts', () =>
     text: record.text,
     is_meta: record.is_meta,
   })), [
-    { text: '/obelisk synthesize my history', is_meta: 0 },
+    { text: '/trajex synthesize my history', is_meta: 0 },
     { text: '/demo:ship --fast', is_meta: 0 },
     { text: 'Model-triggered skill instructions.', is_meta: 1 },
   ]);
@@ -291,11 +291,11 @@ test('kimi provider presents user-slash activations as real user prompts', () =>
     messageUuid: messages[0].uuid,
     session: { jsonl_path: join(mainDir, 'wire.jsonl') },
     agentId: null,
-  }).messageText, '/obelisk synthesize my history');
+  }).messageText, '/trajex synthesize my history');
 });
 
 test('kimi provider maps protocol-1.0 embedded tool calls and results', () => {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-kimi-legacy-tools-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-kimi-legacy-tools-'));
   const sessionDir = join(root, 'sessions', 'workspace-1', 'session-tools-1');
   const mainDir = join(sessionDir, 'agents', 'main');
   mkdirSync(mainDir, { recursive: true });

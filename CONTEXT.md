@@ -1,9 +1,9 @@
-# Obelisk
+# Trajex
 
-Obelisk is explicit memory infrastructure for coding agents: it indexes local
+Trajex is explicit memory infrastructure for coding agents: it indexes local
 Claude Code, Codex, and Kimi Code sessions into a queryable SQLite evidence layer, and a
 CodeAct runtime lets an agent write a small query, run it, and answer from real
-session history. This glossary pins the terms that are specific to Obelisk; it is
+session history. This glossary pins the terms that are specific to Trajex; it is
 not a spec.
 
 ## Runtime interface
@@ -18,7 +18,7 @@ _Avoid_: API, tool surface
 **CodeAct**:
 The interaction style where an agent writes JavaScript that runs inside the
 `query(code)` sandbox and returns JSON, rather than calling many fine-grained
-tools. This is Obelisk's core design choice.
+tools. This is Trajex's core design choice.
 _Avoid_: tool-calling, function-calling
 
 **Helper**:
@@ -89,7 +89,7 @@ not ownership. Both indexing modes use the same persist layer.
 
 **Writer lease**:
 The hard cross-process safety mutex behind daemon arbitration. A writer holds
-`BEGIN IMMEDIATE` on `.obelisk/writer.lock.sqlite` for the complete mutation;
+`BEGIN IMMEDIATE` on `.trajex/writer.lock.sqlite` for the complete mutation;
 manual rebuild holds it through build, target-database replacement, and reopen.
 The heartbeat expresses policy, while the writer lease prevents overlapping
 writes during races, stale heartbeats, or processes from different versions.
@@ -98,7 +98,7 @@ writes during races, stale heartbeats, or processes from different versions.
 
 **Queryable session memory**:
 The evidence layer — real sessions, messages, tool calls, subagents, workflows —
-that an agent queries on demand. Obelisk deliberately does this instead of
+that an agent queries on demand. Trajex deliberately does this instead of
 implicit/ambient memory.
 _Avoid_: implicit memory, ambient memory, auto-recall
 

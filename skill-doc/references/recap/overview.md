@@ -1,6 +1,6 @@
-# Obelisk Recap Overview
+# Trajex Recap Overview
 
-Use this only when the first word after `/obelisk` is `recap`. Everything after
+Use this only when the first word after `/trajex` is `recap`. Everything after
 `recap` is the target period or style hint.
 
 ## Highest Priority: Phase Loop

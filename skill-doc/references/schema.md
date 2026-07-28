@@ -1,20 +1,20 @@
-# Obelisk -- Raw SQL Quick Reference
+# Trajex -- Raw SQL Quick Reference
 
 Read this before writing non-trivial `sql()` queries. It is a compact field and
 join map for raw SQL, not the full helper API manual.
 
-- Canonical executable DDL: [`packages/core/src/schema.sql`](https://github.com/tommy0103/obelisk/blob/main/packages/core/src/schema.sql) in the CLI source repository (not duplicated in this docs-only skill)
+- Canonical executable DDL: [`packages/core/src/schema.sql`](https://github.com/tommy0103/trajex/blob/main/packages/core/src/schema.sql) in the CLI source repository (not duplicated in this docs-only skill)
 - Helper signatures and return shapes: `references/api-reference.md`
 - Query recipes and synthesis patterns: `references/query-patterns.md`
 - FTS, alias, ordering, and compactness traps: `references/pitfalls.md`
 
-Database path: `~/.obelisk/obelisk.sqlite`. Older `~/.claude/obelisk.sqlite`
+Database path: `~/.trajex/trajex.sqlite`. Older `~/.claude/trajex.sqlite`
 databases are copied forward on first open when the new database does not
 exist.
 
 ## Source Model
 
-Obelisk stores Claude Code and Codex transcripts in the same schema.
+Trajex stores Claude Code and Codex transcripts in the same schema.
 
 - Claude rows use `source='claude'`.
 - Codex rows use `source='codex'`; root session and message IDs are prefixed

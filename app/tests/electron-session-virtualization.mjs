@@ -10,7 +10,7 @@ import { assembleSessionDetail } from '../src/shared/session-detail-assembly.mjs
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = join(here, '..');
 const sessionId = 'test-session';
-const messageCount = Number(process.env.OBELISK_TIMELINE_MESSAGE_COUNT || 2000);
+const messageCount = Number(process.env.TRAJEX_TIMELINE_MESSAGE_COUNT || 2000);
 const coldOpenOnly = process.argv.includes('--cold-open-only');
 const focusMessageIndex = Math.floor(messageCount * 0.75);
 const focusMessageUuid = `message-${focusMessageIndex}`;
@@ -79,7 +79,7 @@ messages[focusMessageIndex].text = `Truncated preview ${'indexed content '.repea
 const fullTextSentinel = `FULL TEXT SENTINEL ${'complete content '.repeat(80)}`;
 const codexExecSource = 'const result = { ok: true };\nreturn result;';
 const liveBashToolInput = {
-  command: "cat > /tmp/q_jul15b.mjs <<'EOF'\nconst codex = sessions({ source: 'codex', project: '%quiet-zero%', limit: 3 });\n\nconst tail = sql(`\n  SELECT substr(text, 1, 500) as snippet, timestamp, role\n  FROM messages\n  WHERE session_id = ?\n    AND timestamp > '2026-07-14T18:20:00'\n    AND text IS NOT NULL\n    AND COALESCE(is_meta, 0) = 0\n    AND length(text) > 30\n  ORDER BY timestamp DESC\n  LIMIT 5\n`, codex[0]?.id);\n\n// Any new codex sessions for quiet-zero\nconst newer = sql(`\n  SELECT id, title, started_at, ended_at, message_count\n  FROM sessions\n  WHERE COALESCE(source,'claude') = 'codex'\n    AND project LIKE '%quiet-zero%'\n    AND started_at > '2026-07-14T18:00:00'\n  ORDER BY started_at DESC\n  LIMIT 5\n`);\n\nreturn {\n  main: { id: codex[0]?.id, ended: codex[0]?.ended_at, msgs: codex[0]?.message_count },\n  afterLastSync: tail,\n  newerSessions: newer,\n};\nEOF\nobelisk --query /tmp/q_jul15b.mjs",
+  command: "cat > /tmp/q_jul15b.mjs <<'EOF'\nconst codex = sessions({ source: 'codex', project: '%quiet-zero%', limit: 3 });\n\nconst tail = sql(`\n  SELECT substr(text, 1, 500) as snippet, timestamp, role\n  FROM messages\n  WHERE session_id = ?\n    AND timestamp > '2026-07-14T18:20:00'\n    AND text IS NOT NULL\n    AND COALESCE(is_meta, 0) = 0\n    AND length(text) > 30\n  ORDER BY timestamp DESC\n  LIMIT 5\n`, codex[0]?.id);\n\n// Any new codex sessions for quiet-zero\nconst newer = sql(`\n  SELECT id, title, started_at, ended_at, message_count\n  FROM sessions\n  WHERE COALESCE(source,'claude') = 'codex'\n    AND project LIKE '%quiet-zero%'\n    AND started_at > '2026-07-14T18:00:00'\n  ORDER BY started_at DESC\n  LIMIT 5\n`);\n\nreturn {\n  main: { id: codex[0]?.id, ended: codex[0]?.ended_at, msgs: codex[0]?.message_count },\n  afterLastSync: tail,\n  newerSessions: newer,\n};\nEOF\ntrajex --query /tmp/q_jul15b.mjs",
   description: 'Query for activity since last sync',
 };
 let codexExecOutput = JSON.stringify([{
@@ -297,8 +297,8 @@ function screenshotContentDeviation(event) {
 let wheelTraceRun = 0;
 async function traceWheelPaintContinuity(win, { updateTool = false } = {}) {
   const runId = wheelTraceRun++;
-  const startMark = `obelisk-wheel-${runId}-start`;
-  const endMark = `obelisk-wheel-${runId}-end`;
+  const startMark = `trajex-wheel-${runId}-start`;
+  const endMark = `trajex-wheel-${runId}-end`;
   win.showInactive();
   await delay(180);
   await win.webContents.executeJavaScript(`(() => {
@@ -385,8 +385,8 @@ async function traceWheelPaintContinuity(win, { updateTool = false } = {}) {
       // Production sends both notifications for one daemon build. The global
       // catalogue invalidation must not reload 1000 sessions into the renderer
       // while the current conversation owns the scroll gesture.
-      win.webContents.send('obelisk:index-updated', { affectedSessionIds: [sessionId] });
-      win.webContents.send('obelisk:session-updated', { sessionId });
+      win.webContents.send('trajex:index-updated', { affectedSessionIds: [sessionId] });
+      win.webContents.send('trajex:session-updated', { sessionId });
     }
     await delay(45);
   }
@@ -481,14 +481,14 @@ function rendererTaskMetrics(traceEvents, startMark, endMark) {
 }
 
 async function traceStationaryAppend(win, index, expectedTotal, runIndex) {
-  const startMark = `obelisk-live-commit-${runIndex}-start`;
-  const endMark = `obelisk-live-commit-${runIndex}-end`;
+  const startMark = `trajex-live-commit-${runIndex}-start`;
+  const endMark = `trajex-live-commit-${runIndex}-end`;
   const stopRendererTrace = await startRendererTrace(win);
   await win.webContents.executeJavaScript(`(() => {
     const expected = ${JSON.stringify(String(expectedTotal))};
     const counter = document.querySelector('.flap-number');
     performance.mark(${JSON.stringify(startMark)});
-    window.__obeliskLiveCommitObserved = new Promise(resolve => {
+    window.__trajexLiveCommitObserved = new Promise(resolve => {
       const finish = () => requestAnimationFrame(() => {
         performance.mark(${JSON.stringify(endMark)});
         resolve(true);
@@ -507,8 +507,8 @@ async function traceStationaryAppend(win, index, expectedTotal, runIndex) {
     return true;
   })()`, true);
   appendMessage(win, index);
-  await win.webContents.executeJavaScript('window.__obeliskLiveCommitObserved', true);
-  await win.webContents.executeJavaScript('delete window.__obeliskLiveCommitObserved', true);
+  await win.webContents.executeJavaScript('window.__trajexLiveCommitObserved', true);
+  await win.webContents.executeJavaScript('delete window.__trajexLiveCommitObserved', true);
   return rendererTaskMetrics(await stopRendererTrace(), startMark, endMark);
 }
 
@@ -558,28 +558,28 @@ function appendMessage(win, index) {
     content_type: 'text',
     is_meta: 0,
   });
-  win.webContents.send('obelisk:session-updated', { sessionId });
+  win.webContents.send('trajex:session-updated', { sessionId });
 }
 
 function replaceMessageText(win, uuid, text) {
   const index = messages.findIndex(message => message.uuid === uuid);
   if (index < 0) throw new Error(`Cannot update missing message ${uuid}`);
   messages[index] = { ...messages[index], text };
-  win.webContents.send('obelisk:session-updated', { sessionId });
+  win.webContents.send('trajex:session-updated', { sessionId });
 }
 
 function replaceToolResult(win, toolUseId, content) {
   const index = toolResults.findIndex(result => result.tool_use_id === toolUseId);
   if (index < 0) throw new Error(`Cannot update missing tool result ${toolUseId}`);
   toolResults[index] = { ...toolResults[index], content };
-  win.webContents.send('obelisk:session-updated', { sessionId });
+  win.webContents.send('trajex:session-updated', { sessionId });
 }
 
 function replaceToolInput(win, toolUseId, input, { notify = true } = {}) {
   const index = toolCalls.findIndex(toolCall => toolCall.id === toolUseId);
   if (index < 0) throw new Error(`Cannot update missing tool call ${toolUseId}`);
   toolCalls[index] = { ...toolCalls[index], input_json: JSON.stringify(input) };
-  if (notify) win.webContents.send('obelisk:session-updated', { sessionId });
+  if (notify) win.webContents.send('trajex:session-updated', { sessionId });
 }
 
 async function run() {
@@ -647,7 +647,7 @@ async function run() {
     window.location.hash = ${JSON.stringify(`/sessions/${sessionId}`)};
   })()`, true);
   const coldOpenUpdateTimer = setTimeout(() => {
-    win.webContents.send('obelisk:session-updated', { sessionId });
+    win.webContents.send('trajex:session-updated', { sessionId });
   }, 10);
   await waitFor(
     win.webContents,

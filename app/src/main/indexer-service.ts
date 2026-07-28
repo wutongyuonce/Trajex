@@ -99,7 +99,7 @@ function createIndexerService({
         .on('change', onFileChange)
         .on('unlink', onFileChange)
         .on('error', (error) => {
-          logger.warn?.(`Obelisk watcher failed: ${(error as Error).message}`);
+          logger.warn?.(`Trajex watcher failed: ${(error as Error).message}`);
         });
       watchers.push(watcher);
     }
@@ -143,7 +143,7 @@ function createIndexerService({
     try {
       return writeHeartbeat();
     } catch (error) {
-      logger.warn?.(`Obelisk heartbeat failed: ${(error as Error).message}`);
+      logger.warn?.(`Trajex heartbeat failed: ${(error as Error).message}`);
       return false;
     }
   };
@@ -175,7 +175,7 @@ function createIndexerService({
       .catch((error) => {
         // A build in flight when the service is stopped (e.g. a manual rebuild
         // tears down the worker) is a deliberate cancellation, not a failure.
-        if (!stopped) logger.warn?.(`Obelisk index build failed: ${(error as Error).message}`);
+        if (!stopped) logger.warn?.(`Trajex index build failed: ${(error as Error).message}`);
       })
       .finally(() => {
         running = false;

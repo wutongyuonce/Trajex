@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-**Obelisk** 是一个为 AI 编码助手（Claude Code、Codex、Kimi Code）提供**会话记录索引与查询**的本地运行时。它将各个 AI 工具的聊天记录、工具调用、工作流等结构化写入 SQLite，并提供 FTS5 全文搜索和记忆管理能力。
+**Trajex** 是一个为 AI 编码助手（Claude Code、Codex、Kimi Code）提供**会话记录索引与查询**的本地运行时。它将各个 AI 工具的聊天记录、工具调用、工作流等结构化写入 SQLite，并提供 FTS5 全文搜索和记忆管理能力。
 
 给两类用户使用：
 
@@ -11,7 +11,7 @@
 
 ## 心智模型
 
-把 Obelisk Core 记成三条不能混淆的边界：
+把 Trajex Core 记成三条不能混淆的边界：
 
 1. **Provider 边界**：异构原始会话 JSONL 先被翻译成 `TranscriptRecord`；
 2. **写入边界**：只有 persist 在受事务与 lease 保护时把 records 提交为 SQLite 事实；
@@ -25,7 +25,7 @@
 
 ```ts
 公共门面
-  packages/cli/src/obelisk.ts             ← CLI 参数、脚本读取、JSON 输出
+  packages/cli/src/trajex.ts             ← CLI 参数、脚本读取、JSON 输出
   packages/core/src/core.ts                ← 4 个高层函数：
                                                 buildIndex / searchText
                                                 executeQuery / executeAttune
@@ -67,7 +67,7 @@
   → Provider.parse(unit, cursor)
   → TranscriptRecord generator
   → persist()
-  → ~/.obelisk/obelisk.sqlite + FTS5
+  → ~/.trajex/trajex.sqlite + FTS5
   → createQueryApi() / createAttuneApi()
   → CLI JSON 输出或桌面端读取
 core.buildIndex()
@@ -115,7 +115,7 @@ core.buildIndex()
 
 | 阶段            | 目的                                        | 入口函数                                      |
 | --------------- | ------------------------------------------- | --------------------------------------------- |
-| 1. 命令入口     | 将 `--build` 定义为强制重建                 | `cli/src/obelisk.ts` → `main()`               |
+| 1. 命令入口     | 将 `--build` 定义为强制重建                 | `cli/src/trajex.ts` → `main()`               |
 | 2. 写入资格     | 礼让 daemon，并取得唯一 writer              | `indexer.ts`、`writer-lease.ts`               |
 | 3. 初始化与清理 | 打开、迁移 DB；force 时清除旧派生事实       | `db.ts`、`tx.ts`、`write-coordinator.ts`      |
 | 4. 计划         | 注册 Provider，发现本次需要处理的 units     | `builtins.ts`、`provider-indexing.ts`         |
@@ -124,7 +124,7 @@ core.buildIndex()
 
 #### 阶段 1：命令入口与实现实体
 
-`cli/src/obelisk.ts` 的 `main()` 识别 `--build`，调用从 `core/src/core.ts` 导入的 `buildIndex({ force: true })`。`core.ts` 不再包一层实现；它只是直接 re-export `packages/core/src/indexer.ts` 中的同名 `buildIndex()`。
+`cli/src/trajex.ts` 的 `main()` 识别 `--build`，调用从 `core/src/core.ts` 导入的 `buildIndex({ force: true })`。`core.ts` 不再包一层实现；它只是直接 re-export `packages/core/src/indexer.ts` 中的同名 `buildIndex()`。
 
 因此，真正的总编排器是 `indexer.ts` 的 `buildIndex()`：它负责判断能否写、决定写什么、逐项提交、最后收尾。
 
@@ -209,13 +209,13 @@ Provider 不依赖数据库，`persist.ts` 和 `session-detail.ts` 不应识别�
 
 
 
-### 一、@obelisk/core（核心包）
+### 一、@trajex/core（核心包）
 
 #### 1. 统一入口
 
 | 文件       | 定位                                                         | 关键关系                                                     |
 | ---------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| core.ts    | **Core 的聚合面** — 向外暴露 4 个高层函数                    | 依赖 `db.ts`, `indexer.ts`, `query.ts`, `writer-lease.ts`；被 CLI 的 `obelisk.ts` 直接 `import` |
+| core.ts    | **Core 的聚合面** — 向外暴露 4 个高层函数                    | 依赖 `db.ts`, `indexer.ts`, `query.ts`, `writer-lease.ts`；被 CLI 的 `trajex.ts` 直接 `import` |
 | persist.ts | **唯一写数据库的层** — 消费 `TranscriptRecord` 流写入 SQLite | 被 `provider-indexing.ts` 调用；依赖 `sqlite-types.ts` 和 `providers/types.ts` |
 
 #### 2. 数据库层
@@ -266,31 +266,31 @@ Provider 不依赖数据库，`persist.ts` 和 `session-detail.ts` 不应识别�
 | providers/codex.ts    | **Codex 适配器** — 发现 `~/.codex/sessions/` 下的 JSONL 并解析 | 同上；特点：**全量重解析**（`countMode: 'total'`），处理 `event_msg`/`response_item` 双向关联 |
 | providers/kimi.ts     | **Kimi Code 适配器** — 发现 `~/.kimi-code/sessions/` 下的目录结构 | 同上；特点：从 `state.json` + `wire.jsonl` 多文件投影会话；支持 `context.undo/clear/compaction` 等复杂操作 |
 
-### 二、@obelisk-apps/cli（CLI 包）
+### 二、@trajex-apps/cli（CLI 包）
 
 | 文件           | 定位                                            | 关键关系                                                     |
 | -------------- | ----------------------------------------------- | ------------------------------------------------------------ |
-| src/obelisk.ts | **CLI 入口**— 命令行参数解析 & 路由到 core 函数 | 直接 `import` `core.ts` 导出的 `buildIndex`, `searchText`, `executeQuery`, `executeAttune`, `DB_PATH` |
+| src/trajex.ts | **CLI 入口**— 命令行参数解析 & 路由到 core 函数 | 直接 `import` `core.ts` 导出的 `buildIndex`, `searchText`, `executeQuery`, `executeAttune`, `DB_PATH` |
 
-`package.json` 中的 `"bin": {"obelisk": "dist/cli/src/obelisk.js"}` 使其可通过 `obelisk` 命令调用。
+`package.json` 中的 `"bin": {"trajex": "dist/cli/src/trajex.js"}` 使其可通过 `trajex` 命令调用。
 
-## CLI 入口核心调用链 `cli/src/obelisk.ts`
+## CLI 入口核心调用链 `cli/src/trajex.ts`
 
 CLI 只做参数路由、脚本文件读取和 JSON 输出。它不拥有数据库连接、Provider 选择或检索逻辑。
 
 | 用户动作                   | CLI 调用                               | 可观察结果                         |
 | -------------------------- | -------------------------------------- | ---------------------------------- |
-| `obelisk --version` / `-v` | 读取 CLI 自身 `package.json`           | 纯文本版本；不访问数据库           |
-| `obelisk --build`          | core.ts `buildIndex({ force: true })`  | 强制重建会话派生数据，输出 DB 路径 |
-| `obelisk --search "text"`  | core.ts `searchText(text)`             | 刷新可用时的索引，再输出 FTS 命中  |
-| `obelisk --query file.js`  | core.ts `executeQuery(scriptContent)`  | 在只读 JS 沙箱执行，输出 return 值 |
-| `obelisk --attune file.js` | core.ts `executeAttune(scriptContent)` | 在 writer lease 内执行 memory 变更 |
-| `obelisk install`          | `npx --yes skills add ...`             | 安装独立 skill，不进入 Core        |
+| `trajex --version` / `-v` | 读取 CLI 自身 `package.json`           | 纯文本版本；不访问数据库           |
+| `trajex --build`          | core.ts `buildIndex({ force: true })`  | 强制重建会话派生数据，输出 DB 路径 |
+| `trajex --search "text"`  | core.ts `searchText(text)`             | 刷新可用时的索引，再输出 FTS 命中  |
+| `trajex --query file.js`  | core.ts `executeQuery(scriptContent)`  | 在只读 JS 沙箱执行，输出 return 值 |
+| `trajex --attune file.js` | core.ts `executeAttune(scriptContent)` | 在 writer lease 内执行 memory 变更 |
+| `trajex install`          | `npx --yes skills add ...`             | 安装独立 skill，不进入 Core        |
 
-### 构建索引流程 (`obelisk --build`)
+### 构建索引流程 (`trajex --build`)
 
 ```
-obelisk.ts --build
+trajex.ts --build
   → core.ts buildIndex({ force: true })
     → indexer.ts buildIndex()
       → acquireWriterLease()          // 获取锁
@@ -309,10 +309,10 @@ obelisk.ts --build
       → release()                     // 释放锁
 ```
 
-### 搜索流程 (`obelisk --search "xxx"`)
+### 搜索流程 (`trajex --search "xxx"`)
 
 ```
-obelisk.ts --search "xxx"
+trajex.ts --search "xxx"
   → core.ts searchText("xxx")
     → buildIndex()                    // 先索引最新数据
     → openReadDb()
@@ -321,10 +321,10 @@ obelisk.ts --search "xxx"
     → db.close()
 ```
 
-### 查询脚本流程 (`obelisk --query <file>`)
+### 查询脚本流程 (`trajex --query <file>`)
 
 ```
-obelisk.ts --query <file.js>
+trajex.ts --query <file.js>
   → core.ts executeQuery(scriptContent)
     → buildIndex()
     → openReadDb()
@@ -333,10 +333,10 @@ obelisk.ts --query <file.js>
     → db.close()
 ```
 
-### 记忆操作流程 (`obelisk --attune <file>`)
+### 记忆操作流程 (`trajex --attune <file>`)
 
 ```
-obelisk.ts --attune <file.js>
+trajex.ts --attune <file.js>
   → core.ts executeAttune(scriptContent)
     → buildIndex()
     → 检查 daemon 活跃状态
@@ -347,35 +347,11 @@ obelisk.ts --attune <file.js>
     → release()
 ```
 
----
-
-## Provider 适配器对比
-
-| 特性         | Claude                          | Codex                           | Kimi                                                 |
-| ------------ | ------------------------------- | ------------------------------- | ---------------------------------------------------- |
-| 数据来源     | `~/.claude/projects/**/*.jsonl` | `~/.codex/sessions/**/*.jsonl`  | `~/.kimi-code/sessions/**/state.json` + `wire.jsonl` |
-| 发现方式     | 目录遍历 + mtime                | 目录遍历 + guardian 检测        | 目录遍历 + session_dir                               |
-| 解析方式     | 流式逐行，支持 delta            | 全量缓冲，event/response 关联   | 全量投影，支持 undo/compaction                       |
-| countMode    | delta (增量)                    | total (全量)                    | total (全量重删)                                     |
-| 特殊能力     | 子代理 / 工作流                 | guardian 线程删除 / agent spawn | context.undo / context.clear / compaction            |
-| 原始消息获取 | `rawClaude()` 行匹配            | `rawCodex()` 行号定位           | `rawFromWire()` 文件分割                             |
-
-
-
 
 
 
 
 ## 一、总体数据流
-
-```
-Codex / Claude / Kimi 原始会话文件
-  -> Provider Adapter 解析不同格式
-  -> 统一成 TranscriptRecord
-  -> Persist Layer 写入 SQLite
-  -> FTS 全文索引
-  -> CLI 查询 / Electron App 展示 / Memory 沉淀
-```
 
 ```ts
 buildIndex()
@@ -386,13 +362,612 @@ buildIndex()
   -> persist(...)
 ```
 
+```ts
+Provider Adapter 适配器解析不同格式 (claude.ts / codex.ts / kimi.ts)
+    │  统一 yield TranscriptRecord[]
+    ▼
+persist.ts (写库 SQLite)
+    │  INSERT / UPDATE / DELETE
+    ▼
+┌────────────────────────────────────────────────────┐
+│  sessions  ← 工具调用时用到的文件路径索引             │
+│  messages  ← 触发器 → messages_fts (FTS 全文搜索)    │
+│  tool_calls  工具调用与结果关联                       │
+│  tool_results  ↓                                    │
+│  subagents    子代理（含 workflow_agents）            │
+│  workflows    ↓                                     │
+│  workflow_agents                                   │
+│  summaries                                         │
+├────────────────────────────────────────────────────┤
+│  index_state  ← 索引进度追踪（__last_build__ 等）     │
+├────────────────────────────────────────────────────┤
+│  memories  ← 人工写入 → memories_fts (FTS 记忆搜索)  │
+│              (attend API: remember / forget)        │
+└────────────────────────────────────────────────────┘
+    ▲
+query.ts (查询 API)
+    │  search() / context() / sessions() / memories()
+    │  sql() / overview() / raw()
+    ▼
+CLI / Electron App
+```
 
+## Provider Adapter 适配器
 
+Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解自己的日志格式，翻译成统一 TranscriptRecord**：
 
+| 特性         | Claude                          | Codex                           | Kimi                                                 |
+| ------------ | ------------------------------- | ------------------------------- | ---------------------------------------------------- |
+| 数据来源     | `~/.claude/projects/**/*.jsonl` | `~/.codex/sessions/**/*.jsonl`  | `~/.kimi-code/sessions/**/state.json` + `wire.jsonl` |
+| 发现方式     | 目录遍历 + mtime                | 目录遍历 + guardian 检测        | 目录遍历 + session_dir                               |
+| 解析方式     | 流式逐行，支持 delta            | 全量缓冲，event/response 关联   | 全量投影，支持 undo/compaction                       |
+| countMode    | delta (增量)                    | total (全量)                    | total (全量重删)                                     |
+| 特殊能力     | 子代理 / 工作流                 | guardian 线程删除 / agent spawn | context.undo / context.clear / compaction            |
+| 原始消息获取 | `rawClaude()` 行匹配            | `rawCodex()` 行号定位           | `rawFromWire()` 文件分割                             |
 
-### `TranscriptRecord` 事实条目
+它负责：
 
-Obelisk 最重要的中间抽象是 `TranscriptRecord`。它把不同 provider 的原始日志统一成几类事实条目：
+  - 负责找到变化了的文件：discover() 去 ~/.codex/sessions 发现 JSONL 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断文件有没有变
+
+    > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
+    >
+    > * Claude 是 line-incremental，所以 Claude cursor 里的 `linesProcessed` 会被用来跳过旧行。
+    >
+    > * Codex 是 full-reparse，所以对 Codex：
+    >
+    >   ```
+    >   mtime 用来判断文件有没有变
+    >   linesProcessed 更多是记录文件当前总行数
+    >   ```
+
+  - 负责解析文件内容：parse() 读取某个 JSONL，把它翻译成 TranscriptRecord
+
+  - 负责回查原文：raw() 根据 SQLite message uuid 找回原始 JSONL 行
+
+  - 负责告诉 app 监听哪里：watchRoots() 告诉 app daemon 应该监听哪些目录
+
+## Provider Adapter 与统一事实流的完整契约 `types.ts`
+
+`types.ts` 的作用是规定跨模块传递的数据形状。可以把它看成 Trajex 的“海关申报单”：Claude、Codex、Kimi 各自带着完全不同的原始文件格式进来，但一旦越过 Provider 边界，后面的索引、写库、查询、CLI 和 Electron 都只接收这份统一申报单，不再判断原始 JSONL 是谁生成的。
+
+```text
+Provider 专有世界                         Provider 无关世界
+────────────────────────────────────    ──────────────────────────────────────
+claude.ts / codex.ts / kimi.ts           provider-indexing.ts
+目录、JSONL、SQLite、mtime、辅助文件       persist.ts / schema.sql / query.ts
+            │                                      │
+            └── types.ts：IndexUnit、Cursor、TranscriptRecord、ProviderAdapter ──┘
+```
+
+这条边界有两个方向：
+
+- 向下，索引编排层把“上一次处理到哪里”和“本次应处理什么”交给 Provider；对应 `DiscoverContext`、`Cursor`、`IndexUnit`。
+- 向上，Provider 只 `yield TranscriptRecord`，持久化层将其写入 SQLite，读取层只查询 SQLite 或在需要原文时调用统一的 `raw()` 回源接口。
+
+因此本节应配合主线阅读：先了解一个 adapter 如何发现和解析，再看同一份 `TranscriptRecord` 怎样被 `persist.ts` 分派到各表，最后看 `query.ts`、CLI、Electron 如何消费写好的事实。
+
+### `parse()` 实际返回流式 Generator，不是一次性数组
+
+主线图里常写成“Provider 统一 yield `TranscriptRecord[]`”，它表达的是“产出统一记录集合”，但 TypeScript 中的准确签名是流式 Generator：
+
+```ts
+parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRecord, Cursor>
+```
+
+含义分成两半：
+
+```text
+provider.parse(unit, oldCursor)
+  → yield record 1：session / message / tool_call / ...
+  → yield record 2
+  → ...
+  → return newCursor
+```
+
+`persist.ts` 一边迭代 generator，一边将每条 record 写入当前 SQLite 事务；generator 正常结束后，它才取得 `return` 的 `newCursor` 并写进 `index_state`。这样一个超长 transcript 不必先在内存里堆成数组，并且“事实已写入”和“进度已经前移”位于同一个 unit 的原子事务内。
+
+```text
+providers/{claude,codex,kimi}.ts 的 ProviderAdapter
+  → discover(context) 产出 IndexUnit[]
+  → parse(unit, cursor) 流式 yield TranscriptRecord，return Cursor
+  → persist(db, unit, generator)
+      → 按 record.kind 执行 INSERT / UPSERT / UPDATE / DELETE
+      → generator 完成后更新 index_state[unit.key]
+  → query.ts / Electron IPC 从事实表读取；必要时 adapter.raw() 回到原始来源
+```
+
+`TranscriptRecord` 是可辨识联合（discriminated union）：每个成员都有字面量 `kind`。`persist.ts` 只需对 `record.kind` 做 `switch`，TypeScript 就能收窄到正确字段集合；Provider 不能把 Claude 私有字段偷偷交给持久化层，持久化层也不需要导入 Claude/Codex 的原始类型。
+
+### 13.2 索引调度契约：`Cursor`、`IndexUnit`、`DiscoverContext`
+
+#### `Cursor`
+
+```ts
+type Cursor = string | null;
+```
+
+它是“不透明的进度水位”。调度层只负责保存和原样交回，不能解析其文本含义；生产该 cursor 的 Provider 才知道它表示什么。
+
+```text
+index_state 的 key = unit.key
+index_state 的 value = Cursor
+       │
+       ├─ Claude 可能解释为 "mtime:已处理行数"
+       ├─ Codex 可以解释为它自己的索引版本或时间水位
+       └─ Kimi 可以解释为另一种文件/记录位置
+```
+
+`null` 表示没有可恢复进度：初次索引、强制 replay，或 Provider 认为旧游标不再可靠时都会从这一状态开始。用 `string` 而不是一个共享结构，是刻意的隔离：新增一种来源不需要改全局 cursor schema。
+
+#### `IndexUnit`
+
+一个 `IndexUnit` 是“本次索引最小的可提交工作单元”，并不等同于“一个 JSONL 文件”。JSONL Provider 可以用文件作为 unit；未来 SQLite/目录树 Provider 也可以用 `数据库路径#内部会话 ID` 作为 unit。`indexProviderPlan()` 对 unit 逐个开事务，意味着坏的一个文件可以被记录为 skipped，而不污染其他 unit。
+
+| 字段                   | 含义与去向                                                   |
+| ---------------------- | ------------------------------------------------------------ |
+| `key: string`          | unit 的稳定身份，也是 `index_state` 查询/写回 cursor 的 key。它必须在同一来源下稳定；路径、内部 ID 或二者组合都可以。 |
+| `sessionId: string`    | 这个 unit 归属的规范化 session ID。调度器用它聚合计划、报告影响范围；Provider 也用它给 `SessionRecord`、`MessageRecord` 等填关联键。 |
+| `project?: string`     | 来源已经能识别出的项目 slug。可缺失；真正的 `sessions.project_path` 不由它直接决定，而是在所有消息写完后用 `cwd` 全局推断。 |
+| `isSubagent?: boolean` | 表示此 unit 是子 Agent transcript，而非主线会话。它指导解析器把消息标成 sidechain / 关联 agent，而不是把它当作独立顶层会话。 |
+| `agentId?: string`     | 子 Agent 的规范 ID。`isSubagent` 是布尔语义，`agentId` 是可关联的具体身份；解析出的 `messages.agent_id` 与 `subagents.agent_id` 用它相连。 |
+| `meta?: unknown`       | Provider 私有负载，例如扫描时已取得的辅助路径、线程 metadata 或解析提示。编排层绝不读取或序列化解释它，只把原对象传给 `parse()`。 |
+
+这里 `meta` 是 `unknown` 而不是 `any`：Provider 在自己的实现中必须先收窄类型；共享层无法偶然依赖某个 Provider 的私有结构。
+
+#### `DiscoverContext`
+
+这是 `provider.discover(ctx)` 获得的唯一共享上下文：
+
+| 成员                      | 含义                                                         |
+| ------------------------- | ------------------------------------------------------------ |
+| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的 cursor。Provider 用它比较 mtime、行数或内部版本，决定忽略、增量解析，还是全量 replay。 |
+| `changedPaths?: string[]` | Electron daemon 监听到文件变化时提供的路径缩小范围。它是优化提示，不是事实来源；Provider 仍要保证漏传或没有它时的完整 discover 正确。 |
+
+所以发现阶段不是“索引”。`discover()` 只回答“有哪些 unit 值得处理”；真正读取原始内容从 `parse()` 开始，真正改变数据库从 `persist()` 开始。
+
+### 13.3 `TranscriptRecord`：十种规范事实/操作
+
+```ts
+type TranscriptRecord =
+  | SessionRecord | MessageRecord | ToolCallRecord | ToolResultRecord
+  | SummaryRecord | SubagentRecord | WorkflowRecord | WorkflowAgentRecord
+  | MessageTurnDurationRecord | DeleteSessionRecord;
+```
+
+前八种主要是事实投影；最后两种是对既有事实做定点更新或撤回的操作。以下“表”指 `schema.sql` 中的持久化目标；所有记录都会在 `persist.ts` 的同一事务内被消费。
+
+#### 13.3.1 `SessionRecord` → `sessions`
+
+`SessionRecord` 是一次会话的聚合行，通常在一个 unit 的消息流已扫描完后发出，因为开始/结束时间和 message count 往往要跨整份 transcript 才能确定。
+
+| 字段                      | 含义                                                         |
+| ------------------------- | ------------------------------------------------------------ |
+| `kind: 'session'`         | 联合类型的分派标记。                                         |
+| `id`                      | 规范 session 主键；其他记录的 `session_id` 必须指向它。Claude 常用原 session ID，Codex 会使用带 `codex:` 前缀的规范 ID。 |
+| `title`                   | 会话标题；可来自主 transcript 或 provider 辅助索引。`null` 表示来源没有可靠标题。 |
+| `project`                 | 项目 slug，用于筛选/分组；不是实际磁盘路径。                 |
+| `started_at` / `ended_at` | 会话开始和最后活动时间；允许 `null`，因为部分来源不完整。    |
+| `git_branch`              | 当时的 Git 分支；没有就为 `null`。                           |
+| `version`                 | 产生记录的 Agent CLI/应用版本。                              |
+| `message_count`           | 当前 unit 此次提供的主线消息计数，具体合并方式由 `countMode` 决定。 |
+| `countMode`               | `'delta'` 表示本次只有新增消息、持久化时累加；`'total'` 表示本次给出完整数量、持久化时覆盖。Claude 增量解析通常用 delta，Codex 全量线程解析通常用 total；空 cursor 下的 delta 等价于 total。 |
+| `jsonl_path`              | 此 session 的主要原始 transcript 路径，用于证据定位/回源；它不是工具使用的文件路径。 |
+| `source`                  | Provider 名称，例如 `claude`、`codex`、`kimi`，写入 `sessions.source`。 |
+
+`project_path` 不在该接口中。`indexer.ts` 的 `refreshSessionProjectPaths()` 会在所有 unit 写完后，从持久化的 `messages.cwd` 统计并调用 `inferProjectPath()` 推断它。这避免 Provider 在各自局部视角中做不一致的路径猜测。
+
+#### 13.3.2 `MessageRecord` → `messages`，并由触发器同步 `messages_fts`
+
+`MessageRecord` 是整个模型最核心的事实。`MessageVisibility` 的取值只允许 `'visible' | 'hidden'`：可见性是在 Provider 解析时规范化的，展示层不会靠文本内容再次猜测系统上下文是否应显示。
+
+| 字段                             | 含义                                                         |
+| -------------------------------- | ------------------------------------------------------------ |
+| `kind: 'message'`                | 分派标记。                                                   |
+| `uuid`                           | 消息主键。Claude 通常复用原 uuid；没有天然 uuid 的来源可稳定地构造，例如 `codex:<thread>:<line>`。 |
+| `session_id`                     | 所属 session，关联 `sessions.id`。                           |
+| `type`                           | 来源消息类别原样/规范化后的分类，如 user、assistant。        |
+| `parent_uuid`                    | 父消息 ID；`null` 表示根节点。`query.trace()` 和 context 会用它回溯对话链。 |
+| `timestamp`                      | 消息时间；可为 `null`。                                      |
+| `role`                           | 对话角色，如 user、assistant、developer；可为 `null`。       |
+| `text`                           | 可检索、可展示的文本投影；可能截断、可能为 `null`。原始完整内容应通过 `raw()` 回源。 |
+| `content_type`                   | 内容性质，如 text、thinking、tool_use、tool_result、skill_instructions、unknown。它帮助详情层决定怎样组合/渲染。 |
+| `is_meta`                        | `0 | 1`，是否元消息，例如系统提示、环境上下文或 skill 指令。整数而非 boolean 是 SQLite 友好表示。 |
+| `visibility`                     | `visible` / `hidden`；hidden 可仍入库供证据和关联使用，但默认展示会排除。 |
+| `model`                          | 模型名称；来源未报告时为 `null`。                            |
+| `is_sidechain`                   | `0 | 1`，是否子 Agent/旁支消息。它与 `agent_id` 一起区分主会话和子线程。 |
+| `agent_id`                       | 所属子 Agent ID；主线消息为 `null`。关联 `subagents.agent_id` 或 workflow agent 身份。 |
+| `input_tokens` / `output_tokens` | 归一化 token 用量；输入包含 Provider 报告的缓存输入。没有可靠数字时为 `null`，不能伪造 0。 |
+| `cwd`                            | 消息产生时的工作目录，是最终推断 `sessions.project_path` 的主要证据。 |
+| `skill`                          | Claude attribution skill 等 skill 来源；普通消息为 `null`。  |
+| `source`                         | 来源标签，支持按 provider 筛选、展示图标和回源。             |
+
+`messages` 写入、更新、删除会触发 `messages_fts` 同步。FTS 保存的是全文检索倒排索引；`query.search()` 用它找候选消息，再 join 回普通表取 session、时间和上下文，不能把 FTS 虚表当作权威消息存储。
+
+#### 13.3.3 `ToolCallRecord` → `tool_calls`
+
+一条 assistant 消息可以发起零到多次工具调用：
+
+| 字段                | 含义                                                         |
+| ------------------- | ------------------------------------------------------------ |
+| `kind: 'tool_call'` | 分派标记。                                                   |
+| `id`                | 工具调用主键，也是结果和 subagent/workflow 父引用使用的 ID。 |
+| `message_uuid`      | 发起调用的 assistant 消息，关联 `messages.uuid`。            |
+| `session_id`        | 冗余保存的 session 外键，便于按会话检索而不用每次 join。     |
+| `name`              | 工具名，如 Read、Edit、Bash、Agent、Workflow、shell。        |
+| `presentation`      | `'default'` 是普通工具展示；`'skill'` 表示应按 skill 调用处理。 |
+| `input_json`        | 工具输入的 JSON 字符串；保留字符串可避免 Provider 之间参数形状被强行统一。 |
+| `file_path`         | 能从调用参数识别出的目标文件路径。`query.fileHistory()` 正是从 `tool_calls.file_path` 查文件历史。 |
+
+这里需要修正主线图中“`sessions` ← 工具调用时用到的文件路径索引”的表述：工具调用的主要文件路径在 `tool_calls.file_path`，结果相关路径在 `tool_results.file_path`；`sessions` 的路径字段是原 transcript 的 `jsonl_path`，以及最终推断出的 `project_path`。
+
+#### 13.3.4 `ToolResultRecord` → `tool_results`
+
+| 字段                  | 含义                                                         |
+| --------------------- | ------------------------------------------------------------ |
+| `kind: 'tool_result'` | 分派标记。                                                   |
+| `tool_use_id`         | 对应的工具调用，关联 `tool_calls.id`。                       |
+| `message_uuid`        | 承载结果的消息，常是 Claude 的 user/tool-result 消息，也可能是其他 Provider 关联出的消息。 |
+| `session_id`          | 所属会话。                                                   |
+| `content`             | 工具返回文本；可能由索引策略截断。                           |
+| `file_path`           | 结果关联的文件路径；可为空。                                 |
+| `is_error`            | `0 | 1` 错误标记。`query.failures()` 会结合它与 shell 退出信息定位失败。 |
+
+关系是 `messages → tool_calls → tool_results`，但结果在 transcript 中可晚于调用出现，所以 Provider 只需按原始顺序 yield；`persist` 负责以 ID 建立可查询事实。
+
+#### 13.3.5 `SummaryRecord` → `summaries`
+
+| 字段              | 含义                                                         |
+| ----------------- | ------------------------------------------------------------ |
+| `kind: 'summary'` | 分派标记。                                                   |
+| `id`              | 摘要主键。                                                   |
+| `session_id`      | 所属会话。                                                   |
+| `timestamp`       | 摘要时间，可为空。                                           |
+| `source`          | 摘要来源/子类型，例如 Claude 的 `away_summary`。注意它与 provider 的 `source` 列不是同一概念。 |
+| `content`         | 摘要正文。                                                   |
+
+`query.summaries()` 读取这张表。它保存的是来源已经产生的摘要，不等同于用户批准的长期 memory。
+
+#### 13.3.6 `SubagentRecord` → `subagents`
+
+| 字段                  | 含义                                                        |
+| --------------------- | ----------------------------------------------------------- |
+| `kind: 'subagent'`    | 分派标记。                                                  |
+| `agent_id`            | 子 Agent 主键，同时匹配该子线程消息的 `messages.agent_id`。 |
+| `session_id`          | 所挂靠的父会话。                                            |
+| `parent_tool_use_id?` | 启动子 Agent 的工具调用 ID；未知时省略或 `null`。           |
+| `agent_type?`         | 类型，如 reviewer、general-purpose。                        |
+| `description?`        | 任务描述或昵称。                                            |
+| `duration_ms?`        | 运行时长。                                                  |
+| `total_tokens?`       | 子 Agent 总 token。                                         |
+
+问号表示调用方可不提供该属性，`| null` 表示提供但来源明确为空；两者最终都允许写成 SQL NULL。之所以宽松，是因为 spawn 事件和子线程自身文件可能分别贡献不同字段。`persist` 对这类上游分段事实按列合并，不用后到的空值覆盖先到的已知值。
+
+`subagents` 不是子 Agent 的对话正文。正文仍在 `messages`，并以 `messages.agent_id = subagents.agent_id` 表示归属。
+
+#### 13.3.7 `WorkflowRecord` → `workflows`
+
+| 字段                           | 含义                                                         |
+| ------------------------------ | ------------------------------------------------------------ |
+| `kind: 'workflow'`             | 分派标记。                                                   |
+| `run_id`                       | 一次 workflow run 的主键。                                   |
+| `session_id`                   | 所属会话。                                                   |
+| `parent_tool_use_id?`          | 发起 Workflow 工具调用的 ID。                                |
+| `task_id`                      | 来源中的任务 ID。                                            |
+| `script`                       | workflow 脚本内容。                                          |
+| `result_json`                  | 结果 JSON 原文。                                             |
+| `timestamp`                    | run 时间。                                                   |
+| `agent_count`                  | Provider 报告的 agent 数量，供展示使用；持久化层仍可根据实际 `workflow_agents` 计算权威聚合。 |
+| `duration_ms` / `total_tokens` | 总耗时、总 token；未知为 `null`。                            |
+| `status`                       | 如 running、completed、failed。                              |
+| `workflow_name`                | workflow 名称；可为空。                                      |
+
+#### 13.3.8 `WorkflowAgentRecord` → `workflow_agents`
+
+它是 workflow 内的成员明细，不是 `subagents` 的子表。两者都描述 Agent，但关联维度不同：`subagents` 描述由会话工具启动的子线程；`workflow_agents` 描述某个 `run_id` 内的执行成员。
+
+公共键是 `agent_id`、`run_id`、`session_id`；其余字段都可选/可空：
+
+| 字段                                    | 含义                                          |
+| --------------------------------------- | --------------------------------------------- |
+| `agent_type` / `description`            | agent 类型和任务说明，常来自子代理 metadata。 |
+| `phase` / `label`                       | workflow 内阶段和展示标签。                   |
+| `model`                                 | 此 workflow agent 所用模型。                  |
+| `state`                                 | 执行状态。                                    |
+| `duration_ms` / `tokens` / `tool_calls` | 该成员的耗时、token、工具调用次数。           |
+
+同一 row 可能由两个独立 unit、且以任意顺序产出：子代理 `.meta.json` 只知道类型/描述，workflow run JSON 只知道阶段、状态和统计。`persist` 的冲突更新使用逐列 `COALESCE(excluded.col, col)` 合并，因此所有贡献者必须生成相同的 `agent_id`，否则会变成两条不完整记录。
+
+#### 13.3.9 `MessageTurnDurationRecord` → 定向更新 `messages.turn_duration_ms`
+
+```ts
+{ kind: 'message-turn-duration', uuid, turn_duration_ms }
+```
+
+它不是一张独立表，而是补写一条已经存在的消息的 assistant turn 耗时。来源可能在后续事件/文件中才透露该时长，所以 Provider 不必重写完整 `MessageRecord`；`persist` 按 `uuid` 做定向 `UPDATE`，只影响 `turn_duration_ms`，不触碰消息其余列。
+
+#### 13.3.10 `DeleteSessionRecord` → 删除该会话的派生事实
+
+```ts
+{ kind: 'delete-session', sessionId }
+```
+
+同样不是表行。Provider 在识别到不应被展示/索引的会话时发出它，例如 Codex guardian 或 auto-review 线程。`persist` 按 `sessionId` 清除该 session 下相关事实，防止旧 cursor 或先前索引残留出现在查询中。它不意味着删除用户人工写入的 `memories`：memory 是单独的用户域数据，不能被来源 replay 随意清空。
+
+### 13.4 Provider 接口：谁负责发现，谁负责解析
+
+```ts
+interface Provider {
+  readonly name: string;
+  discover(ctx: DiscoverContext): IndexUnit[];
+  parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRecord, Cursor>;
+}
+```
+
+| 成员                  | 职责与边界                                                   |
+| --------------------- | ------------------------------------------------------------ |
+| `name`                | 稳定 provider 标签，写入消息和 session 的 `source`，如 `claude`、`codex`。它是数据身份，不应随 UI 文案变化。 |
+| `discover(ctx)`       | 扫描自己的根目录/数据库/辅助文件，读取 `ctx.lastCursor()` 做变更判断，返回待处理 unit。它不应写 Trajex 主数据库。 |
+| `parse(unit, cursor)` | 读取一个已发现 unit，从 cursor 继续或全量解析，将来源事件翻译为规范 record 流，最终 `return` 新 cursor。它不应直接调用 SQLite SQL。 |
+
+这就是“Provider Adapter 解析不同格式”的精确定义：不是让三个解析器遵循相同文件格式，而是让它们都实现相同的发现、流式解析和回源能力。格式相关的目录结构、mtime 规则、原始 ID 生成、子线程发现和字段提取留在 `claude.ts`、`codex.ts`、`kimi.ts`；跨来源的一致写入留在 `persist.ts`。
+
+### 13.5 描述、监视、原文回源：`ProviderDescriptor`、`RawLookup`、`RawRecord`、`ProviderAdapter`
+
+#### `ProviderDescriptor`
+
+```ts
+interface ProviderDescriptor {
+  readonly id: string;
+  readonly name: string;
+  readonly vendor: string;
+  readonly defaultRoot: string;
+  readonly color: string;
+}
+```
+
+它是给 registry、设置页和 renderer 使用的序列化展示元数据，而不是索引记录：
+
+| 字段          | 含义                                                         |
+| ------------- | ------------------------------------------------------------ |
+| `id`          | 稳定机器 ID，用 registry 查找、配置 `providerRoots` 和版本 marker。 |
+| `name`        | 面向用户的名称，例如 Claude/Codex/Kimi。                     |
+| `vendor`      | 厂商名称，用于设置与 UI 分组。                               |
+| `defaultRoot` | 默认数据根目录。用户可覆盖它；它不是已发现的具体 session 路径。 |
+| `color`       | UI 的来源颜色提示。它不参与 SQL 或解析语义。                 |
+
+所有属性都是 `readonly`：Consumer 只能读取 descriptor，不能在运行时把 Provider 的身份或默认目录改坏。
+
+#### `RawLookup`：读已索引行后如何回到来源
+
+数据库的 `messages.text` 是查询/展示投影，可能截断；当详情页要展开原始 JSONL 行时，`query.raw()` 经 registry 调用对应 adapter 的 `raw(input)`。传入值为：
+
+| 字段             | 含义                                                         |
+| ---------------- | ------------------------------------------------------------ |
+| `source`         | 应选择哪个 ProviderAdapter；通常来自已查询 message/session 的 source。 |
+| `messageUuid`    | 要取的规范消息 ID。Provider 用它定位原始事件/行。            |
+| `session`        | 已查出的 session 行，或 `null`；其中的 `jsonl_path`、项目等帮助 Provider 定位来源。用 `Record<string, unknown>` 防止类型层绑定某个 SQLite binding 的 Row 类型。 |
+| `agentId`        | 子 Agent 身份；主线消息为 `null`。可帮助 Provider 选择 child transcript。 |
+| `subagent?`      | 已查出的子代理行；没有子代理上下文时省略或 `null`。          |
+| `workflowAgent?` | 已查出的 workflow agent 行；没有 workflow 上下文时省略或 `null`。 |
+
+这些辅助行不是绕开 SQLite 的捷径，而是让 Provider 无需重新猜测 session 与子线程关系。`readonly` 也表明 `raw()` 只能读取来源，不应修改上游或数据库。
+
+#### `RawRecord`：原文的可分页返回值
+
+| 字段           | 含义                                                         |
+| -------------- | ------------------------------------------------------------ |
+| `text`         | 本次请求应展示的文本片段。必填，即使为空也以空字符串表达。   |
+| `totalLength?` | 完整可展开文本的总长度。                                     |
+| `offset?`      | 此片段在完整文本中的起始位置。                               |
+| `limit?`       | 本次返回上限。                                               |
+| `hasMore?`     | 后面是否还有内容；renderer 据此展示“继续展开”。              |
+| `messageText?` | Provider 投影的完整消息体，可为 `null`；用于展示完整解析消息，不一定等于原始行的 `text`。 |
+
+因此原文接口可以安全处理超长工具输出：默认只返回一段，不强迫 Electron renderer 或 CLI 一次读入和渲染整个文件。
+
+#### `ProviderAdapter`：完整可注册对象
+
+```ts
+interface ProviderAdapter extends Provider {
+  readonly descriptor: ProviderDescriptor;
+  readonly indexVersionMarker?: string;
+  watchRoots(configuredRoot: string): string[];
+  raw(input: RawLookup): RawRecord | null;
+}
+```
+
+它在 `Provider` 的索引能力之外，补齐产品运行时需要的能力：
+
+| 成员                         | 用途                                                         |
+| ---------------------------- | ------------------------------------------------------------ |
+| `descriptor`                 | 让 `providers/builtins.ts` / registry 将 adapter 暴露给设置页、CLI/App 配置和 UI。 |
+| `indexVersionMarker?`        | Provider 的投影规则版本。如果 marker 缺失或变化，`createProviderIndexPlan()` 会安排该 Provider 全量 replay，防止旧字段投影和新字段投影混在同一库中。可选是为了兼容尚未定义版本语义的 adapter。 |
+| `watchRoots(configuredRoot)` | 根据用户配置根目录给 Electron watcher 返回实际需要监听的目录；一个 Provider 可监听主 transcript、history、session index 等多个根。 |
+| `raw(input)`                 | 根据规范 lookup 回读原始消息。找不到、来源不支持或已删除时返回 `null`，而不是抛出“数据库记录必然存在原文”的错误。 |
+
+`ProviderAdapter` 因而是 registry 真正接受的完整适配器；`Provider` 则是索引编排只需要的最小子集。前者不要求 `persist` 知道 UI，后者也不要求每个索引调用方依赖 Electron watcher。
+
+### 13.6 从 `kind` 到 SQLite，再到 Query/CLI/App
+
+下表把上面的类型契约接回主线。`persist.ts` 是唯一共享落库入口；Provider 不直接发 SQL，`query.ts` 也不直接读原始 Provider 目录。
+
+| `TranscriptRecord.kind` | `persist.ts` 动作 / 表                                 | 主要读取者                                      |
+| ----------------------- | ------------------------------------------------------ | ----------------------------------------------- |
+| `session`               | upsert `sessions`，依 `countMode` 合并 `message_count` | `sessions()`、`overview()`、会话列表、详情标题  |
+| `message`               | upsert `messages`；trigger 同步 `messages_fts`         | `search()`、`context()`、`thread()`、详情时间线 |
+| `tool_call`             | upsert `tool_calls`                                    | `fileHistory()`、详情中的工具卡片               |
+| `tool_result`           | upsert `tool_results`                                  | `failures()`、工具结果展示                      |
+| `subagent`              | upsert/合并 `subagents`                                | `subagents()`、会话详情子 Agent 视图            |
+| `workflow`              | upsert `workflows`                                     | `workflows()`、`workflowTree()`                 |
+| `workflow_agent`        | 逐列合并 `workflow_agents`                             | `workflowTree()`、workflow 详情                 |
+| `summary`               | upsert `summaries`                                     | `summaries()`、会话/recap 展示                  |
+| `message-turn-duration` | 定向 UPDATE `messages.turn_duration_ms`                | 消息时间线和用量展示                            |
+| `delete-session`        | 级联删除该 session 的来源派生行                        | 避免 guardian/auto-review 残留被任何查询读到    |
+
+`index_state` 不对应一种 `TranscriptRecord`。它由 `persist()` 在一个 unit 的 generator 正常结束后保存 cursor，也由编排层保存 Provider marker 和 `__last_build__` 等状态；它回答的是“已经处理到哪里”，不是“对话中发生了什么”。
+
+`memories` / `memories_fts` 也不由 Provider 产出。它们属于用户批准的长期记忆域，`createAttuneApi()` 的 `remember()` / `forget()` 写入或软删除；`query.memories()` 搜索它。二者与 Provider 事实库的连接来自 session/message anchor，而不是 `TranscriptRecord.kind = 'memory'`。这条分离保证强制重建来源索引时不会把人工记忆误当作可重放数据清空。
+
+```text
+ProviderAdapter
+  discover() → IndexUnit[]                 （决定“要处理什么”）
+  parse()    → TranscriptRecord stream     （翻译“来源发生了什么”）
+       │
+       ▼
+persist()                                  （决定“怎样成为 SQLite 事实”）
+  sessions / messages / tools / agents / workflows / summaries
+  index_state cursor
+       │
+       ├─ messages  -- trigger --> messages_fts
+       └─ memories -- trigger --> memories_fts   ← Attune API，不来自 Provider
+       │
+       ▼
+query.ts
+  search / context / sessions / memories / raw / overview / sql
+       │
+       ▼
+CLI（一次性命令）与 Electron App（IPC + watcher + renderer）
+```
+
+### 13.7 用这份契约阅读具体 Provider 的顺序
+
+阅读 `providers/claude.ts`、`codex.ts`、`kimi.ts` 时，可按同一张检查表追踪，而不是先陷入各家 JSON 字段：
+
+1. 找 adapter 的 `descriptor`、`name` 和 `watchRoots()`：确认它是谁、默认在哪里、App 应监听什么。
+2. 看 `discover(ctx)`：它如何把目录和 `lastCursor()` 转成稳定的 `IndexUnit.key`，如何使用 `changedPaths` 缩小扫描。
+3. 看 `parse(unit, cursor)`：原始事件怎样依次变成十种 `kind`；重点检查原 ID 是否稳定、`session_id` 是否一致、子线程是否填了 `agent_id`。
+4. 看 generator 最后的 return：它提交的 cursor 是否只在完整解析后生成，是否能让下次解析安全恢复。
+5. 看 `raw()`：它如何利用 `RawLookup` 找到原始行，并如何裁剪成 `RawRecord` 分页结果。
+
+只要每个 Provider 满足这份契约，增加来源通常只需实现一个 adapter 并注册它；`persist.ts`、FTS、`query.ts`、CLI、Electron 的大部分代码不需要为“又多了一种 JSON 格式”分支。这正是 `providers/types.ts` 作为主链枢纽的价值。
+
+## 为什么 Codex 要这样
+
+因为 Codex 里同一条可见消息可能同时出现在：
+
+```
+event_msg
+response_item
+```
+
+比如：
+
+```
+{ "type": "event_msg", "payload": { "type": "agent_message", "message": "hi" } }
+{ "type": "response_item", "payload": { "type": "message", "role": "assistant", "content": [{ "text": "hi" }] } }
+```
+
+这两条其实是同一条 assistant 回复。如果只增量看后面几行，很容易不知道它是不是和前面重复。
+
+所以 Codex adapter 会：
+
+```
+读完整文件
+先收集所有 event_msg 可见消息
+再处理 response_item
+遇到重复的 role+text 就丢掉
+最后输出当前完整会话结果
+```
+
+## raw lookup 输入是什么
+
+大概是：
+
+```
+{
+  source: "codex" | "claude",
+  messageUuid: "...",
+  session: {...},
+  agentId: "...",
+  subagent: {...},
+  workflowAgent: {...}
+}
+```
+
+它告诉 provider：
+
+```
+这是哪个 provider 的消息
+message uuid 是什么
+它属于哪个 session
+它是不是 subagent / workflow agent
+session 的 jsonl_path 是哪里
+```
+
+然后 provider 自己根据自己的文件结构找原始行。
+
+## Codex 怎么 raw lookup
+
+Codex 的 message uuid 是 Trajex 自己生成的：
+
+```
+codex:<threadId>:<lineNumber>
+```
+
+比如：
+
+```
+codex:019e8951-xxx:000037
+```
+
+这个 uuid 里已经带了：
+
+```
+threadId = 019e8951-xxx
+lineNumber = 37
+```
+
+所以 Codex raw lookup 会：
+
+```
+1. 解析 messageUuid，拿到 threadId 和 lineNumber
+2. 如果是 root session，用 sessions.jsonl_path 找文件
+3. 如果是 child thread，就在 ~/.codex/sessions 下找对应 thread JSONL
+4. 读取第 lineNumber 行
+5. 返回原始 JSONL 文本
+```
+
+返回类似：
+
+```
+{
+  text: "{ \"type\": \"event_msg\", ... }",
+  totalLength: 1234,
+  offset: 0,
+  limit: 1234,
+  hasMore: false,
+  messageText: "用户可读正文"
+}
+```
+
+## Claude 怎么 raw lookup
+
+Claude 原始 message 本来就有 uuid：
+
+```
+{
+  "uuid": "a1",
+  "type": "assistant",
+  ...
+}
+```
+
+所以 Claude raw lookup 会：
+
+```
+1. 找 session.jsonl_path
+2. 如果是普通消息，就在主 session JSONL 里找包含这个 uuid 的行
+3. 如果是 subagent，就去 subagents/<agentId>.jsonl
+4. 如果是 workflow agent，就去 subagents/workflows/<runId>/<agentId>.jsonl
+5. 找到 uuid 匹配的那一行
+6. 返回原始 JSONL 文本和提取出的 messageText
+```
+
+adapter 不直接写 SQLite。写库统一交给 persist layer。
+
+### 统一 `TranscriptRecord` 事实条目
+
+Trajex 最重要的中间抽象是 `TranscriptRecord`。它把不同 provider 的原始日志统一成几类事实条目：
 
 ```
 session
@@ -454,7 +1029,7 @@ countMode
 uuid
   message 唯一 ID。
   Claude 原始 JSONL 通常自带 uuid。
-  Codex 没有天然 uuid，Obelisk 生成 codex:<threadId>:<lineNumber>。
+  Codex 没有天然 uuid，Trajex 生成 codex:<threadId>:<lineNumber>。
 
 session_id 属于哪个 session。
 
@@ -464,7 +1039,7 @@ parent_uuid 上一条 / 父消息 uuid。
 
 timestamp 消息时间。
 
-role user / assistant / developer 等角色。Obelisk 主要展示 user、assistant。
+role user / assistant / developer 等角色。Trajex 主要展示 user、assistant。
 
 text 消息文本。索引时可能截断。
 
@@ -707,30 +1282,388 @@ memory 不是自动总结替代原始证据，而是：
 
 它仍然应该能通过 session/message anchors 回到原始证据。
 
-## 二、SQLite 表结构思想
+## Trajex 统一 SQLite 数据模型 `schema.sql`
 
-Obelisk 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系表：
+此文件保存可再生 transcript 索引与人工确认的 memories。Provider 先输出 TranscriptRecord，persist 再按本 schema 写表；FTS 虚表与 trigger 由 SQLite 从 messages/memories 自动维护，查询层使用 MATCH 而不是扫描原表，即搜索时用：`SELECT ... FROM messages_fts WHERE text MATCH 'keywords'` 而不是：`SELECT ... FROM messages WHERE text LIKE '%keywords%'`，前者走 FTS 索引（快），后者全表扫描（慢）。
+
+### 表总览和字段解析
+
+Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系表：
+
+| 表名              | 用途                               | 属于       | 备注            |
+| ----------------- | ---------------------------------- | ---------- | --------------- |
+| `sessions`        | 会话元信息                         | Transcript | Provider 产出   |
+| `messages`        | 用户 / assistant 消息              | Transcript | 核心表          |
+| `tool_calls`      | 工具调用                           | Transcript |                 |
+| `tool_results`    | 工具执行结果                       | Transcript |                 |
+| `subagents`       | 子 Agent / Codex child thread      | Transcript |                 |
+| `workflows`       | Claude workflow 工作流             | Transcript |                 |
+| `workflow_agents` | 工作流中的子代理                   | Transcript |                 |
+| `summaries`       | 会话摘要                           | Transcript |                 |
+| `index_state`     | 存索引进度、heartbeat、版本 marker | **系统**   | Provider 不产出 |
+| `memories`        | 存用户批准沉淀的长期记忆           | **人工**   | 用户手动创建    |
+
+#### `sessions` — 会话
+
+| 字段            | 类型                  | 说明                                  |
+| --------------- | --------------------- | ------------------------------------- |
+| `id`            | TEXT PK               | 会话唯一 ID                           |
+| `title`         | TEXT                  | 会话标题                              |
+| `project`       | TEXT                  | 项目名（slug 格式）                   |
+| `project_path`  | TEXT                  | 真实项目绝对路径                      |
+| `started_at`    | TEXT                  | ISO 时间                              |
+| `ended_at`      | TEXT                  | ISO 时间                              |
+| `git_branch`    | TEXT                  | Git 分支                              |
+| `version`       | TEXT                  | CLI 版本                              |
+| `message_count` | INTEGER               | 消息数                                |
+| `jsonl_path`    | TEXT                  | 来源 JSONL 文件路径                   |
+| `source`        | TEXT DEFAULT 'claude' | 来源标识：`claude` / `codex` / `kimi` |
+
+#### `messages` — 消息
+
+| 字段               | 类型                   | 说明                                                         |
+| ------------------ | ---------------------- | ------------------------------------------------------------ |
+| `uuid`             | TEXT PK                | 消息唯一 ID                                                  |
+| `session_id`       | TEXT                   | 所属会话                                                     |
+| `type`             | TEXT                   | `user` / `assistant`                                         |
+| `parent_uuid`      | TEXT                   | 父消息（构建线程链）                                         |
+| `timestamp`        | TEXT                   | ISO 时间                                                     |
+| `role`             | TEXT                   | 同 type                                                      |
+| `text`             | TEXT                   | 消息内容（FTS 索引列）                                       |
+| `content_type`     | TEXT                   | `text` / `thinking` / `tool_use` / `unknown` / `skill_instructions` |
+| `is_meta`          | INTEGER                | 是否系统消息                                                 |
+| `visibility`       | TEXT DEFAULT 'visible' | `visible` / `hidden`                                         |
+| `model`            | TEXT                   | 模型名                                                       |
+| `is_sidechain`     | INTEGER                | 是否子代理消息                                               |
+| `agent_id`         | TEXT                   | 所属子代理 ID                                                |
+| `input_tokens`     | INTEGER                | 输入 token 数                                                |
+| `output_tokens`    | INTEGER                | 输出 token 数                                                |
+| `cwd`              | TEXT                   | 当前工作目录                                                 |
+| `skill`            | TEXT                   | 使用的 skill 名                                              |
+| `turn_duration_ms` | INTEGER                | 轮次耗时                                                     |
+| `source`           | TEXT DEFAULT 'claude'  | 来源标识                                                     |
+
+#### `tool_calls` — 工具调用
+
+| 字段           | 类型                   | 说明                                         |
+| -------------- | ---------------------- | -------------------------------------------- |
+| `id`           | TEXT PK                | 工具调用 ID                                  |
+| `message_uuid` | TEXT                   | 所属消息                                     |
+| `session_id`   | TEXT                   | 所属会话                                     |
+| `name`         | TEXT                   | 工具名（`Read`, `Edit`, `Bash`, `Skill` 等） |
+| `presentation` | TEXT DEFAULT 'default' | `default` / `skill`                          |
+| `input_json`   | TEXT                   | 调用参数 JSON                                |
+| `file_path`    | TEXT                   | 操作的文件路径                               |
+
+#### `tool_results` — 工具执行结果
+
+| 字段           | 类型    | 说明                 |
+| -------------- | ------- | -------------------- |
+| `tool_use_id`  | TEXT PK | 对应 `tool_calls.id` |
+| `message_uuid` | TEXT    | 所属消息             |
+| `session_id`   | TEXT    | 所属会话             |
+| `content`      | TEXT    | 执行结果文本         |
+| `file_path`    | TEXT    | 文件路径             |
+| `is_error`     | INTEGER | 是否错误             |
+
+#### `subagents` — 子代理
+
+| 字段                 | 类型    | 说明                      |
+| -------------------- | ------- | ------------------------- |
+| `agent_id`           | TEXT PK | 子代理 ID                 |
+| `session_id`         | TEXT    | 所属会话                  |
+| `parent_tool_use_id` | TEXT    | 触发该子代理的工具调用 ID |
+| `agent_type`         | TEXT    | 代理类型描述              |
+| `description`        | TEXT    | 描述                      |
+| `duration_ms`        | INTEGER | 耗时                      |
+| `total_tokens`       | INTEGER | Token 总数                |
+
+#### `workflows` — 工作流
+
+| 字段                 | 类型    | 说明                |
+| -------------------- | ------- | ------------------- |
+| `run_id`             | TEXT PK | 运行 ID             |
+| `session_id`         | TEXT    | 所属会话            |
+| `parent_tool_use_id` | TEXT    | 触发的工作流工具 ID |
+| `task_id`            | TEXT    | 任务 ID             |
+| `script`             | TEXT    | CodeAct 脚本        |
+| `result_json`        | TEXT    | 结果 JSON           |
+| `timestamp`          | TEXT    | 时间                |
+| `agent_count`        | INTEGER | 子代理数            |
+| `duration_ms`        | INTEGER | 耗时                |
+| `total_tokens`       | INTEGER | Token 总数          |
+| `status`             | TEXT    | 状态                |
+| `workflow_name`      | TEXT    | 工作流名            |
+
+#### `workflow_agents` — 工作流中的子代理
+
+| 字段          | 类型    | 说明         |
+| ------------- | ------- | ------------ |
+| `agent_id`    | TEXT PK | 代理 ID      |
+| `run_id`      | TEXT    | 所属工作流   |
+| `session_id`  | TEXT    | 所属会话     |
+| `agent_type`  | TEXT    | 类型         |
+| `description` | TEXT    | 描述         |
+| `phase`       | TEXT    | 阶段         |
+| `label`       | TEXT    | 标签         |
+| `model`       | TEXT    | 模型         |
+| `state`       | TEXT    | 状态         |
+| `duration_ms` | INTEGER | 耗时         |
+| `tokens`      | INTEGER | Token 数     |
+| `tool_calls`  | INTEGER | 工具调用次数 |
+
+#### `index_state` — 索引进度
+
+| 字段              | 类型    | 说明                                                         |
+| ----------------- | ------- | ------------------------------------------------------------ |
+| `jsonl_path`      | TEXT PK | 文件路径 或 特殊标记（`__last_build__`、`__app_heartbeat__`） |
+| `mtime`           | REAL    | 文件修改时间或心跳时间                                       |
+| `lines_processed` | INTEGER | 已处理行数                                                   |
+
+特殊 key 值：
+- `__last_build__` — 上次构建时间戳，用于防抖
+- `__app_heartbeat__` — App 心跳，用于判断 daemon 是否存活
+- `__claude_canonical_transcript_v2__` — Claude 适配器版本标记
+- `__codex_canonical_transcript_v2__` — Codex 适配器版本标记
+- `__kimi_canonical_transcript_v3__` — Kimi 适配器版本标记
+
+#### `summaries` — 摘要
+
+| 字段         | 类型    | 说明                                    |
+| ------------ | ------- | --------------------------------------- |
+| `id`         | TEXT PK | 摘要 ID                                 |
+| `session_id` | TEXT    | 所属会话                                |
+| `timestamp`  | TEXT    | 时间                                    |
+| `source`     | TEXT    | 来源（如 `away_summary`, `compaction`） |
+| `content`    | TEXT    | 摘要内容                                |
+
+#### `memories` — 人工记忆
+
+| 字段             | 类型    | 说明                   |
+| ---------------- | ------- | ---------------------- |
+| `id`             | TEXT PK | 记忆 ID                |
+| `session_id`     | TEXT    | 关联会话               |
+| `project`        | TEXT    | 关联项目               |
+| `message_start`  | TEXT    | 起始消息 UUID          |
+| `message_end`    | TEXT    | 结束消息 UUID          |
+| `path`           | TEXT    | 引用的文件路径         |
+| `anchors`        | TEXT    | JSON 锚点数组          |
+| `summary`        | TEXT    | 记忆摘要（FTS 索引列） |
+| `created_at`     | TEXT    | 创建时间               |
+| `deleted_at`     | TEXT    | 删除时间（软删除）     |
+| `deleted_reason` | TEXT    | 删除原因               |
+
+---
+
+### B-Tree 索引：加速 messages、memories 常用查询路径
+
+```sql
+CREATE INDEX idx_messages_session ON messages(session_id);
+```
+
+- ON messages → 在 messages 这张表上建索引
+- (session_id) → 对 session_id 这一列建索引
+
+意思是： 给 messages 表的 session_id 列建一个索引 ，方便按会话 ID 快速查找消息。每次查询 WHERE session_id = 'abc-123' 时走索引，不用逐行扫描整张表。
+
+| 索引名                  | 表              | 列                      | 用途             |
+| ----------------------- | --------------- | ----------------------- | ---------------- |
+| `idx_messages_session`  | messages        | `session_id`            | 按会话查消息     |
+| `idx_messages_agent`    | messages        | `agent_id`              | 按子代理查消息   |
+| `idx_messages_ts`       | messages        | `session_id, timestamp` | 按时间排序       |
+| `idx_sessions_source`   | sessions        | `source`                | 按来源筛选       |
+| `idx_messages_source`   | messages        | `source`                | 按来源筛选       |
+| `idx_tc_session_name`   | tool_calls      | `session_id, name`      | 按会话+工具名查  |
+| `idx_tc_message`        | tool_calls      | `message_uuid`          | 按消息查工具调用 |
+| `idx_tc_file`           | tool_calls      | `file_path`             | 按文件路径查历史 |
+| `idx_tr_session`        | tool_results    | `session_id`            | 按会话查结果     |
+| `idx_tr_message`        | tool_results    | `message_uuid`          | 按消息查结果     |
+| `idx_sa_session`        | subagents       | `session_id`            | 按会话查子代理   |
+| `idx_wf_session`        | workflows       | `session_id`            | 按会话查工作流   |
+| `idx_wa_run`            | workflow_agents | `run_id`                | 按工作流查代理   |
+| `idx_summaries_session` | summaries       | `session_id`            | 按会话查摘要     |
+| `idx_memories_project`  | memories        | `project`               | 按项目查记忆     |
+| `idx_memories_session`  | memories        | `session_id`            | 按会话查记忆     |
+| `idx_memories_created`  | memories        | `created_at`            | 按时间排序       |
+
+### 2 个 FTS5 虚拟表和 6 个触发器 trigger 自动同步
+
+#### `messages_fts` 表
+
+```sql
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  uuid UNINDEXED,                  -- 透传字段，不参与全文检索
+  session_id UNINDEXED,            -- 透传字段，不参与全文检索
+  text,                            -- FTS 索引列：消息文本
+  content=messages,                -- 外挂 messages 表
+  content_rowid=rowid);            -- 使用 messages 的 rowid 做映射
+```
+
+- **content-backed**
+
+  正常的 FTS5 表会自己存一份数据副本，但这里用了 `content=messages`，表示 messages_fts 不存原始文本 ，直接外挂 `messages` 表，只存**倒排索引（text 词 → rowid 的映射）**。当你 MATCH 查询时：
+
+  1. FTS 查倒排索引找到匹配的 rowid 列表
+  2. 然后自动去 messages 表读对应行的数据（SELECT * FROM messages WHERE rowid = ?）
+
+- **只索引 `text` 列** — `uuid` 和 `session_id` 标记为 `UNINDEXED`（不参与全文检索，只做元数据透传）
+
+- 被 `query.ts` 中的 `search()` 和 `overview()` 使用
+
+对应三个触发器：
+
+1、**`messages_fts_ai` — messages 插入后**
+
+```sql
+CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts(rowid, uuid, session_id, text)
+  VALUES (new.rowid, new.uuid, new.session_id, new.text);
+END;
+```
+
+新消息写入时 → 自动将 `uuid`、`session_id`、`text` 同步到 FTS。
+
+2、**`messages_fts_ad` — messages 删除后**
+
+```sql
+CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, uuid, session_id, text)
+  VALUES ('delete', old.rowid, old.uuid, old.session_id, old.text);
+END;
+```
+
+`INSERT INTO messages_fts(messages_fts, ...) VALUES('delete', ...)` 是 FTS5 的特殊语法，从 FTS 索引中移除对应行。
+
+3、**`messages_fts_au` — messages 更新后**
+
+先 delete 旧数据，再 insert 新数据，两步合在一起。
+
+#### `memories_fts` 表
+
+```sql
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+  id UNINDEXED,                    -- 透传字段
+  path,                            -- 文件路径（可搜索）
+  summary,                         -- 摘要（可搜索）
+  content=memories,                -- 外挂 memories 表
+  content_rowid=rowid,
+  tokenize='unicode61 remove_diacritics 1');  -- 多语言分词，去除变音符号
+```
+
+- 索引 `path` 和 `summary` 两列
+- 使用 `unicode61 remove_diacritics 1` 分词器 — 去变音符号的多语言支持
+- 被 `query.ts` 中的 `memories()` 使用
+
+同样对应三个触发器：**`memories_fts_ai / _ad / _au`**
+
+和 messages 同理，但 FTS 只索引 `id`、`path`、`summary` 三列。
+
+### *区分 B-Tree 索引和 FTS（全文搜索）
+
+#### B-Tree 索引
+
+**数据结构**：平衡树（B-Tree），排好序的键值对
+
+**用在哪**：普通 SQL 查询的 `WHERE` / `ORDER BY` / `JOIN`
+
+```sql
+-- B-Tree 索引加速这种查询：
+SELECT * FROM messages WHERE session_id = 'abc-123';
+-- B-Tree 在 session_id 列上排好序，二分查找 → O(log n)，不走全表扫描
+
+SELECT * FROM messages WHERE session_id = 'abc-123' ORDER BY timestamp;
+-- 复合索引 (session_id, timestamp) 让排序也不走全表
+```
+
+**能做什么**：
+- 等值匹配：`WHERE col = ?`
+- 范围查询：`WHERE col > ? AND col < ?`
+- 排序：`ORDER BY col`
+- 前缀匹配：`WHERE col LIKE 'prefix%'`（仅前缀，`%suffix` 不行）
+
+**不能做什么**：
+- `WHERE text LIKE '%keyword%'` — 仍然全表扫描
+- `WHERE text MATCH 'keyword'` — 这不是 B-Tree 的能力
+- **模糊内容搜索、关键词搜索**
+
+#### FTS（全文搜索）
+
+**数据结构**：倒排索引（Inverted Index）— 记录"哪个词出现在哪一行"
 
 ```
-sessions       存一次会话的元信息
-messages       存用户/assistant 消息
-tool_calls     存 Agent 调用工具的记录
-tool_results   存工具返回结果
-subagents      存子 Agent / Codex child thread
-workflows      存 Claude workflow
-summaries      存摘要
-memories       存用户批准沉淀的长期记忆
-index_state    存索引进度、heartbeat、版本 marker
-messages_fts   消息全文搜索索引
+倒排索引示例：
+"fix"   → 出现在 rowid 1, 5, 23
+"bug"   → 出现在 rowid 1, 87
+"api"   → 出现在 rowid 5, 42, 99
 ```
 
-所以 SQLite 在这里是一个“结构化证据数据库”。
+**用在哪**：文本内容的模糊搜索
+
+```sql
+-- FTS 加速这种查询：
+SELECT * FROM messages_fts WHERE text MATCH 'fix bug';
+-- 在倒排索引里找到 fix → [1,5,23]、bug → [1,87]，交集 → rowid 1
+```
+
+**能做什么**：
+- 关键词搜索：`MATCH 'keyword'`
+- 多词组合：`MATCH 'fix AND bug'`, `MATCH 'bug OR error'`
+- 短语搜索：`MATCH '"fix bug"'`
+- 前缀通配：`MATCH 'fix*'`
+- 近邻搜索：`MATCH 'bug NEAR/3 fix'`
+- 排序：按相关性 `ORDER BY rank`
+
+**不能做什么**：
+- `=`, `>`, `<`, `ORDER BY col` — 这些还是 B-Tree 的事
+
+#### 两者在项目中实际分工
+
+`messages` 表有一条查询路径是**两条索引配合使用**，以 `query.ts` 中的 `search()` 为例：
+
+```
+用户搜索："修复按钮颜色"
+                   │
+        messages_fts MATCH '"修复" NEAR/3 "按钮" NEAR/3 "颜色"'
+                   │
+        返回匹配的 rowid 和 session_id
+                   │
+                   ▼
+        JOIN messages 获取完整消息行
+                   │
+           WHERE session_id = ?
+           ORDER BY timestamp     ← 走 idx_messages_ts B-Tree
+                   │
+                   ▼
+              展示结果
+```
+
+**FTS** 负责"找出内容匹配的消息"，**B-Tree** 负责"按会话和时间的筛选排序"。各管各的，互不替代。
+
+|          | B-Tree 索引                                      | FTS5 全文索引                           |
+| -------- | ------------------------------------------------ | --------------------------------------- |
+| 数据结构 | 平衡树                                           | 倒排索引                                |
+| 适用操作 | `=`, `>`, `<`, `ORDER BY`, `LIKE 'pre%'`         | `MATCH`, 关键词、短语、模糊搜索         |
+| 你的用途 | 按 session_id 查消息、按时间排序、按 source 筛选 | 搜聊天记录内容、搜记忆摘要              |
+| 数量     | 每个表可以有多个                                 | 每个表一个虚拟表                        |
+| 维护方式 | SQLite 自动                                      | 触发器同步（你 schema.sql 里的那 6 个） |
 
 ### 数据库表关系
 
-`sessions` 是主会话，下面挂 messages、tools、subagents、workflows、summaries；`memories` 则通过 session/message ID 回到原始证据。
+数据库表关系**没有通过数据库的外键约束实现**（SQLite 默认不开启外键，需要 PRAGMA foreign_keys = ON 才生效），所有的关联都是**应用层代码 persist.ts 维护的**。
 
-#### 1. `sessions -> messages -> tool_calls -> tool_results`
+**没有外键约束不影响查询**，因为查询时是你写 JOIN 来关联的：
+
+```sql
+-- 有外键或没有外键，查询写法一样
+SELECT m.text, t.name
+FROM messages m
+JOIN tool_calls t ON t.message_uuid = m.uuid
+WHERE m.session_id = 'abc';
+```
+
+**数据库表关系的本质**：`sessions` 是主会话，下面挂 messages、tools、subagents、workflows、summaries；`memories` 则通过 session/message ID 回到原始证据。
+
+#### `sessions -> messages -> tool_calls -> tool_results`
 
 意思是：会话里有消息，消息里有工具调用，工具调用有返回结果。
 
@@ -762,7 +1695,7 @@ session s1
       tool_result: 文件内容
 ```
 
-#### 2. `sessions -> subagents -> messages(agent_id)`
+#### `sessions -> subagents -> messages(agent_id)`
 
 意思是：
 
@@ -792,7 +1725,7 @@ session s1
 
 所以 `subagents` 不是聊天内容本身，它只是子 Agent 的“名片”。真正聊天内容还是 messages，只是多了 `agent_id`。
 
-#### 3. `sessions -> workflows -> workflow_agents`
+#### `sessions -> workflows -> workflow_agents`
 
 意思是：
 
@@ -820,7 +1753,7 @@ session s1
     workflow_agent agent-2: summarize phase
 ```
 
-#### 4. `sessions -> summaries`
+#### `sessions -> summaries`
 
 意思是：
 
@@ -841,7 +1774,7 @@ session s1
   summary: away_summary 内容
 ```
 
-#### 5. `memories -> sessions/messages 作为证据锚点`
+#### `memories -> sessions/messages 作为证据锚点`
 
 `memories` 是用户批准沉淀的长期记忆。它不是凭空来的，应该能回到原始证据。
 
@@ -874,66 +1807,35 @@ memory: “auth bug 是因为 token refresh race condition”
 它是根据 s1 里 m20 到 m35 这段对话得出的
 ```
 
-### FTS 全文索引
 
-`messages` 存真实消息，`messages_fts` 存搜索索引。
 
-普通表是：
+## SQLite 连接生命周期 `db.ts`
 
-```
-message -> text
-```
+为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责 schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
 
-FTS 倒排索引是：
+未导出但对内使用的关键模块：
 
-```
-word -> message ids
+```typescript
+const { DatabaseSync } = require('node:sqlite');
 ```
 
-比如：
+这是 Node 22.13+ 内置的同步 SQLite 绑定，是三个连接工厂（`openDb`, `openReadDb`, `openWriterLeaseDb`）的底层依赖。
 
-```
-auth -> m1, m2
-bug  -> m1
-login -> m2
-```
-
-这样搜索 `auth bug` 时，不需要扫描所有 messages，而是直接用 `MATCH` 查全文索引，再 join 回 `messages` 和 `sessions` 拿完整上下文。
-
-Obelisk 用 SQLite FTS5 实现，并用 trigger 自动同步：
-
-```
-messages INSERT -> 更新 messages_fts
-messages DELETE -> 删除 FTS 索引
-messages UPDATE -> 重建对应 FTS 索引
-```
-
-## `db.ts`
-
-Core SQLite 连接生命周期。为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责 schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
-
-1、常量
+1、导出常量和 schema 初始化
 
 ```ts
-const OBELISK_DIR = path.join(os.homedir(), '.obelisk');
-const DB_PATH = path.join(OBELISK_DIR, 'obelisk.sqlite');
+const TRAJEX_DIR = path.join(os.homedir(), '.trajex');
+const DB_PATH = path.join(TRAJEX_DIR, 'trajex.sqlite');
 // 将同目录下的 schema.sql 文件内容读取为字符串，存入常量 SCHEMA 。
 const SCHEMA = fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 ```
 
-重导出 export { CLAUDE_DIR, CODEX_DIR, OBELISK_DIR, DB_PATH, TEXT_LIMIT, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines, fs, path, os };
+| 导出名        | 值                          | 说明                           |
+| ------------- | --------------------------- | ------------------------------ |
+| `DB_PATH`     | `~/.trajex/trajex.sqlite` | 主索引数据库路径（新统一位置） |
+| `TRAJEX_DIR` | `~/.trajex`                | Trajex 数据目录               |
 
-
-
-| 导出名        | 值                          | 说明                              |
-| ------------- | --------------------------- | --------------------------------- |
-| `DB_PATH`     | `~/.obelisk/obelisk.sqlite` | 主索引数据库路径（新统一位置）    |
-| `OBELISK_DIR` | `~/.obelisk`                | Obelisk 数据目录                  |
-| `CLAUDE_DIR`  | `~/.claude`                 | Claude Code 配置目录              |
-| `CODEX_DIR`   | `~/.codex`                  | Codex 配置目录                    |
-| `TEXT_LIMIT`  | `10000`                     | 文本截断阈值（来自 `parsing.ts`） |
-
-2、导出函数
+2、导出函数：三个连接工程和 FTS 重建
 
 ```ts
 function openDb(): NodeSqliteDb {
@@ -972,9 +1874,9 @@ function rebuildMemoryFts(db: SqliteDb): void {
   function openDb(): NodeSqliteDb
   ```
 
-  **调用链**: `migrateLegacyDbIfNeeded()` → `mkdir -p ~/.obelisk` → `new DatabaseSync` → `configureConnection` → `migrateCoreSchemaColumns` → `exec(SCHEMA)` → `migrateCoreSchemaColumns`
+  **调用链**: `migrateLegacyDbIfNeeded()` → `mkdir -p ~/.trajex` → `new DatabaseSync` → `configureConnection` → `migrateCoreSchemaColumns` → `exec(SCHEMA)` → `migrateCoreSchemaColumns`
 
-  - **migrateLegacyDbIfNeeded()**: 如果 `~/.obelisk/obelisk.sqlite` 不存在但 `~/.claude/obelisk.sqlite` 存在，复制旧库到新位置
+  - **migrateLegacyDbIfNeeded()**: 如果 `~/.trajex/trajex.sqlite` 不存在但 `~/.claude/trajex.sqlite` 存在，复制旧库到新位置
 
   - **configureConnection(db, { busyTimeoutMs: 250 })**: 设置 `busy_timeout=250`, `journal_mode=WAL`, `synchronous=NORMAL`
 
@@ -1020,9 +1922,7 @@ function rebuildMemoryFts(db: SqliteDb): void {
   - FTS5 的特殊语法：触发表内数据从 `content=` 表重新构建全文索引
 
 
----
-
-## 重导出（来自 `parsing.ts` 的透传）
+3、重导出（import 自 `parsing.ts` 的透传）
 
 ```typescript
 export { ..., trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines, fs, path, os };
@@ -1044,188 +1944,85 @@ export { ..., trunc, truncJson, extractText, extractContentType, extractMessageI
 | `path`                 | Node 模块 | `node:path`                                    |
 | `os`                   | Node 模块 | `node:os`                                      |
 
----
 
-## 未导出但对内使用的关键模块
+
+## 事务原语 `tx.ts`
+
+Core 写入链的最低层事务边界。它把 CLI 使用的 `node:sqlite` 与桌面端使用的 `better-sqlite3` 适配成同一种 `BEGIN IMMEDIATE → work → COMMIT` 协议，并在失败时保留足够诊断信息，交给上层判断能否重试。
 
 ```typescript
-const { DatabaseSync } = require('node:sqlite');
+indexer.ts / app main indexer
+     → write-coordinator.ts / runRetryableWriteTransaction()
+       → 本文件 / runWriteTransaction()
+         → persist() 或 force-cleanup / finalize 写操作
+indexer.ts / app/src/main/indexer.ts
+    │  db: NodeSqliteHandle / BetterSqliteHandle
+    │
+    ├─ nodeSqliteTransactionAdapter(db)   ◄── CLI 路径
+    └─ betterSqliteTransactionAdapter(db) ◄── 桌面 App 路径
+            │
+            ▼
+        WriteTxDb
+            │
+    write-coordinator.ts
+        runRetryableWriteTransaction()
+            │
+            ▼
+        runWriteTransaction(txDb, work, { label })
+            │
+            ├─ BEGIN IMMEDIATE
+            ├─ work()   ← 通常是 persist() 或 force-cleanup
+            ├─ COMMIT
+            └─ 失败 → attachDiagnostics(error, WriteTxDiagnostics) → throw
 ```
 
-这是 Node 22.13+ 内置的同步 SQLite 绑定，是三个连接工厂（`openDb`, `openReadDb`, `openWriterLeaseDb`）的底层依赖。
 
----
 
-## 调用关系总结
-
-```
-core.ts / indexer.ts / query.ts
-        │
-        ├── import { DB_PATH, openDb, openReadDb, ... }
-        │
-        └── db.ts
-              ├── parsing.ts      (工具函数 + fs/path/os)
-              ├── tx.ts           (configureConnection)
-              ├── schema-migrations.ts  (migrateCoreSchemaColumns)
-              └── schema.sql     (DDL 文本)
-```
-
-## Provider Adapter 设计
-
-Provider adapter 是 Obelisk 的适配层。**每个 provider 自己负责理解自己的日志格式，翻译成统一 TranscriptRecord**：
-
-```
-Claude Adapter 解析 ~/.claude/projects
-Codex Adapter 解析 ~/.codex/sessions
-Kimi Adapter 解析 ~/.kimi-code/sessions
+```ts
+tx.ts (事务原语)
+  │
+  ├─ configureConnection ──── db.ts (CLI)
+  │                           └── app/src/main/indexer.ts (桌面 App)
+  │
+  ├─ nodeSqliteTransactionAdapter ── indexer.ts (CLI 路径)
+  │                                  └── tests/write-transaction.test.mjs
+  │
+  ├─ betterSqliteTransactionAdapter ─ app/src/main/indexer.ts (桌面 App 路径)
+  │
+  └─ runWriteTransaction
+        ├── write-coordinator.ts   ← 核心调用链: indexer.ts 通过
+        │                            runRetryableWriteTransaction → runWriteTransaction
+        ├── app/src/main/indexer.ts (writeHeartbeat)
+        └── tests/write-transaction.test.mjs
 ```
 
-它负责：
+## `persist.ts` 维护数据库表关系
 
-  - 负责找到变化了的文件：discover() 去 ~/.codex/sessions 发现 JSONL 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断文件有没有变
-
-    > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
-    >
-    > * Claude 是 line-incremental，所以 Claude cursor 里的 `linesProcessed` 会被用来跳过旧行。
-    >
-    > * Codex 是 full-reparse，所以对 Codex：
-    >
-    >   ```
-    >   mtime 用来判断文件有没有变
-    >   linesProcessed 更多是记录文件当前总行数
-    >   ```
-
-  - 负责解析文件内容：parse() 读取某个 JSONL，把它翻译成 TranscriptRecord
-
-  - 负责回查原文：raw() 根据 SQLite message uuid 找回原始 JSONL 行
-
-  - 负责告诉 app 监听哪里：watchRoots() 告诉 app daemon 应该监听哪些目录
-
-
-
-## 为什么 Codex 要这样
-
-因为 Codex 里同一条可见消息可能同时出现在：
+以写入消息为例：
 
 ```
-event_msg
-response_item
+// persist.ts 写入 messages 时，session_id 
+是从 TranscriptRecord 中取的同一条记录的字段
+// 而 TranscriptRecord 是 Provider 适配器
+（claude.ts / codex.ts / kimi.ts）解析 
+JSONL 时填充的
+// 写入 tool_calls 时，message_uuid 也是从同
+一条 TranscriptRecord 中取的值
 ```
 
-比如：
+整个写入都在同一个 runWriteTransaction 事务内完成：
 
 ```
-{ "type": "event_msg", "payload": { "type": "agent_message", "message": "hi" } }
-{ "type": "response_item", "payload": { "type": "message", "role": "assistant", "content": [{ "text": "hi" }] } }
+BEGIN IMMEDIATE
+  → persist(): 先写 session，再写 
+  messages，再写 tool_calls，再写 
+  tool_results...
+  → 所有 FK 关系在应用层通过 
+  TranscriptRecord 保证
+COMMIT
 ```
 
-这两条其实是同一条 assistant 回复。如果只增量看后面几行，很容易不知道它是不是和前面重复。
 
-所以 Codex adapter 会：
-
-```
-读完整文件
-先收集所有 event_msg 可见消息
-再处理 response_item
-遇到重复的 role+text 就丢掉
-最后输出当前完整会话结果
-```
-
-## raw lookup 输入是什么
-
-大概是：
-
-```
-{
-  source: "codex" | "claude",
-  messageUuid: "...",
-  session: {...},
-  agentId: "...",
-  subagent: {...},
-  workflowAgent: {...}
-}
-```
-
-它告诉 provider：
-
-```
-这是哪个 provider 的消息
-message uuid 是什么
-它属于哪个 session
-它是不是 subagent / workflow agent
-session 的 jsonl_path 是哪里
-```
-
-然后 provider 自己根据自己的文件结构找原始行。
-
-## Codex 怎么 raw lookup
-
-Codex 的 message uuid 是 Obelisk 自己生成的：
-
-```
-codex:<threadId>:<lineNumber>
-```
-
-比如：
-
-```
-codex:019e8951-xxx:000037
-```
-
-这个 uuid 里已经带了：
-
-```
-threadId = 019e8951-xxx
-lineNumber = 37
-```
-
-所以 Codex raw lookup 会：
-
-```
-1. 解析 messageUuid，拿到 threadId 和 lineNumber
-2. 如果是 root session，用 sessions.jsonl_path 找文件
-3. 如果是 child thread，就在 ~/.codex/sessions 下找对应 thread JSONL
-4. 读取第 lineNumber 行
-5. 返回原始 JSONL 文本
-```
-
-返回类似：
-
-```
-{
-  text: "{ \"type\": \"event_msg\", ... }",
-  totalLength: 1234,
-  offset: 0,
-  limit: 1234,
-  hasMore: false,
-  messageText: "用户可读正文"
-}
-```
-
-## Claude 怎么 raw lookup
-
-Claude 原始 message 本来就有 uuid：
-
-```
-{
-  "uuid": "a1",
-  "type": "assistant",
-  ...
-}
-```
-
-所以 Claude raw lookup 会：
-
-```
-1. 找 session.jsonl_path
-2. 如果是普通消息，就在主 session JSONL 里找包含这个 uuid 的行
-3. 如果是 subagent，就去 subagents/<agentId>.jsonl
-4. 如果是 workflow agent，就去 subagents/workflows/<runId>/<agentId>.jsonl
-5. 找到 uuid 匹配的那一行
-6. 返回原始 JSONL 文本和提取出的 messageText
-```
-
-adapter 不直接写 SQLite。写库统一交给 persist layer。
 
 ## Persist Layer 设计
 
@@ -1314,7 +2111,7 @@ adapter 不直接写 SQLite。写库统一交给 persist layer。
   tc1 = 这次工具调用的 id
   ```
 
-  Obelisk 写入：表示 `tc1` 这个工具调用，是由 `a1` 这条 assistant message 发起的。
+  Trajex 写入：表示 `tc1` 这个工具调用，是由 `a1` 这条 assistant message 发起的。
 
   ```
   messages
@@ -1352,7 +2149,7 @@ adapter 不直接写 SQLite。写库统一交给 persist layer。
   tc1 = 它回应的是哪次工具调用
   ```
 
-  Obelisk 写入：
+  Trajex 写入：
 
   ```
   messages
@@ -1401,7 +2198,7 @@ adapter 不直接写 SQLite。写库统一交给 persist layer。
 
 - **delete-session 级联删除**
 
-  > Codex guardian thread 是 Codex 内部/自动审查用途的子线程；Obelisk 不把它当正常历史索引，而是把它识别出来并从数据库中清理掉。
+  > Codex guardian thread 是 Codex 内部/自动审查用途的子线程；Trajex 不把它当正常历史索引，而是把它识别出来并从数据库中清理掉。
 
   Codex guardian thread 可能意味着某个 session 不应该保留。adapter 只吐：
 
@@ -1461,15 +2258,15 @@ Codex: full-reparse，用 total 替换 message_count
 安装 CLI：
 
 ```
-npm install -g @obelisk-apps/cli
+npm install -g @trajex-apps/cli
 ```
 
-只是安装 `obelisk` 命令。真正索引发生在运行命令时：
+只是安装 `trajex` 命令。真正索引发生在运行命令时：
 
 ```
-obelisk --build
-obelisk --search "auth bug"
-obelisk --query query.js
+trajex --build
+trajex --search "auth bug"
+trajex --query query.js
 ```
 
 CLI 查询前会调用 `buildIndex()`，自动扫描本机 JSONL，把新内容同步进 SQLite。这叫 passive pull mode：没有后台常驻，运行时拉取更新。
@@ -1548,11 +2345,11 @@ chokidar 用来监听 provider roots：
 ~/.claude/history.jsonl
 ```
 
-文件新增、修改、删除会触发 `scheduleBuild`。Obelisk 不会立刻 build，而是 debounce 并等待文件写稳定，避免读到半截 JSONL 或频繁写库。
+文件新增、修改、删除会触发 `scheduleBuild`。Trajex 不会立刻 build，而是 debounce 并等待文件写稳定，避免读到半截 JSONL 或频繁写库。
 
 **12. 项目设计总结**
 
-Obelisk 的设计边界很清晰：
+Trajex 的设计边界很清晰：
 
 ```
 Provider Adapter
@@ -1659,7 +2456,7 @@ flowchart TB
   %% =========================
   %% Persist / SQLite
   %% =========================
-  subgraph SQLITE["~/.obelisk/obelisk.sqlite：证据层"]
+  subgraph SQLITE["~/.trajex/trajex.sqlite：证据层"]
     PERSIST["persist.ts<br/>唯一写库层<br/>provider-agnostic"]
 
     SESSIONS["sessions<br/>会话元信息"]
@@ -1690,7 +2487,7 @@ flowchart TB
   %% CLI / Agent Side
   %% =========================
   subgraph CLI_SIDE["Agent 侧：CLI + JS Query Sandbox"]
-    CLI["packages/cli/src/obelisk.ts<br/>obelisk --query / --search / --build"]
+    CLI["packages/cli/src/trajex.ts<br/>trajex --query / --search / --build"]
     CORE["packages/core/src/core.ts<br/>executeQuery() / searchText() / executeAttune()"]
     SANDBOX["VM Sandbox<br/>Agent 写 JS 组合查询"]
     QUERY_API["createQueryApi(db)<br/>search / sessions / context / thread<br/>failures / fileHistory / sql / memories"]
@@ -1709,7 +2506,7 @@ flowchart TB
   %% =========================
   subgraph APP_SIDE["Electron App：UI + 本地索引 daemon"]
     MAIN["Electron Main Process<br/>app/src/main/index.ts"]
-    PRELOAD["Preload<br/>window.obelisk IPC API"]
+    PRELOAD["Preload<br/>window.trajex IPC API"]
     RENDERER["Vue Renderer<br/>Sessions / Memory / Activity / Recap / Settings"]
     SESSION_DETAIL["SessionDetail.vue<br/>timeline、tool 展示、全文展开、阅读状态"]
   end
@@ -1764,13 +2561,13 @@ flowchart TB
 
 ## 1. 项目一句话
 
-Obelisk 是“编码 Agent 的显式记忆基础设施”：
+Trajex 是“编码 Agent 的显式记忆基础设施”：
 
 1. 读取本机已有的 Agent 会话历史。
 2. 把不同供应商的日志格式统一成一套 canonical(规范的) transcript records。
-3. 持久化到 `~/.obelisk/obelisk.sqlite`。
+3. 持久化到 `~/.trajex/trajex.sqlite`。
 4. 提供两类访问方式：
-   - Agent 侧：`obelisk` CLI 让 Agent 用 JS 查询历史证据。
+   - Agent 侧：`trajex` CLI 让 Agent 用 JS 查询历史证据。
    - 人类侧：Electron 桌面 app 浏览 session、memory、activity、recap。
 
 核心设计不是“为每个 provider 写一套 app/CLI 逻辑”，而是：
@@ -1805,7 +2602,7 @@ provider 原始日志
 ### app
 
 - `app/src/main`：Electron 主进程。管理窗口、SQLite 连接、IPC、索引 daemon、文件监听、设置。
-- `app/src/preload`：安全暴露 `window.obelisk` IPC API 给 renderer。
+- `app/src/preload`：安全暴露 `window.trajex` IPC API 给 renderer。
 - `app/src/renderer`：Vue 前端。负责 session 列表、详情、memory、activity、recap、settings 等界面。
 - `app/src/shared`：主进程与 renderer 共享的 session detail assembly、patch 类型和 patch 算法。
 
@@ -1838,7 +2635,7 @@ provider 原始日志
   - 对 Kimi 这种目录型 provider，也可以是一个目录或逻辑 session。
   - 关键字段：
     - `key`：稳定索引 key，通常是文件路径。
-    - `sessionId`：写入 Obelisk 后的 session id。
+    - `sessionId`：写入 Trajex 后的 session id。
     - `project`：项目 slug。
     - `isSubagent/agentId`：子线程或 subagent 信息。
     - `meta`：provider 私有信息，外层不解释。
@@ -1896,8 +2693,8 @@ registry 做四件事：
 Codex 是本文重点。它的适配器做三件事：
 
 1. discover：找到需要索引的 Codex session JSONL。
-2. parse：把 Codex 原始事件重放为 Obelisk `TranscriptRecord`。
-3. raw：从 Obelisk 消息 id 找回源 JSONL 的原始行。
+2. parse：把 Codex 原始事件重放为 Trajex `TranscriptRecord`。
+3. raw：从 Trajex 消息 id 找回源 JSONL 的原始行。
 
 ### 4.1 Codex 原始数据位置
 
@@ -1977,7 +2774,7 @@ countMode: 'total'
 
 7. 返回 `IndexUnit`：
    - `key` 是文件路径。
-   - `sessionId` 是 Obelisk DB session id。
+   - `sessionId` 是 Trajex DB session id。
    - `meta` 里放 `source: 'codex'`、guardian 标记、indexedTitle、indexedUpdatedAt。
 
 这段的作用不是解析消息，而是把“要处理哪些 Codex 文件”决定好。
@@ -2019,7 +2816,7 @@ if (codexIsGuardianThread(meta, records)) {
 
 Codex 的 guardian/auto-review 线程不是用户真正要看的 root session。这里把它映射成 `delete-session`，交给 persist 执行级联删除。
 
-这是 Codex 适配里一个很重要的“retraction”语义：provider 可以告诉 Obelisk 某个 session 应从索引中移除。
+这是 Codex 适配里一个很重要的“retraction”语义：provider 可以告诉 Trajex 某个 session 应从索引中移除。
 
 #### 4.4.4 session id 与 subagent id
 
@@ -2044,7 +2841,7 @@ const isSidechain = agentId ? 1 : 0;
   - `agentId = codex:<childThreadRawId>`。
   - 它不会单独产生 session record，而是产生 `subagent` record 和带 `agent_id` 的 messages。
 
-这就是 Codex child threads 被投影到 Obelisk `subagents` 表的关键。
+这就是 Codex child threads 被投影到 Trajex `subagents` 表的关键。
 
 #### 4.4.5 session 聚合状态 `sm`
 
@@ -2065,7 +2862,7 @@ const isSidechain = agentId ? 1 : 0;
 
 #### 4.4.6 `insertMessage(...)`
 
-定位：把一个 Codex 可见或内部消息转换成 Obelisk `MessageRecord`。
+定位：把一个 Codex 可见或内部消息转换成 Trajex `MessageRecord`。
 
 它负责：
 
@@ -2278,7 +3075,7 @@ Codex 相关 helper 主要集中在后半段。
 
 ### 4.6 `rawCodex(...)`
 
-定位：app 中“查看原始记录/加载全文”时，从 Obelisk message uuid 回到 Codex JSONL 原始行。
+定位：app 中“查看原始记录/加载全文”时，从 Trajex message uuid 回到 Codex JSONL 原始行。
 
 它做的事：
 
@@ -2536,7 +3333,7 @@ CLI 每次查询前会调用 `buildIndex()`，这叫 passive pull mode。
 
 2. `acquireWriterLease(...)`
    - 获取跨进程写锁。
-   - 写锁使用独立的 `.obelisk/writer.lock.sqlite`。
+   - 写锁使用独立的 `.trajex/writer.lock.sqlite`。
    - heartbeat 是策略，writer lease 是硬保护。
 
 3. `openDb()`
@@ -2623,7 +3420,7 @@ sandbox 注入：
 
 文件：`packages/core/src/query.ts`
 
-`createQueryApi(db)` 暴露给 `obelisk --query` 的 helper 包括：
+`createQueryApi(db)` 暴露给 `trajex --query` 的 helper 包括：
 
 - `search(text, opts)`
   - FTS 搜索 messages。
@@ -2674,7 +3471,7 @@ sandbox 注入：
 
 ### 9.3 CLI 入口
 
-文件：`packages/cli/src/obelisk.ts`
+文件：`packages/cli/src/trajex.ts`
 
 CLI 非常薄：
 
@@ -2694,7 +3491,7 @@ CLI 非常薄：
   - 读取 JS 文件，调 `executeAttune`。
 
 - `install`
-  - 调 `npx skills add tommy0103/obelisk-skill` 安装 agent skill。
+  - 调 `npx skills add tommy0103/trajex-skill` 安装 agent skill。
 
 设计上 CLI 是 transport，不拥有 retrieval semantics。
 
@@ -2790,7 +3587,7 @@ main process
   -> start indexer service + worker
   -> expose IPC
 preload
-  -> window.obelisk API
+  -> window.trajex API
 renderer
   -> Vue state/data/session timeline
 ```
@@ -2820,7 +3617,7 @@ renderer
   - 返回 `dbPath`、`projectsDir`、`claudeDir`、`codexDir` 等。
 
 - `migrateLegacyDbIfNeeded(...)`
-  - 如果 `~/.obelisk/obelisk.sqlite` 不存在，但旧位置有 DB，则迁移。
+  - 如果 `~/.trajex/trajex.sqlite` 不存在，但旧位置有 DB，则迁移。
 
 - `openDb(...)`
   - 打开 better-sqlite3。
@@ -2831,12 +3628,12 @@ renderer
   - 创建 indexer worker。
   - 打开 DB。
   - 启动 indexer service。
-  - 启动 Obelisk watcher。
+  - 启动 Trajex watcher。
 
 - `notifyIndexUpdated(result)`
   - 给所有 renderer 窗口发送：
-    - `obelisk:index-updated`
-    - 对每个 affected session 发送 `obelisk:session-updated`
+    - `trajex:index-updated`
+    - 对每个 affected session 发送 `trajex:session-updated`
 
 - `sourceWhereClause(opts)`
   - 给 source filter 生成 SQL 条件。
@@ -2961,7 +3758,7 @@ worker 文件很薄：
 
 文件：`app/src/preload/index.ts`
 
-preload 用 `contextBridge.exposeInMainWorld('obelisk', ...)` 暴露 API。
+preload 用 `contextBridge.exposeInMainWorld('trajex', ...)` 暴露 API。
 
 renderer 不直接访问 Electron IPC，而是调用：
 
@@ -3030,7 +3827,7 @@ session detail 相关查询：
 
 文件：`app/src/renderer/src/data.js`
 
-定位：把 `window.obelisk` IPC 调用转换成 Vue state 可用的数据。
+定位：把 `window.trajex` IPC 调用转换成 Vue state 可用的数据。
 
 关键函数：
 
@@ -3152,8 +3949,8 @@ summaries -> id
 ### 12.1 CLI 查询数据流
 
 ```text
-用户/Agent 运行 obelisk --query query.js
-  -> packages/cli/src/obelisk.ts
+用户/Agent 运行 trajex --query query.js
+  -> packages/cli/src/trajex.ts
   -> executeQuery(scriptContent)
   -> buildIndex()
       -> inspect heartbeat/recent build
@@ -3305,7 +4102,7 @@ Electron ready
 4. 给 helper 加测试。
 5. 更新 skill 文档或 API reference。
 
-不要把 helper 设计成外部工具集合。Obelisk 的交互方式是 Agent 写 JS，一次性调用本地 sandbox。
+不要把 helper 设计成外部工具集合。Trajex 的交互方式是 Agent 写 JS，一次性调用本地 sandbox。
 
 ### 13.5 改 app session 展示
 
@@ -3345,7 +4142,7 @@ Electron ready
 7. `packages/core/src/provider-indexing.ts`
 8. `packages/core/src/indexer.ts`
 9. `packages/core/src/query.ts`
-10. `packages/cli/src/obelisk.ts`
+10. `packages/cli/src/trajex.ts`
 11. `app/src/main/indexer.ts`
 12. `app/src/main/indexer-service.ts`
 13. `app/src/main/index.ts`
@@ -3366,7 +4163,7 @@ Electron ready
 
 ## 15. 项目主线总结
 
-Obelisk 的主线不是“解析 JSONL 然后展示”。更准确地说，它有三条稳定边界：
+Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有三条稳定边界：
 
 1. provider adapter 边界
    - 每个 provider 自己理解原始日志。

@@ -18,7 +18,7 @@ test('recap export query strips paths before passing filename to renderer', () =
     buildRecapExportQuery({
       cardIdx: '2',
       archetype: 'architect',
-      filename: '/Users/dev/.obelisk/recap/recap-2026-W24.json',
+      filename: '/Users/dev/.trajex/recap/recap-2026-W24.json',
     }),
     'card=2&arch=architect&file=recap-2026-W24.json',
   );

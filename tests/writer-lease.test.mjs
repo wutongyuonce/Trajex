@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 
 test('a writer lease excludes another writer until it is released', () => {
-  const lockPath = join(mkdtempSync(join(tmpdir(), 'obelisk-writer-lease-')), 'writer.lock.sqlite');
+  const lockPath = join(mkdtempSync(join(tmpdir(), 'trajex-writer-lease-')), 'writer.lock.sqlite');
   const openDb = path => new DatabaseSync(path);
 
   const first = acquireWriterLease({ lockPath, openDb });

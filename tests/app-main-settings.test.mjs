@@ -119,9 +119,9 @@ function defaultIndexerWorkerClient() {
 async function loadMainForWindowFlags(flags) {
   const originalArgv = process.argv;
   const originalHome = process.env.HOME;
-  const home = join(tmpdir(), `obelisk-window-flags-${Date.now()}-${Math.random()}`);
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
-  writeFileSync(join(home, '.obelisk', 'obelisk.sqlite'), '');
+  const home = join(tmpdir(), `trajex-window-flags-${Date.now()}-${Math.random()}`);
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
   process.env.HOME = home;
   process.argv = [originalArgv[0] || 'node', originalArgv[1] || 'electron', ...flags];
 
@@ -198,14 +198,14 @@ test('dev mode does not open DevTools unless explicitly requested', async () => 
 
 test('main process watches every root declared by the built-in provider registry', async () => {
   const originalHome = process.env.HOME;
-  const home = join(tmpdir(), `obelisk-main-watch-dirs-${Date.now()}`);
+  const home = join(tmpdir(), `trajex-main-watch-dirs-${Date.now()}`);
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   mkdirSync(join(claudeDir, 'projects'), { recursive: true });
   mkdirSync(join(codexDir, 'sessions'), { recursive: true });
   mkdirSync(join(home, '.kimi-code', 'sessions'), { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
-  writeFileSync(join(home, '.obelisk', 'obelisk.sqlite'), '');
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
   process.env.HOME = home;
 
   const serviceOptions = [];
@@ -273,11 +273,11 @@ test('main process watches every root declared by the built-in provider registry
 
 test('main process forwards committed IDs without reopening after a deferred build', async () => {
   const originalHome = process.env.HOME;
-  const home = join(tmpdir(), `obelisk-main-deferred-build-${Date.now()}`);
+  const home = join(tmpdir(), `trajex-main-deferred-build-${Date.now()}`);
   mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
   mkdirSync(join(home, '.codex', 'sessions'), { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
-  writeFileSync(join(home, '.obelisk', 'obelisk.sqlite'), '');
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
   process.env.HOME = home;
 
   let databaseOpens = 0;
@@ -344,9 +344,9 @@ test('main process forwards committed IDs without reopening after a deferred bui
 
 test('session IPC hides Codex rows by default and supports explicit source opt-in', async () => {
   const originalHome = process.env.HOME;
-  const home = join(tmpdir(), `obelisk-main-source-filter-${Date.now()}`);
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
-  writeFileSync(join(home, '.obelisk', 'obelisk.sqlite'), '');
+  const home = join(tmpdir(), `trajex-main-source-filter-${Date.now()}`);
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
   process.env.HOME = home;
 
   const ipcHandlers = new Map();
@@ -429,12 +429,12 @@ test('session IPC hides Codex rows by default and supports explicit source opt-i
 
 test('usage IPC aggregates normalized tokens across all indexed providers', async () => {
   const originalHome = process.env.HOME;
-  const home = join(tmpdir(), `obelisk-main-usage-${Date.now()}`);
-  const obeliskDir = join(home, '.obelisk');
-  mkdirSync(obeliskDir, { recursive: true });
+  const home = join(tmpdir(), `trajex-main-usage-${Date.now()}`);
+  const trajexDir = join(home, '.trajex');
+  mkdirSync(trajexDir, { recursive: true });
   process.env.HOME = home;
 
-  const dbPath = join(obeliskDir, 'obelisk.sqlite');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
   const setup = new DatabaseSync(dbPath);
   setup.exec(readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8'));
   setup.prepare(`
@@ -502,13 +502,13 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
 
 test('main process migrates an existing app database before source-filtered IPC queries', async () => {
   const originalHome = process.env.HOME;
-  const home = join(tmpdir(), `obelisk-main-db-migration-${Date.now()}`);
-  const obeliskDir = join(home, '.obelisk');
-  mkdirSync(obeliskDir, { recursive: true });
+  const home = join(tmpdir(), `trajex-main-db-migration-${Date.now()}`);
+  const trajexDir = join(home, '.trajex');
+  mkdirSync(trajexDir, { recursive: true });
   process.env.HOME = home;
 
   const { DatabaseSync } = require('node:sqlite');
-  const dbPath = join(obeliskDir, 'obelisk.sqlite');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
   const legacy = new DatabaseSync(dbPath);
   legacy.exec(`
     CREATE TABLE sessions (
@@ -586,10 +586,10 @@ test('main process migrates an existing app database before source-filtered IPC 
 
 test('main process keeps schema and memory mutations behind the writer lease', async () => {
   const originalHome = process.env.HOME;
-  const home = join(tmpdir(), `obelisk-main-migration-lease-${Date.now()}`);
-  const obeliskDir = join(home, '.obelisk');
-  const dbPath = join(obeliskDir, 'obelisk.sqlite');
-  mkdirSync(obeliskDir, { recursive: true });
+  const home = join(tmpdir(), `trajex-main-migration-lease-${Date.now()}`);
+  const trajexDir = join(home, '.trajex');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
+  mkdirSync(trajexDir, { recursive: true });
   process.env.HOME = home;
 
   const legacy = new DatabaseSync(dbPath);
@@ -597,7 +597,7 @@ test('main process keeps schema and memory mutations behind the writer lease', a
   legacy.close();
 
   const holder = acquireWriterLease({
-    lockPath: join(obeliskDir, 'writer.lock.sqlite'),
+    lockPath: join(trajexDir, 'writer.lock.sqlite'),
     openDb: lockPath => new DatabaseSync(lockPath),
   });
   assert.ok(holder);
@@ -651,9 +651,9 @@ test('main process keeps schema and memory mutations behind the writer lease', a
 test('closing the last macOS window releases background resources until activation', async () => {
   const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
   const originalHome = process.env.HOME;
-  const home = join(tmpdir(), `obelisk-main-window-${Date.now()}`);
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
-  writeFileSync(join(home, '.obelisk', 'obelisk.sqlite'), '');
+  const home = join(tmpdir(), `trajex-main-window-${Date.now()}`);
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
   process.env.HOME = home;
   Object.defineProperty(process, 'platform', { value: 'darwin' });
 
@@ -761,16 +761,16 @@ test('closing the last macOS window releases background resources until activati
 });
 
 test('settings rebuild reopens the database from the configured Claude path', async () => {
-  const home = join(tmpdir(), `obelisk-main-settings-${Date.now()}`);
+  const home = join(tmpdir(), `trajex-main-settings-${Date.now()}`);
   const defaultClaudeDir = join(home, '.claude');
   const customClaudeDir = join(home, 'custom-claude');
   const customCodexDir = join(home, 'custom-codex');
   mkdirSync(defaultClaudeDir, { recursive: true });
   mkdirSync(customClaudeDir, { recursive: true });
   mkdirSync(customCodexDir, { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
-  writeFileSync(join(home, '.obelisk', 'obelisk.sqlite'), 'previous index');
-  writeFileSync(join(home, '.obelisk', 'settings.json'), JSON.stringify({
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), 'previous index');
+  writeFileSync(join(home, '.trajex', 'settings.json'), JSON.stringify({
     claudeDir: customClaudeDir,
     codexDir: customCodexDir,
   }));
@@ -863,19 +863,19 @@ test('settings rebuild reopens the database from the configured Claude path', as
     assert.equal(buildCalls.at(-1).claudeDir, customClaudeDir);
     assert.equal(buildCalls.at(-1).projectsDir, join(customClaudeDir, 'projects'));
     assert.equal(buildCalls.at(-1).codexDir, customCodexDir);
-    assert.notEqual(buildCalls.at(-1).dbPath, join(home, '.obelisk', 'obelisk.sqlite'));
-    assert.equal(buildCalls.at(-1).preserveDbPath, join(home, '.obelisk', 'obelisk.sqlite'));
-    assert.equal(buildCalls.at(-1).writerLeasePath, join(home, '.obelisk', 'writer.lock.sqlite'));
+    assert.notEqual(buildCalls.at(-1).dbPath, join(home, '.trajex', 'trajex.sqlite'));
+    assert.equal(buildCalls.at(-1).preserveDbPath, join(home, '.trajex', 'trajex.sqlite'));
+    assert.equal(buildCalls.at(-1).writerLeasePath, join(home, '.trajex', 'writer.lock.sqlite'));
     assert.equal(buildCalls.at(-1).writerLeaseMode, 'caller-held');
     assert.equal(competingLeaseDuringBuild, false);
-    assert.equal(openedDbPaths.at(-1), join(home, '.obelisk', 'obelisk.sqlite'));
+    assert.equal(openedDbPaths.at(-1), join(home, '.trajex', 'trajex.sqlite'));
     assert.equal(
-      require('node:fs').readFileSync(join(home, '.obelisk', 'obelisk.sqlite'), 'utf8'),
+      require('node:fs').readFileSync(join(home, '.trajex', 'trajex.sqlite'), 'utf8'),
       'rebuilt temp db',
     );
     assert.ok(serviceEvents.indexOf('build') > serviceEvents.indexOf('stop'));
     const postRebuildLease = acquireWriterLease({
-      lockPath: join(home, '.obelisk', 'writer.lock.sqlite'),
+      lockPath: join(home, '.trajex', 'writer.lock.sqlite'),
       openDb: lockPath => new DatabaseSync(lockPath),
     });
     assert.ok(postRebuildLease);
@@ -888,14 +888,14 @@ test('settings rebuild reopens the database from the configured Claude path', as
 });
 
 test('settings rebuild keeps the existing database after a worker failure', async () => {
-  const home = join(tmpdir(), `obelisk-main-settings-rebuild-failure-${Date.now()}`);
+  const home = join(tmpdir(), `trajex-main-settings-rebuild-failure-${Date.now()}`);
   const customClaudeDir = join(home, 'custom-claude');
   const customCodexDir = join(home, 'custom-codex');
   mkdirSync(customClaudeDir, { recursive: true });
   mkdirSync(customCodexDir, { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
-  writeFileSync(join(home, '.obelisk', 'obelisk.sqlite'), 'previous index');
-  writeFileSync(join(home, '.obelisk', 'settings.json'), JSON.stringify({
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), 'previous index');
+  writeFileSync(join(home, '.trajex', 'settings.json'), JSON.stringify({
     claudeDir: customClaudeDir,
     codexDir: customCodexDir,
   }));
@@ -980,7 +980,7 @@ test('settings rebuild keeps the existing database after a worker failure', asyn
     const openCountBeforeRebuild = openedDbPaths.length;
     await assert.rejects(() => rebuild(), /worker exploded/);
 
-    const expectedDbPath = join(home, '.obelisk', 'obelisk.sqlite');
+    const expectedDbPath = join(home, '.trajex', 'trajex.sqlite');
     assert.equal(openedDbPaths.at(-1), expectedDbPath);
     assert.equal(openedDbPaths.length, openCountBeforeRebuild);
     assert.equal(closedDbPaths.includes(expectedDbPath), false);
@@ -998,14 +998,14 @@ test('settings rebuild keeps the existing database after a worker failure', asyn
 });
 
 test('settings rebuild cancels an in-flight background build instead of waiting for it', async () => {
-  const home = join(tmpdir(), `obelisk-main-settings-rebuild-cancel-${Date.now()}`);
+  const home = join(tmpdir(), `trajex-main-settings-rebuild-cancel-${Date.now()}`);
   const customClaudeDir = join(home, 'custom-claude');
   const customCodexDir = join(home, 'custom-codex');
   mkdirSync(customClaudeDir, { recursive: true });
   mkdirSync(customCodexDir, { recursive: true });
-  mkdirSync(join(home, '.obelisk'), { recursive: true });
-  writeFileSync(join(customClaudeDir, 'obelisk.sqlite'), 'legacy custom db');
-  writeFileSync(join(home, '.obelisk', 'settings.json'), JSON.stringify({
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(customClaudeDir, 'trajex.sqlite'), 'legacy custom db');
+  writeFileSync(join(home, '.trajex', 'settings.json'), JSON.stringify({
     claudeDir: customClaudeDir,
     codexDir: customCodexDir,
   }));

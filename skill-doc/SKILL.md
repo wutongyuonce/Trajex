@@ -1,5 +1,5 @@
 ---
-name: obelisk
+name: trajex
 description: >
   Search and query past Claude Code and Codex session history.
   Reactive: when the user asks "how did I fix X", "what did we do last time", "find the session where", "上次怎么修的", "之前的session", "历史记录".
@@ -7,26 +7,26 @@ description: >
   Memory: when the user says "记住这个", "remember this", "写入记忆", "save this conclusion", or when you determine a retrieval result contains a conclusion worth persisting.
 allowed-tools:
   - Read
-  - Bash(obelisk:*)
+  - Bash(trajex:*)
   - Write
 ---
 
-# obelisk
+# trajex
 
 Search and query Claude Code and Codex session history stored in `~/.claude/`
 and `~/.codex/`.
-Obelisk indexes sessions, messages, tool calls, tool results, summaries,
+Trajex indexes sessions, messages, tool calls, tool results, summaries,
 subagents, workflows, workflow agents, parent chains, and raw JSONL lines into
 SQLite + FTS5.
 
-Obelisk has two transcript sources. Treat both as ordinary sessions by default:
+Trajex has two transcript sources. Treat both as ordinary sessions by default:
 Claude rows use `source='claude'`; Codex rows use `source='codex'` and IDs
 prefixed with `codex:`. Use `source` only when provenance matters or the user
 asks to scope to one provider. Codex subagent child threads are mapped to the
 same `subagents` table; Codex workflow rows may be absent because Codex does not
 emit Claude-style workflow metadata.
 
-Obelisk is a CodeAct memory layer: write a small JS query, run it locally, read
+Trajex is a CodeAct memory layer: write a small JS query, run it locally, read
 the JSON, then answer. Do not turn history into a flat document or browse entire
 sessions by default.
 
@@ -35,7 +35,7 @@ sessions by default.
 Fast keyword search:
 
 ```bash
-obelisk --search "keyword"
+trajex --search "keyword"
 ```
 
 Custom query:
@@ -44,7 +44,7 @@ Custom query:
 2. Run:
 
    ```bash
-   obelisk --query /tmp/q.mjs
+   trajex --query /tmp/q.mjs
    ```
 
 3. Parse JSON stdout and answer with concise evidence.
@@ -55,7 +55,7 @@ Query scripts are read-only: `remember()` and `forget()` are not available, and
 
 ## Default First Pass
 
-Start with helpers, not raw SQL. For the first Obelisk query in a task, normally
+Start with helpers, not raw SQL. For the first Trajex query in a task, normally
 call `overview({ limit: 6 })` unless the user already gave an exact
 `session_id`, message `uuid`, or absolute file path.
 
@@ -80,7 +80,7 @@ fallback for broad retrieval.
 
 ## Intent Routing
 
-Obelisk supports a small intent prefix layer after `/obelisk`. This is for
+Trajex supports a small intent prefix layer after `/trajex`. This is for
 output intent, not retrieval architecture.
 
 | Intent | Description | Reference |
@@ -91,9 +91,9 @@ Routing rules:
 
 1. If the first word is `recap`, read `references/recap/overview.md` before the
    first query. Everything after `recap` is the recap target.
-   Common app-generated prompts include `/obelisk recap this week`,
-   `/obelisk recap last week`, `/obelisk recap this month`, and
-   `/obelisk recap last month`; interpret these as natural period targets
+   Common app-generated prompts include `/trajex recap this week`,
+   `/trajex recap last week`, `/trajex recap this month`, and
+   `/trajex recap last month`; interpret these as natural period targets
    relative to the current date and timezone.
 2. `recap` does not create a separate retrieval layer. It still uses
    `overview()`, `memories()`, helpers, and `sql()` only when needed.
@@ -117,7 +117,7 @@ Use references by job, not by habit:
 | `references/schema.md` | Raw SQL field and join quick reference before writing non-trivial `sql()`. |
 | `references/api-reference.md` | Helper signatures, option names, return fields, or exact `remember()` / `forget()` parameter details are unclear. |
 | `references/pitfalls.md` | Error recovery, FTS syntax, aliases, ordering, row-shape surprises, or compact/raw tradeoffs. |
-| `references/recap/overview.md` | Explicit `/obelisk recap ...` requests only. |
+| `references/recap/overview.md` | Explicit `/trajex recap ...` requests only. |
 
 ## Query Routing
 
@@ -256,7 +256,7 @@ If field, context, ordering, FTS, or helper semantics affect the query, read
 
 ## Memory Layer
 
-Obelisk has a persistent memory layer alongside raw session data. Every
+Trajex has a persistent memory layer alongside raw session data. Every
 retrieval queries both layers: `memories()` for prior conclusions, `search()`
 and helpers for raw session evidence. Use memory as prior notes, not final
 authority. If a memory record influences your answer, say naturally that it was
@@ -301,7 +301,7 @@ propose writing a memory file. The user must approve. Flow:
 
 ```js
 return remember({
-  path: '.obelisk/memories/design-decision-x.md',
+  path: '.trajex/memories/design-decision-x.md',
   session_id: 'current-session-id',
   message_start: 'uuid-of-first-relevant-msg',
   message_end: 'uuid-of-last-relevant-msg',
@@ -313,7 +313,7 @@ return remember({
 Run the registration script with:
 
 ```bash
-obelisk --attune /tmp/register-memory.mjs
+trajex --attune /tmp/register-memory.mjs
 ```
 
 `--attune` exposes only memory mutation helpers: `remember()` and `forget()`.
@@ -324,7 +324,7 @@ helpers. If you need source IDs or memory IDs, find them first with a normal
 `remember()` validates that `path` already exists and points to a file. Relative
 paths are resolved against the source session's `project_path` when
 `session_id` is provided, then stored as normalized absolute paths. Prefer
-project-relative paths such as `.obelisk/memories/...` plus `session_id`.
+project-relative paths such as `.trajex/memories/...` plus `session_id`.
 Optional `anchors` must be an array of objects and is stored as nullable JSON
 text. Use it only for explicit recall surfaces, such as files associated with
 the memory.
@@ -401,6 +401,6 @@ See `references/query-patterns.md` for longer recipes.
 ## Notes
 
 - First run builds the index. Later runs update incrementally.
-- DB location: `~/.obelisk/obelisk.sqlite`; old `~/.claude/obelisk.sqlite` is copied forward if needed.
+- DB location: `~/.trajex/trajex.sqlite`; old `~/.claude/trajex.sqlite` is copied forward if needed.
 - Query scripts run in a sandboxed VM with no filesystem or network access from inside the script.
 - Indexed text and stored tool inputs/results are truncated to 10k chars. Use `raw(uuid, { offset, limit })` for specific JSONL windows.

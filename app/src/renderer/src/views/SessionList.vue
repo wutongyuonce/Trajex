@@ -77,7 +77,7 @@ function openSession(session) {
   router.push({ name: 'SessionDetail', params: { id: session.id } });
 }
 
-function obeliskStyle(session) {
+function trajexStyle(session) {
   const created = new Date(session.started_at || 0).getTime();
   const days = Math.max(0, (Date.now() - created) / 86400000);
   const height = Math.min(1, Math.log(1 + days) / Math.log(1 + 365));
@@ -107,12 +107,12 @@ function obeliskStyle(session) {
         <span class="diamond"></span>
         <span>No data source connected</span>
       </div>
-      <div class="empty-title">Obelisk reads your Claude Code session history.</div>
+      <div class="empty-title">Trajex reads your Claude Code session history.</div>
       <div class="empty-body">
         We didn't find <code>~/.claude</code> on this machine. If you've already used
-        Claude Code, point Obelisk at where its data lives in
+        Claude Code, point Trajex at where its data lives in
         <button class="inline-link" @click="router.push('/settings')">Settings</button>. If you haven't,
-        <strong>install Claude Code first</strong> — Obelisk has nothing to read until
+        <strong>install Claude Code first</strong> — Trajex has nothing to read until
         sessions exist.
       </div>
       <div class="empty-actions">
@@ -151,7 +151,7 @@ function obeliskStyle(session) {
         :data-session-id="s.id"
         @click="openSession(s)"
       >
-        <div class="srow-obelisk" :style="obeliskStyle(s)"></div>
+        <div class="srow-trajex" :style="trajexStyle(s)"></div>
         <div class="srow-body">
           <div class="srow-title" v-html="titleHTML(s)"></div>
           <div class="srow-meta">

@@ -78,7 +78,7 @@ const showSearchMsgsToggle = computed(() => {
 // --- Window title ---
 
 const windowTitle = computed(() => {
-  const appName = 'Obelisk';
+  const appName = 'Trajex';
   let scopeText = '';
   if (route.name === 'Activity') {
     scopeText = 'Activity';
@@ -206,8 +206,8 @@ const sourceDots = ref([]);
 const sourceDetails = ref([]);
 const showSourcePopover = ref(false);
 async function loadSourceDots() {
-  if (!window.obelisk?.getSettings) return;
-  const s = await window.obelisk.getSettings();
+  if (!window.trajex?.getSettings) return;
+  const s = await window.trajex.getSettings();
   sourceDots.value = (s.sources || []).map(src => ({ id: src.id, status: src.status, color: src.color }));
   sourceDetails.value = s.sources || [];
   state.sources = s.sources || [];
@@ -271,7 +271,7 @@ provide('recapGenerateOpen', recapGenerateOpen);
             <polygon points="20,12 23.5,12 22.5,33 20,33" fill="#1e293b"/>
             <rect x="15.5" y="33" width="9" height="1.6" rx="0.3" fill="#0f172a"/>
           </svg>
-          <span class="name">Obelisk</span>
+          <span class="name">Trajex</span>
           <button class="source-health" title="Connected sources" @click="showSourcePopover = !showSourcePopover">
             <span v-for="src in sourceDots" :key="src.id" class="h-dot" :class="src.status" :style="{ '--source-color': src.color }"></span>
           </button>

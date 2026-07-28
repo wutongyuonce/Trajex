@@ -138,7 +138,7 @@ test('indexer service logs a build that fails while running', async () => {
   await build;
 
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /Obelisk index build failed: disk on fire/);
+  assert.match(warnings[0], /Trajex index build failed: disk on fire/);
 });
 
 test('indexer service waits for a stability window before building', async () => {
@@ -203,7 +203,7 @@ test('indexer service publishes daemon ownership as soon as it starts', () => {
 });
 
 test('indexer service watches Claude JSON files through chokidar', async () => {
-  const projectsDir = mkdtempSync(join(tmpdir(), 'obelisk-chokidar-projects-'));
+  const projectsDir = mkdtempSync(join(tmpdir(), 'trajex-chokidar-projects-'));
   const timers = manualTimers();
   const calls = [];
   let watchArgs = null;
@@ -254,7 +254,7 @@ test('indexer service watches Claude JSON files through chokidar', async () => {
 });
 
 test('indexer service passes changed JSONL paths to the build worker', async () => {
-  const projectsDir = mkdtempSync(join(tmpdir(), 'obelisk-changed-paths-'));
+  const projectsDir = mkdtempSync(join(tmpdir(), 'trajex-changed-paths-'));
   const timers = manualTimers();
   const calls = [];
   const handlers = {};
@@ -296,8 +296,8 @@ test('indexer service passes changed JSONL paths to the build worker', async () 
 });
 
 test('indexer service watches Claude projects and Codex sessions for app-side indexing', async () => {
-  const claudeProjectsDir = mkdtempSync(join(tmpdir(), 'obelisk-watch-claude-'));
-  const codexSessionsDir = mkdtempSync(join(tmpdir(), 'obelisk-watch-codex-sessions-'));
+  const claudeProjectsDir = mkdtempSync(join(tmpdir(), 'trajex-watch-claude-'));
+  const codexSessionsDir = mkdtempSync(join(tmpdir(), 'trajex-watch-codex-sessions-'));
   const timers = manualTimers();
   const calls = [];
   const watchers = [];

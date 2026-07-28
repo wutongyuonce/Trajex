@@ -40,7 +40,7 @@ function writeSession(kimiDir, { userSlash = false } = {}) {
       ? {
           role: 'user', content: 'Expanded skill instructions.', toolCalls: [],
           origin: {
-            kind: 'skill_activation', trigger: 'user-slash', skillName: 'obelisk',
+            kind: 'skill_activation', trigger: 'user-slash', skillName: 'trajex',
             skillArgs: 'find prior decisions',
           },
         }
@@ -51,11 +51,11 @@ function writeSession(kimiDir, { userSlash = false } = {}) {
 }
 
 test('app build indexes Kimi sessions through the provider registry without changing schema', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-kimi-index-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-kimi-index-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const kimiDir = join(home, '.kimi-code');
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   writeSession(kimiDir);
 
   const first = buildIndex({
@@ -91,11 +91,11 @@ test('app build indexes Kimi sessions through the provider registry without chan
 });
 
 test('Kimi undo and clear replace the indexed session instead of leaving stale rows', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-kimi-replay-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-kimi-replay-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const kimiDir = join(home, '.kimi-code');
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   const { wirePath, records } = writeSession(kimiDir);
   const assistant = {
     type: 'context.append_loop_event',
@@ -134,11 +134,11 @@ test('Kimi undo and clear replace the indexed session instead of leaving stale r
 });
 
 test('Kimi canonical transcript marker replays unchanged sessions once', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-kimi-prompt-marker-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-kimi-prompt-marker-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const kimiDir = join(home, '.kimi-code');
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   writeSession(kimiDir, { userSlash: true });
   const options = {
     claudeDir,
@@ -161,7 +161,7 @@ test('Kimi canonical transcript marker replays unchanged sessions once', () => {
   db = new TestDatabase(dbPath);
   assert.deepEqual(
     { ...db.prepare("SELECT text,is_meta FROM messages WHERE source='kimi'").get() },
-    { text: '/obelisk find prior decisions', is_meta: 0 },
+    { text: '/trajex find prior decisions', is_meta: 0 },
   );
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM index_state WHERE jsonl_path=?').get(marker).c, 1);
   db.close();

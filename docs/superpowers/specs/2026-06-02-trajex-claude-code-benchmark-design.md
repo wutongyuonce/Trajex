@@ -1,14 +1,14 @@
-# Obelisk Claude Code Benchmark Design
+# Trajex Claude Code Benchmark Design
 
 ## Goal
 
-Build a real SkillOpt benchmark for Obelisk where Claude Code is the target agent. The benchmark should train and evaluate `SKILL.md` as operational guidance for querying Obelisk, not as a mock prompt exercise.
+Build a real SkillOpt benchmark for Trajex where Claude Code is the target agent. The benchmark should train and evaluate `SKILL.md` as operational guidance for querying Trajex, not as a mock prompt exercise.
 
-The target agent should read the current candidate skill, write an Obelisk query script, run the local Obelisk runtime, and answer with evidence. SkillOpt should then optimize the skill document based on actual successes and failures.
+The target agent should read the current candidate skill, write an Trajex query script, run the local Trajex runtime, and answer with evidence. SkillOpt should then optimize the skill document based on actual successes and failures.
 
 ## Scope
 
-The first version is a tiny real benchmark with 8-12 items drawn from observed Claude Code usage of Obelisk. It should run against the local Obelisk database and runtime, using `claude_code_exec` as the target backend.
+The first version is a tiny real benchmark with 8-12 items drawn from observed Claude Code usage of Trajex. It should run against the local Trajex database and runtime, using `claude_code_exec` as the target backend.
 
 Out of scope for the first version:
 
@@ -22,7 +22,7 @@ Out of scope for the first version:
 Add a new SkillOpt environment:
 
 ```text
-skillopt/envs/obelisk_query/
+skillopt/envs/trajex_query/
   __init__.py
   adapter.py
   dataloader.py
@@ -34,20 +34,20 @@ skillopt/envs/obelisk_query/
   skills/
     initial.md
 
-configs/obelisk_query/
+configs/trajex_query/
   claude_code_tiny.yaml
 
-data/obelisk_query_tiny/
+data/trajex_query_tiny/
   train/items.json
   val/items.json
   test/items.json
 ```
 
-The SkillOpt registry should import `ObeliskQueryAdapter` from the new environment under the key `obelisk_query`.
+The SkillOpt registry should import `TrajexQueryAdapter` from the new environment under the key `trajex_query`.
 
 ## Item Format
 
-Each item describes a real Obelisk query task plus deterministic scoring hints:
+Each item describes a real Trajex query task plus deterministic scoring hints:
 
 ```json
 {
@@ -74,9 +74,9 @@ Fields:
 
 ## Initial Scenarios
 
-Seed the first split from observed Obelisk usage:
+Seed the first split from observed Trajex usage:
 
-- `development_history`: "关于 obelisk 我们都做了什么，过程中遇到了什么问题？"
+- `development_history`: "关于 trajex 我们都做了什么，过程中遇到了什么问题？"
 - `failure_investigation`: "找出最近失败的 tool calls，它们分别发生在哪些任务里"
 - `summary_context`: "你能看到最近的 summary 消息吗"
 - `summary_neighbors`: "那你可以看到 summary 前后的消息吗"
@@ -96,7 +96,7 @@ For each item:
 3. Write `task.md` with:
    - the query task,
    - the required output contract,
-   - the absolute path to the Obelisk runtime,
+   - the absolute path to the Trajex runtime,
    - a reminder to write bounded query scripts.
 4. Run Claude Code through SkillOpt's existing `claude_code_exec` harness.
 5. Require the target to write:
@@ -156,15 +156,15 @@ Anti-patterns:
 
 ## Config
 
-`configs/obelisk_query/claude_code_tiny.yaml` should default to a small, low-cost run:
+`configs/trajex_query/claude_code_tiny.yaml` should default to a small, low-cost run:
 
 ```yaml
 env:
-  name: obelisk_query
+  name: trajex_query
   skill_init: /Users/tomiya/Code/quiet-zero/SKILL.md
   split_mode: split_dir
-  split_dir: data/obelisk_query_tiny
-  obelisk_runtime: /Users/tomiya/Code/quiet-zero/scripts/runtime.mjs
+  split_dir: data/trajex_query_tiny
+  trajex_runtime: /Users/tomiya/Code/quiet-zero/scripts/runtime.mjs
   exec_timeout: 180
   workers: 1
 
@@ -199,10 +199,10 @@ evaluation:
 Minimum verification before calling it complete:
 
 1. `uv run python scripts/train.py --help` works in SkillOpt.
-2. `uv run python scripts/eval_only.py --config configs/obelisk_query/claude_code_tiny.yaml --skill /Users/tomiya/Code/quiet-zero/SKILL.md --split train --test_env_num 1` runs one item.
-3. A one-step training command starts and writes `outputs/obelisk_claude_tiny/best_skill.md`.
+2. `uv run python scripts/eval_only.py --config configs/trajex_query/claude_code_tiny.yaml --skill /Users/tomiya/Code/quiet-zero/SKILL.md --split train --test_env_num 1` runs one item.
+3. A one-step training command starts and writes `outputs/trajex_claude_tiny/best_skill.md`.
 4. Generated artifacts include `query.mjs`, `answer.json`, and a score report for at least one task.
 
 ## Open Risk
 
-This benchmark depends on local Claude Code history, so the first version is intentionally local and personal. Later packaging can add a fixture Obelisk database, but that should be a separate step.
+This benchmark depends on local Claude Code history, so the first version is intentionally local and personal. Later packaging can add a fixture Trajex database, but that should be a separate step.

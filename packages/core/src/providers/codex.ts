@@ -2,12 +2,12 @@
  * Codex Provider adapter。
  *
  * 模块定位：发现 ~/.codex session rollout 文件，执行全量重放和 event_msg/
- * response_item 去重，再输出规范 TranscriptRecord；它不访问 Obelisk SQLite。
+ * response_item 去重，再输出规范 TranscriptRecord；它不访问 Trajex SQLite。
  */
 // Codex provider adapter in Core (see docs/adr/0001).
 //
 // Pure: discovers Codex rollout files and parses one into a record stream. It
-// never touches the Obelisk database. Unlike claude, codex is a FULL-REPARSE
+// never touches the Trajex database. Unlike claude, codex is a FULL-REPARSE
 // adapter: it buffers every line and re-emits every record on each run, because
 // the event_msg ↔ response_item dedup needs whole-file (bidirectional) knowledge
 // (the matching pair sits ±1 line apart but in either order). Hence the session

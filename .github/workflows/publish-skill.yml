@@ -19,7 +19,7 @@ jobs:
 
       - run: npm run build:skill
 
-      - name: Push to obelisk-skill
+      - name: Push to trajex-skill
         env:
           DEPLOY_KEY: ${{ secrets.SKILL_REPO_DEPLOY_KEY }}
         run: |
@@ -30,13 +30,13 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/skill_deploy -o StrictHostKeyChecking=no"
 
           SKILL_DIR=$(mktemp -d)
-          git clone --depth 1 git@github.com:tommy0103/obelisk-skill.git "$SKILL_DIR" || {
+          git clone --depth 1 git@github.com:tommy0103/trajex-skill.git "$SKILL_DIR" || {
             # First push: init an empty repo
             git init "$SKILL_DIR"
-            git -C "$SKILL_DIR" remote add origin git@github.com:tommy0103/obelisk-skill.git
+            git -C "$SKILL_DIR" remote add origin git@github.com:tommy0103/trajex-skill.git
           }
 
-          # Keep repository metadata, then stage the skill under skills/obelisk.
+          # Keep repository metadata, then stage the skill under skills/trajex.
           bash packaging/stage-skill-repo.sh "$SKILL_DIR"
 
           cd "$SKILL_DIR"
@@ -47,5 +47,5 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "publish: $(date -u +%Y-%m-%dT%H:%M:%SZ) from tommy0103/obelisk@${GITHUB_SHA::7}"
+          git commit -m "publish: $(date -u +%Y-%m-%dT%H:%M:%SZ) from tommy0103/trajex@${GITHUB_SHA::7}"
           git push --force origin HEAD:main

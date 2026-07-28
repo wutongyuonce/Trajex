@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-const artifact = join(repoRoot, 'dist', 'obelisk-skill');
+const artifact = join(repoRoot, 'dist', 'trajex-skill');
 
 test('build:skill produces a docs-only skill that delegates execution to the CLI', () => {
   execFileSync(npmCommand, ['run', 'build:skill'], {
@@ -24,9 +24,9 @@ test('build:skill produces a docs-only skill that delegates execution to the CLI
 
   const skill = readFileSync(join(artifact, 'SKILL.md'), 'utf8');
   const schema = readFileSync(join(artifact, 'references', 'schema.md'), 'utf8');
-  assert.match(skill, /Bash\(obelisk:\*\)/);
-  assert.match(skill, /obelisk --query \/tmp\/q\.mjs/);
-  assert.match(skill, /obelisk --attune \/tmp\/register-memory\.mjs/);
+  assert.match(skill, /Bash\(trajex:\*\)/);
+  assert.match(skill, /trajex --query \/tmp\/q\.mjs/);
+  assert.match(skill, /trajex --attune \/tmp\/register-memory\.mjs/);
   assert.doesNotMatch(skill, /\$SKILL_DIR\/scripts\/runtime\.js/);
   assert.doesNotMatch(`${skill}\n${schema}`, /scripts\//);
 });

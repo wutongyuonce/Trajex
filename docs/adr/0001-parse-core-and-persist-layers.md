@@ -6,7 +6,7 @@
 > adapters* (driven by the multi-provider roadmap), and there is *one* shared
 > persist layer, not one per binding.
 
-**Context.** Obelisk had two divergent full indexers — the former
+**Context.** Trajex had two divergent full indexers — the former
 `scripts/indexer.mjs` (`node:sqlite`, the former skill-embedded runtime) and
 `app/indexer.js`
 (`better-sqlite3`, Electron

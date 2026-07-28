@@ -1,4 +1,4 @@
-# Obelisk Pitfalls
+# Trajex Pitfalls
 
 Use this after a query error, suspicious empty result, over-large output, or
 unclear helper row shape. For query design, read `retrieval-semantics.md` first.

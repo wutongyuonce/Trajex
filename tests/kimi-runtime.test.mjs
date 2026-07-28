@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 test('passive-pull runtime indexes Kimi sessions from the default home', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-kimi-runtime-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-kimi-runtime-'));
   const sessionDir = join(home, '.kimi-code', 'sessions', 'workspace-1', 'session-runtime-1');
   const mainDir = join(sessionDir, 'agents', 'main');
   mkdirSync(mainDir, { recursive: true });

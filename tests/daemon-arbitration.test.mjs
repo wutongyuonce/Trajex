@@ -12,10 +12,10 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 
 test('a passive query does not mutate the index while a fresh daemon owns writes', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-daemon-arbitration-'));
-  const obeliskDir = join(home, '.obelisk');
-  const dbPath = join(obeliskDir, 'obelisk.sqlite');
-  mkdirSync(obeliskDir, { recursive: true });
+  const home = mkdtempSync(join(tmpdir(), 'trajex-daemon-arbitration-'));
+  const trajexDir = join(home, '.trajex');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
+  mkdirSync(trajexDir, { recursive: true });
 
   const db = new DatabaseSync(dbPath);
   db.exec('CREATE TABLE index_state (jsonl_path TEXT PRIMARY KEY, mtime REAL, lines_processed INTEGER)');
@@ -37,10 +37,10 @@ test('a passive query does not mutate the index while a fresh daemon owns writes
 });
 
 test('attune refuses to mutate the index while a fresh daemon owns writes', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-daemon-attune-'));
-  const obeliskDir = join(home, '.obelisk');
-  const dbPath = join(obeliskDir, 'obelisk.sqlite');
-  mkdirSync(obeliskDir, { recursive: true });
+  const home = mkdtempSync(join(tmpdir(), 'trajex-daemon-attune-'));
+  const trajexDir = join(home, '.trajex');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
+  mkdirSync(trajexDir, { recursive: true });
   const db = new DatabaseSync(dbPath);
   db.exec('CREATE TABLE index_state (jsonl_path TEXT PRIMARY KEY, mtime REAL, lines_processed INTEGER)');
   const marker = db.prepare('INSERT INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)');
@@ -61,10 +61,10 @@ test('attune refuses to mutate the index while a fresh daemon owns writes', () =
 });
 
 test('a passive query stays read-only when another process holds the writer lease', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-writer-owned-'));
-  const obeliskDir = join(home, '.obelisk');
-  const dbPath = join(obeliskDir, 'obelisk.sqlite');
-  mkdirSync(obeliskDir, { recursive: true });
+  const home = mkdtempSync(join(tmpdir(), 'trajex-writer-owned-'));
+  const trajexDir = join(home, '.trajex');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
+  mkdirSync(trajexDir, { recursive: true });
   const db = new DatabaseSync(dbPath);
   db.exec('CREATE TABLE index_state (jsonl_path TEXT PRIMARY KEY, mtime REAL, lines_processed INTEGER)');
   db.close();
@@ -91,10 +91,10 @@ test('a passive query stays read-only when another process holds the writer leas
 });
 
 test('a passive query fails closed when daemon ownership cannot be read', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-daemon-ownership-error-'));
-  const obeliskDir = join(home, '.obelisk');
-  const dbPath = join(obeliskDir, 'obelisk.sqlite');
-  mkdirSync(obeliskDir, { recursive: true });
+  const home = mkdtempSync(join(tmpdir(), 'trajex-daemon-ownership-error-'));
+  const trajexDir = join(home, '.trajex');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
+  mkdirSync(trajexDir, { recursive: true });
   const db = new DatabaseSync(dbPath);
   db.exec('CREATE TABLE index_state (jsonl_path TEXT PRIMARY KEY)');
   db.close();

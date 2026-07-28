@@ -12,7 +12,7 @@ import { parse as parseCodex } from '../packages/core/src/providers/codex.ts';
 const SCHEMA = readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
 
 function writeCodexFixture(lines) {
-  const dir = mkdtempSync(join(tmpdir(), 'obelisk-provider-detail-'));
+  const dir = mkdtempSync(join(tmpdir(), 'trajex-provider-detail-'));
   const path = join(dir, 'rollout.jsonl');
   writeFileSync(path, `${lines.map(line => JSON.stringify(line)).join('\n')}\n`);
   return path;

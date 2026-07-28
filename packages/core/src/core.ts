@@ -6,7 +6,7 @@
  *
  * 调用链路：CLI/App → core.ts → indexer、query、writer lease、db。
  */
-// Obelisk Core package (see docs/adr/0003-core-typescript-esm-precompiled.md).
+// Trajex Core package (see docs/adr/0003-core-typescript-esm-precompiled.md).
 //
 // The single shared implementation behind every transport. The CLI and later
 // the MCP server are thin shells over these four functions;
@@ -14,7 +14,7 @@
 //
 // Authored in TypeScript with erasable-only syntax so Node can run it directly
 // via type stripping in development, while the CLI package ships readable,
-// non-bundled tsc output. Core source lives in the @obelisk/core workspace.
+// non-bundled tsc output. Core source lives in the @trajex/core workspace.
 
 import { createContext, runInNewContext } from 'node:vm';
 
@@ -81,24 +81,24 @@ export async function executeQuery(scriptContent: string): Promise<unknown> {
 export async function executeAttune(scriptContent: string): Promise<unknown> {
   const build = buildIndex() as { reason?: string } | undefined;
   if (build?.reason === 'daemon_active') {
-    throw new Error('Obelisk daemon owns index writes; attune is read-only until the daemon stops');
+    throw new Error('Trajex daemon owns index writes; attune is read-only until the daemon stops');
   }
   if (build?.reason === 'writer_busy' || build?.reason === 'database_busy') {
-    throw new Error('Obelisk index writer is busy; attune was not applied');
+    throw new Error('Trajex index writer is busy; attune was not applied');
   }
   const lease = acquireWriterLease({
     lockPath: writerLockPathFor(DB_PATH),
     openDb: openWriterLeaseDb,
     waitMs: 1000,
   });
-  if (!lease) throw new Error('Obelisk index writer is busy; attune was not applied');
+  if (!lease) throw new Error('Trajex index writer is busy; attune was not applied');
   try {
     // 持有硬锁后再次确认 daemon 所有权，缩小两次检查之间的 TOCTOU 窗口。
     const ownershipDb = openReadDb();
     try {
       const ownership = shouldSkipBuild(ownershipDb, { ignoreRecentBuild: true });
       if (ownership.reason === 'daemon_active') {
-        throw new Error('Obelisk daemon owns index writes; attune is read-only until the daemon stops');
+        throw new Error('Trajex daemon owns index writes; attune is read-only until the daemon stops');
       }
     } finally {
       ownershipDb.close();

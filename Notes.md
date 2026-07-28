@@ -1,4 +1,4 @@
-# Notes：Obelisk `packages/core` 与 `packages/cli` 完整项目解析
+# Notes：Trajex `packages/core` 与 `packages/cli` 完整项目解析
 
 > 阅读范围：`packages/core/src/**`、`packages/cli/src/**`、Electron `app/src/**` 与它们直接相关的构建、包发布配置。本笔记按依赖方向从下到上展开；它不是 API 清单，而是解释“原始会话证据为何能安全地变成可检索、可回源的本地知识库”。
 
@@ -12,7 +12,7 @@
   → 输出：SQLite 事实库、JSON 查询结果、SessionDetailSnapshot、memory 登记结果
 ```
 
-`@obelisk/core` 的包描述是“供 Obelisk transports 共享的索引与查询核心”；除主入口外，它还发布 db、indexer、providers、query、persist、transaction 和 session-detail 等子入口。`@obelisk-apps/cli` 是 Node 22.13+ 的命令行 transport，`bin` 指向 `dist/cli/src/obelisk.js`。
+`@trajex/core` 的包描述是“供 Trajex transports 共享的索引与查询核心”；除主入口外，它还发布 db、indexer、providers、query、persist、transaction 和 session-detail 等子入口。`@trajex-apps/cli` 是 Node 22.13+ 的命令行 transport，`bin` 指向 `dist/cli/src/trajex.js`。
 
 ## 2. 架构地图：系统里有什么
 
@@ -24,7 +24,7 @@
 
 | 阶段 | 目的 | 入口函数 |
 | --- | --- | --- |
-| 1. 命令入口 | 将 `--build` 定义为强制重建 | `cli/src/obelisk.ts` → `main()` |
+| 1. 命令入口 | 将 `--build` 定义为强制重建 | `cli/src/trajex.ts` → `main()` |
 | 2. 写入资格 | 礼让 daemon，并取得唯一 writer | `indexer.ts`、`writer-lease.ts` |
 | 3. 初始化与清理 | 打开、迁移 DB；force 时清除旧派生事实 | `db.ts`、`tx.ts`、`write-coordinator.ts` |
 | 4. 计划 | 注册 Provider，发现本次需要处理的 units | `builtins.ts`、`provider-indexing.ts` |
@@ -33,7 +33,7 @@
 
 #### 阶段 1：命令入口与实现实体
 
-`packages/cli/src/obelisk.ts` 的 `main()` 识别 `--build`，调用从 `packages/core/src/core.ts` 导入的 `buildIndex({ force: true })`。`core.ts` 不再包一层实现；它只是直接 re-export `packages/core/src/indexer.ts` 中的同名 `buildIndex()`。
+`packages/cli/src/trajex.ts` 的 `main()` 识别 `--build`，调用从 `packages/core/src/core.ts` 导入的 `buildIndex({ force: true })`。`core.ts` 不再包一层实现；它只是直接 re-export `packages/core/src/indexer.ts` 中的同名 `buildIndex()`。
 
 因此，真正的总编排器是 `indexer.ts` 的 `buildIndex()`：它负责判断能否写、决定写什么、逐项提交、最后收尾。
 
@@ -211,7 +211,7 @@ Schema 中的大表结构可按职责理解：`sessions/messages/summaries` 是�
 
 `db.ts` 中：
 
-- `openDb()` 是唯一会创建目录、设置 WAL/NORMAL、执行 schema/additive migration 的入口；当前实现**不会**把旧 `~/.claude/obelisk.sqlite` 自动复制到新库位置；
+- `openDb()` 是唯一会创建目录、设置 WAL/NORMAL、执行 schema/additive migration 的入口；当前实现**不会**把旧 `~/.claude/trajex.sqlite` 自动复制到新库位置；
 - `openReadDb()` 以只读方式打开，只有 250ms busy timeout，绝不迁移或初始化；
 - `openWriterLeaseDb()` 只服务独立 lock DB；
 - `rebuildMemoryFts()` 封装 memory FTS rebuild。
@@ -383,7 +383,7 @@ Query API 不暴露 remember/forget；Attune API 不暴露 search/sql。这个 A
 
 ## 7. 关键端到端链路：系统里发生什么
 
-### 链路 A：`obelisk --build` 如何成为可查询索引
+### 链路 A：`trajex --build` 如何成为可查询索引
 
 ```text
 CLI --build
@@ -399,7 +399,7 @@ CLI --build
 
 中止点：daemon heartbeat、lease 未获得、BEGIN busy、不可用事务、finalize 失败。普通坏 transcript 不是全局失败，而是进入 `skippedFiles`。
 
-### 链路 B：`obelisk --search` 在 daemon 存在时仍可工作
+### 链路 B：`trajex --search` 在 daemon 存在时仍可工作
 
 ```text
 CLI --search
@@ -417,7 +417,7 @@ CLI --search
 
 这里的“刷新被跳过”不是失败：daemon 已被视为索引所有者，CLI 仍可在现有 DB 上只读查询。
 
-### 链路 C：`obelisk --attune` 的双重写保护
+### 链路 C：`trajex --attune` 的双重写保护
 
 ```text
 CLI --attune script
@@ -514,7 +514,7 @@ QueryApi.raw(uuid)
 
 `schema-migrations.ts` 的 `COLUMN_MIGRATIONS` 是“加列白名单”：目前补齐 `source`、`content_type`、`is_meta`、`visibility`、tool presentation、workflow 父调用及 memory 审计列。`tableExists()` 防止对尚未由 schema 创建的新库执行 PRAGMA；`migrateCoreSchemaColumns()` 对每张表缓存一次列集合，缺失才 `ALTER TABLE ADD COLUMN`。它故意不能做删除/重命名/数据搬迁——这类破坏性演化必须另写 migration。
 
-`db.ts` 管的是文件与连接，而非业务写入：`openDb()` 依次创建 `~/.obelisk`、打开 `DatabaseSync`、配置连接、执行 schema 前后的 additive migration；它当前不包含旧 Claude 目录数据库的自动复制逻辑。`openReadDb()` 只读且绝不建库/迁移；`openWriterLeaseDb()` 只打开独立锁库；`rebuildMemoryFts()` 隔离 memory FTS rebuild SQL。`TEXT_LIMIT=10000`、`CLAUDE_DIR`、`CODEX_DIR` 来自纯工具模块后再导出，避免两套路径常量漂移。
+`db.ts` 管的是文件与连接，而非业务写入：`openDb()` 依次创建 `~/.trajex`、打开 `DatabaseSync`、配置连接、执行 schema 前后的 additive migration；它当前不包含旧 Claude 目录数据库的自动复制逻辑。`openReadDb()` 只读且绝不建库/迁移；`openWriterLeaseDb()` 只打开独立锁库；`rebuildMemoryFts()` 隔离 memory FTS rebuild SQL。`TEXT_LIMIT=10000`、`CLAUDE_DIR`、`CODEX_DIR` 来自纯工具模块后再导出，避免两套路径常量漂移。
 
 ### 10.2 纯解析工具：`parsing.ts`
 
@@ -615,7 +615,7 @@ buildIndex({force})
 
 ### 10.6 原子性与并发：`tx.ts`、`write-coordinator.ts`、`writer-lease.ts`
 
-`betterSqliteTransactionAdapter/nodeSqliteTransactionAdapter` 将两个 binding 的 transaction 属性转成统一函数。`runWriteTransaction()` 精确执行一次 `BEGIN IMMEDIATE → work → COMMIT`；若异常，`transactionState()` 决定是否尝试 rollback，`busyCode/errorCode` 和 `attachDiagnostics` 将阶段、label、rollback 结果、活跃状态附在原异常的 `obelisk` 字段，绝不以 cleanup 异常替换主错误。`configureConnection()` 统一设置 busy timeout、WAL、NORMAL。
+`betterSqliteTransactionAdapter/nodeSqliteTransactionAdapter` 将两个 binding 的 transaction 属性转成统一函数。`runWriteTransaction()` 精确执行一次 `BEGIN IMMEDIATE → work → COMMIT`；若异常，`transactionState()` 决定是否尝试 rollback，`busyCode/errorCode` 和 `attachDiagnostics` 将阶段、label、rollback 结果、活跃状态附在原异常的 `trajex` 字段，绝不以 cleanup 异常替换主错误。`configureConnection()` 统一设置 busy timeout、WAL、NORMAL。
 
 `write-coordinator` 不负责 SQL，它只读上述 diagnostics：`isBeginBusyFailure()` 表示尚未进事务的锁竞争，交给上层返回 busy；`hasUnusableTransaction()` 表示连接仍处于或未知事务，绝不可继续；`isRetryableWriteFailure()` 仅允许 work/commit busy 且已确定 rollback 后的失败。`runWithWriteRetry()` 默认三次/一秒/25ms 递增等待，`runRetryableWriteTransaction()` 只是将其包住 `runWriteTransaction()`。
 
@@ -631,9 +631,9 @@ buildIndex({force})
 
 最后 `core.ts` 是 transport 门面。`runInSandbox()` 以 30 秒 `node:vm` async IIFE 执行用户脚本，只注入 Query 或 Attune API 与基础 JS 全局对象。`searchText()` 先 passive build 后读库 search；`executeQuery()` 同样 build、以 Query API 跑 VM、finally close；`executeAttune()` 先 build 拒绝 daemon/busy，再等待至多一秒 lease，拿锁后重新检查 heartbeat，才 openDb 并仅以 Attune API 跑脚本。它是 memory 写的第二道 TOCTOU 保护。
 
-### 10.8 CLI 与发布：`packages/cli/src/obelisk.ts`、`scripts/build.mjs`
+### 10.8 CLI 与发布：`packages/cli/src/trajex.ts`、`scripts/build.mjs`
 
-CLI 的 `main()` 是薄 transport，所有成功结构化输出写 stdout JSON，失败也编码为 `{error,stack}` 且 exitCode=1。`--version/-v` 从 package.json 读版本；`--build` 调 `buildIndex({force:true})` 并返回 DB path；`--search` 拼接余下词为 FTS 文本；`--query`/`--attune` 使用绝对化后的脚本文件内容分别交给 Core；`install` 调用 `npx --yes skills add tommy0103/obelisk-skill` 并透传 stdio/status，Windows 特判 `npx.cmd` 与 shell。无匹配参数则打印 usage。
+CLI 的 `main()` 是薄 transport，所有成功结构化输出写 stdout JSON，失败也编码为 `{error,stack}` 且 exitCode=1。`--version/-v` 从 package.json 读版本；`--build` 调 `buildIndex({force:true})` 并返回 DB path；`--search` 拼接余下词为 FTS 文本；`--query`/`--attune` 使用绝对化后的脚本文件内容分别交给 Core；`install` 调用 `npx --yes skills add tommy0103/trajex-skill` 并透传 stdio/status，Windows 特判 `npx.cmd` 与 shell。无匹配参数则打印 usage。
 
 `scripts/build.mjs` 是发布边界而非运行时逻辑：先可恢复地删除 CLI `dist`，用 workspace 的 TypeScript 编译 CLI build tsconfig；因为 TypeScript 不会复制 SQL，最后确保 `dist/core/src/schema.sql` 存在并复制源 schema。于是发布包中的 CLI 可直接 import 同包可读的编译 Core，避免把数据库 DDL 遗漏在 npm payload 外。
 
@@ -643,7 +643,7 @@ CLI 是一次性 passive pull；`app/` 是第二个运行时，它把同一套 P
 
 ### 11.1 主进程：生命周期、DB 与 IPC
 
-`app/src/main/index.ts` 是 Electron 主入口。启动时它读取 `~/.obelisk/settings.json`，由 `getRuntimePaths()` 组合默认及用户指定的 Provider 根目录；`openDb()` 用 better-sqlite3 打开主库并执行同一份 schema/migration。随后 `startBackgroundResources()` 依次创建 worker client 与 indexer service，再由 `createWindow()` 加载 renderer。
+`app/src/main/index.ts` 是 Electron 主入口。启动时它读取 `~/.trajex/settings.json`，由 `getRuntimePaths()` 组合默认及用户指定的 Provider 根目录；`openDb()` 用 better-sqlite3 打开主库并执行同一份 schema/migration。随后 `startBackgroundResources()` 依次创建 worker client 与 indexer service，再由 `createWindow()` 加载 renderer。
 
 主进程还是唯一有权直接访问本地数据库和文件系统的一层：它通过 `ipcMain.handle()` 提供 sessions、消息、tools、subagents、workflows、memories、raw 内容、统计、设置和 recap capture 等能力。查询 session 时，`querySessionSnapshot()` 从多张表读出事实，再经 Core `assembleSessionDetail()` 生成展示快照；`querySessionDisplaySnapshot()` 则经 shared patch 协议生成增量刷新所需的比较基线。
 
@@ -665,7 +665,7 @@ index.ts / startIndexerService()
 
 ### 11.3 preload、shared 协议与 Vue renderer
 
-`app/src/preload/index.ts` 用 `contextBridge` 暴露白名单 `window.obelisk`，所以 renderer 不能直接拿 Node、SQLite 或任意 IPC channel。`app/src/shared/session-detail-assembly.mjs` 将 Core detail assembler 适配给 renderer；`session-patch.mjs` 用稳定 row id/hash/fingerprint 计算 snapshot 的新增、更新、删除、重排补丁，主进程和 renderer 共用同一协议。
+`app/src/preload/index.ts` 用 `contextBridge` 暴露白名单 `window.trajex`，所以 renderer 不能直接拿 Node、SQLite 或任意 IPC channel。`app/src/shared/session-detail-assembly.mjs` 将 Core detail assembler 适配给 renderer；`session-patch.mjs` 用稳定 row id/hash/fingerprint 计算 snapshot 的新增、更新、删除、重排补丁，主进程和 renderer 共用同一协议。
 
 renderer 由 `App.vue`、`router.js`、`store.js` 组成壳层。`data.js` 只负责 IPC 请求和会话快照缓存；`SessionDetail.vue` + `session-timeline-*.mjs` 负责虚拟列表、锚点、用户滚动保护、tail follow 和 patch 合并；`Activity.vue` 显示使用量聚合；`MemoryList.vue` 管理人工 memory；`Settings.vue` 配置数据源并触发 rebuild；Recap views 将数据库事实组织为周/月回顾。组件层只渲染 canonical/SQLite 投影，不应再识别 Claude、Codex、Kimi 原始格式。
 
@@ -688,6 +688,7 @@ renderer 由 `App.vue`、`router.js`、`store.js` 组成壳层。`data.js` 只�
 
 - Core/CLI/App 的 TypeScript typecheck 通过；ESLint 没有 error，但 tests 中有四个 unused-variable warning（`require` 或 `mainPath`），属于测试噪声而非运行时代码。
 - Core 主链、app watcher/worker、preload IPC 和 renderer 路由均存在可达入口；未发现可安全删除的内部运行时函数。
-- `claudeProvider`、`codexProvider`、`kimiProvider` 以及 Claude/Codex 的独立 `discover/parse` export 在仓库内引用少，但它们属于 `@obelisk/core` 的公开子模块 API 或兼容入口，不能仅凭内部引用数判定为死代码。
-- `app/obelisk-ui-mini.html` 与 `app/obelisk-session-share.html` 没有被 package scripts、Electron 入口或文档链接引用。它们看起来是独立演示/分享产物，不进入 `electron-builder` 的 `out/**` payload；若不再需要人工打开或分享，应先确认用途后再移除。
-- 2026-07-28 审计后，TypeScript typecheck、ESLint 与全量 Node tests 均通过（273 passed / 0 failed）。旧 `~/.claude/obelisk.sqlite` memory 自动迁移已被明确移除，因此对应测试也应删除；schema 变更同步更新 hash 基线；rebuild 测试夹具必须创建当前正式库 `~/.obelisk/obelisk.sqlite`，而不是已弃用的 Claude 根目录数据库。
+- `claudeProvider`、`codexProvider`、`kimiProvider` 以及 Claude/Codex 的独立 `discover/parse` export 在仓库内引用少，但它们属于 `@trajex/core` 的公开子模块 API 或兼容入口，不能仅凭内部引用数判定为死代码。
+- `app/trajex-ui-mini.html` 与 `app/trajex-session-share.html` 没有被 package scripts、Electron 入口或文档链接引用。它们看起来是独立演示/分享产物，不进入 `electron-builder` 的 `out/**` payload；若不再需要人工打开或分享，应先确认用途后再移除。
+- 2026-07-28 审计后，TypeScript typecheck、ESLint 与全量 Node tests 均通过（273 passed / 0 failed）。旧 `~/.claude/trajex.sqlite` memory 自动迁移已被明确移除，因此对应测试也应删除；schema 变更同步更新 hash 基线；rebuild 测试夹具必须创建当前正式库 `~/.trajex/trajex.sqlite`，而不是已弃用的 Claude 根目录数据库。
+

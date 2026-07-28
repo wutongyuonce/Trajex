@@ -12,7 +12,7 @@ Retrieve:
 - signoff material from the period's mood, not a second summary.
 
 For phrase counts, count only non-meta visible user text. For streaks and active
-days, define whether the scope is all Obelisk data, the current project, or the
+days, define whether the scope is all Trajex data, the current project, or the
 selected evidence sessions. Keep the scope consistent with the cover footer
 unless the evidence explicitly says otherwise.
 

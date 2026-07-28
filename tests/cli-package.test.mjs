@@ -10,8 +10,8 @@ import { repoRoot, runCli } from './cli-test-helpers.mjs';
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const cliPackage = JSON.parse(readFileSync(join(repoRoot, 'packages', 'cli', 'package.json'), 'utf8'));
 
-test('the packaged obelisk command preserves the runtime query envelope', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-cli-package-'));
+test('the packaged trajex command preserves the runtime query envelope', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-cli-package-'));
   const query = join(home, 'query.mjs');
   writeFileSync(query, 'return { answer: 42 };');
 
@@ -22,7 +22,7 @@ test('the packaged obelisk command preserves the runtime query envelope', () => 
   assert.equal(result.stdout, '{\n  "answer": 42\n}\n');
 });
 
-test('obelisk --version reports the installed CLI package version', () => {
+test('trajex --version reports the installed CLI package version', () => {
   const result = runCli(['--version']);
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -31,11 +31,11 @@ test('obelisk --version reports the installed CLI package version', () => {
 });
 
 test('CLI test process suppresses only Node ExperimentalWarning output', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-cli-warning-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-cli-warning-'));
   const preload = join(home, 'warnings.cjs');
   writeFileSync(preload, `
     process.emitWarning('simulated SQLite warning', 'ExperimentalWarning');
-    process.emitWarning('ordinary warning stays visible', 'ObeliskTestWarning');
+    process.emitWarning('ordinary warning stays visible', 'TrajexTestWarning');
   `);
 
   const result = runCli(['--version'], {
@@ -48,13 +48,13 @@ test('CLI test process suppresses only Node ExperimentalWarning output', () => {
   assert.match(result.stderr, /ordinary warning stays visible/);
 });
 
-test('obelisk install delegates official skill installation to the skills CLI', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-cli-install-'));
+test('trajex install delegates official skill installation to the skills CLI', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-cli-install-'));
   const fakeBin = join(home, 'bin');
   const capture = join(home, 'args.json');
   const captureScript = join(home, 'capture.mjs');
   mkdirSync(fakeBin, { recursive: true });
-  writeFileSync(captureScript, `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.OBELISK_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)));\n`);
+  writeFileSync(captureScript, `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.TRAJEX_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)));\n`);
 
   if (process.platform === 'win32') {
     writeFileSync(
@@ -71,7 +71,7 @@ test('obelisk install delegates official skill installation to the skills CLI', 
     home,
     env: {
       PATH: `${fakeBin}${delimiter}${process.env.PATH || ''}`,
-      OBELISK_TEST_CAPTURE: capture,
+      TRAJEX_TEST_CAPTURE: capture,
     },
   });
 
@@ -80,7 +80,7 @@ test('obelisk install delegates official skill installation to the skills CLI', 
     '--yes',
     'skills',
     'add',
-    'tommy0103/obelisk-skill',
+    'tommy0103/trajex-skill',
     '--global',
     '--agent',
     'codex',
@@ -88,7 +88,7 @@ test('obelisk install delegates official skill installation to the skills CLI', 
 });
 
 test('npm pack installs one platform-neutral CLI with its schema resource', () => {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-cli-pack-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-cli-pack-'));
   const packDir = join(root, 'pack');
   const prefix = join(root, 'prefix');
   const npmCache = join(root, 'npm-cache');
@@ -100,7 +100,7 @@ test('npm pack installs one platform-neutral CLI with its schema resource', () =
     [
       'pack',
       '--workspace',
-      '@obelisk-apps/cli',
+      '@trajex-apps/cli',
       '--pack-destination',
       packDir,
       '--json',
@@ -116,7 +116,7 @@ test('npm pack installs one platform-neutral CLI with its schema resource', () =
   ));
   const metadata = packed[0];
   const paths = metadata.files.map(file => file.path);
-  assert.ok(paths.includes('dist/cli/src/obelisk.js'));
+  assert.ok(paths.includes('dist/cli/src/trajex.js'));
   assert.ok(paths.includes('dist/core/src/schema.sql'));
   assert.equal(paths.some(path => path.endsWith('.ts')), false);
 
@@ -134,8 +134,8 @@ test('npm pack installs one platform-neutral CLI with its schema resource', () =
   );
 
   const installedBin = process.platform === 'win32'
-    ? join(prefix, 'obelisk.cmd')
-    : join(prefix, 'bin', 'obelisk');
+    ? join(prefix, 'trajex.cmd')
+    : join(prefix, 'bin', 'trajex');
   const result = spawnSync(installedBin, ['--version'], {
     cwd: repoRoot,
     encoding: 'utf8',

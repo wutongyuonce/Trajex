@@ -27,7 +27,7 @@ export interface WriteRetryOptions {
 
 function diagnostics(error: unknown): TransactionDiagnostics | null {
   if (!error || typeof error !== 'object') return null;
-  return (error as { obelisk?: TransactionDiagnostics }).obelisk ?? null;
+  return (error as { trajex?: TransactionDiagnostics }).trajex ?? null;
 }
 
 function isBusyCode(code: unknown): boolean {

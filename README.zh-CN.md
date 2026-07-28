@@ -1,12 +1,12 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/obelisk-wordmark-d.svg">
-  <img src=".github/assets/obelisk-wordmark-l2.svg" alt="Obelisk" width="540">
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trajex-wordmark-d.svg">
+  <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="540">
 </picture>
 
-[![stars](https://img.shields.io/github/stars/tommy0103/obelisk?style=flat-square)](https://github.com/tommy0103/obelisk/stargazers)
-[![version](https://img.shields.io/github/v/tag/tommy0103/obelisk?label=version&style=flat-square)](https://github.com/tommy0103/obelisk/releases)
+[![stars](https://img.shields.io/github/stars/tommy0103/trajex?style=flat-square)](https://github.com/tommy0103/trajex/stargazers)
+[![version](https://img.shields.io/github/v/tag/tommy0103/trajex?label=version&style=flat-square)](https://github.com/tommy0103/trajex/releases)
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
 
 过往 Claude Code、Codex 与 Kimi Code 会话：Agent 可查询，你也可浏览。
@@ -17,38 +17,38 @@
 
 ## 同一个索引的两面
 
-Obelisk 有两面，它们共享同一个 SQLite 索引：
+Trajex 有两面，它们共享同一个 SQLite 索引：
 
-**Agent 侧** — `obelisk` CLI 负责本地运行时；另有一个独立的 Agent skill 教会 coding agents 如何搜索和查询自己的会话历史。Agent 会编写 JS 查询，在本地运行，并用自然语言回答。
+**Agent 侧** — `trajex` CLI 负责本地运行时；另有一个独立的 Agent skill 教会 coding agents 如何搜索和查询自己的会话历史。Agent 会编写 JS 查询，在本地运行，并用自然语言回答。
 
 **App 侧** — Electron 桌面 app，供人浏览 sessions、管理 memories、查看使用统计，以及查看每周 recap cards。
 
-两者都读取同一个 `~/.obelisk/obelisk.sqlite` 数据库。索引器会读取 `~/.claude/projects` 中的 Claude Code transcripts、`~/.codex/sessions` 中的 Codex transcripts，以及 `~/.kimi-code/sessions` 或 `$KIMI_CODE_HOME/sessions` 中的 Kimi Code sessions。
+两者都读取同一个 `~/.trajex/trajex.sqlite` 数据库。索引器会读取 `~/.claude/projects` 中的 Claude Code transcripts、`~/.codex/sessions` 中的 Codex transcripts，以及 `~/.kimi-code/sessions` 或 `$KIMI_CODE_HOME/sessions` 中的 Kimi Code sessions。
 
 ## 多 Provider 支持
 
-Obelisk 会把每个 provider 都索引到同一个 SQLite schema 中，而不是维护彼此分离的数据库。数据行会带有 `source` 值；非 Claude 的 ID 会带 provider 前缀，因此不会冲突。
+Trajex 会把每个 provider 都索引到同一个 SQLite schema 中，而不是维护彼此分离的数据库。数据行会带有 `source` 值；非 Claude 的 ID 会带 provider 前缀，因此不会冲突。
 
-Codex root threads 会成为普通 Obelisk sessions。当 parent-thread metadata 可用时，Codex child threads 会通过同一个 `subagents` 表挂接。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。
+Codex root threads 会成为普通 Trajex sessions。当 parent-thread metadata 可用时，Codex child threads 会通过同一个 `subagents` 表挂接。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。
 
-Kimi session directories 会各自成为一个 Obelisk session。主会话和 child-agent 的 `wire.jsonl` streams 会被投影到同一套 messages、tools、summaries 和 subagents 表。undo/clear 会以完整 session replay 方式处理，因此被撤回的 wire records 不会残留在索引中。
+Kimi session directories 会各自成为一个 Trajex session。主会话和 child-agent 的 `wire.jsonl` streams 会被投影到同一套 messages、tools、summaries 和 subagents 表。undo/clear 会以完整 session replay 方式处理，因此被撤回的 wire records 不会残留在索引中。
 
-为了支持 app 实时刷新，Obelisk 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions` 和 `~/.kimi-code/sessions`。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
+为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions` 和 `~/.kimi-code/sessions`。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
 
 ## Skill：Agent 优先的检索
 
 <div align="center">
-  <img src=".github/assets/demo.png" alt="Obelisk App" width="720">
+  <img src=".github/assets/demo.png" alt="Trajex App" width="720">
 </div>
 
-你可以这样使用 Obelisk：
+你可以这样使用 Trajex：
 
 ```
-/obelisk 上次 auth bug 最后到底改了哪些文件，为什么这么改
-/obelisk 这个文件最近在哪些 sessions 里被反复修改
-/obelisk 找出最近失败的 tool calls，它们分别发生在哪些任务里
-/obelisk 那个 review workflow 的 subagents 各自结论是什么
-/obelisk recap this week
+/trajex 上次 auth bug 最后到底改了哪些文件，为什么这么改
+/trajex 这个文件最近在哪些 sessions 里被反复修改
+/trajex 找出最近失败的 tool calls，它们分别发生在哪些任务里
+/trajex 那个 review workflow 的 subagents 各自结论是什么
+/trajex recap this week
 ```
 
 ### 安装
@@ -58,39 +58,39 @@ Kimi session directories 会各自成为一个 Obelisk session。主会话和 ch
 最短路径是把 bootstrap guide 直接交给一个有 shell 权限的 coding agent。把下面这段作为 prompt 粘贴到 Claude Code、Codex 或其他 Agent 中，不要粘贴到你的终端里：
 
 ```text
-Install Obelisk by fetching and following this guide:
-curl -fsSL https://raw.githubusercontent.com/tommy0103/obelisk/main/SKILL.md
+Install Trajex by fetching and following this guide:
+curl -fsSL https://raw.githubusercontent.com/tommy0103/trajex/main/SKILL.md
 ```
 
-Agent 会在改动你的机器前先询问你，安装并验证 CLI，然后询问是否要把正式的 `/obelisk` skill 安装到当前项目或全局。这个 bootstrap guide 只用于一次性设置；它不是查询 skill 本身。
+Agent 会在改动你的机器前先询问你，安装并验证 CLI，然后询问是否要把正式的 `/trajex` skill 安装到当前项目或全局。这个 bootstrap guide 只用于一次性设置；它不是查询 skill 本身。
 
 #### 手动安装
 
-Obelisk 需要 Node.js 22.13 或更高版本。安装平台无关的 CLI：
+Trajex 需要 Node.js 22.13 或更高版本。安装平台无关的 CLI：
 
 ```bash
-npm install --global @obelisk-apps/cli
-obelisk --version
+npm install --global @trajex-apps/cli
+trajex --version
 ```
 
 在 macOS、Linux 或 WSL 上，CLI-only installer 等价于：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tommy0103/obelisk/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/tommy0103/trajex/main/install.sh | sh
 ```
 
 然后安装 Agent skill：
 
 ```bash
-obelisk install
+trajex install
 ```
 
-`obelisk install` 会委托标准 skills installer 安装 `tommy0103/obelisk-skill`。
+`trajex install` 会委托标准 skills installer 安装 `tommy0103/trajex-skill`。
 
 然后在任何 Claude Code session 中：
 
 ```
-/obelisk <your question>
+/trajex <your question>
 ```
 
 首次运行会构建索引，约 100 个 sessions 通常需要约 5 秒。之后会进行增量重建。
@@ -102,7 +102,7 @@ obelisk install
   ↓
 Agent 针对 SQLite 索引编写 JS 查询
   ↓
-通过 obelisk --query <script> 运行
+通过 trajex --query <script> 运行
   ↓
 读取 JSON 结果，用自然语言回答
 ```
@@ -111,14 +111,14 @@ Agent 针对 SQLite 索引编写 JS 查询
 
 ### Memory 层
 
-当一次检索产生了值得保留的结论时，Agent 会提出一个 markdown memory file。经过用户批准后，它会通过 `obelisk --attune <script>` 注册该文件。未来 sessions 中可以通过 `memories()` 召回这些 memories。它是一个 synthesis cache，不是原始证据的替代品。
+当一次检索产生了值得保留的结论时，Agent 会提出一个 markdown memory file。经过用户批准后，它会通过 `trajex --attune <script>` 注册该文件。未来 sessions 中可以通过 `memories()` 召回这些 memories。它是一个 synthesis cache，不是原始证据的替代品。
 
 ## App：给人使用的界面
 
 一个配套桌面 app，用于浏览由 CLI 或 app daemon 维护的同一个索引。
 
 <div align="center">
-  <img src=".github/assets/app-screenshot.png" alt="Obelisk App" width="720">
+  <img src=".github/assets/app-screenshot.png" alt="Trajex App" width="720">
 </div>
 
 - **Sessions** — 浏览所有 sessions，支持搜索、项目过滤、可读 tool calls，包括 diffs、terminal output、file viewers
@@ -127,27 +127,27 @@ Agent 针对 SQLite 索引编写 JS 查询
 - **Recap** — 可分享的周/月 recap cards，带 archetype theming
 - **Settings** — 数据源配置、自动刷新、重建索引
 
-目前 macOS 预构建版本可在 [Releases](https://github.com/tommy0103/obelisk/releases) 获取。源码 app 可在 macOS、Windows 和 Linux 上本地运行。
+目前 macOS 预构建版本可在 [Releases](https://github.com/tommy0103/trajex/releases) 获取。源码 app 可在 macOS、Windows 和 Linux 上本地运行。
 
 ### 本地运行
 
 安装 [Node.js 22](https://nodejs.org/) 和 npm，然后从 app 自己的 package 目录运行：
 
 ```bash
-git clone https://github.com/tommy0103/obelisk.git
-cd obelisk/app
+git clone https://github.com/tommy0103/trajex.git
+cd trajex/app
 npm ci
 npm run dev
 ```
 
-`electron-vite` 会启动 renderer dev server 并打开 Electron。首次运行时，Obelisk 会创建 `~/.obelisk/obelisk.sqlite`，索引可用的 Claude Code 和 Codex transcripts，然后监听它们的变化。默认 sources 是 `~/.claude/projects` 和 `~/.codex/sessions`；你可以在 **Settings** 中指向不同目录。在 Windows 上，Obelisk 还会检查常见 WSL distributions 中的 Claude Code 目录。
+`electron-vite` 会启动 renderer dev server 并打开 Electron。首次运行时，Trajex 会创建 `~/.trajex/trajex.sqlite`，索引可用的 Claude Code 和 Codex transcripts，然后监听它们的变化。默认 sources 是 `~/.claude/projects` 和 `~/.codex/sessions`；你可以在 **Settings** 中指向不同目录。在 Windows 上，Trajex 还会检查常见 WSL distributions 中的 Claude Code 目录。
 
 ### 调试 app
 
 - Renderer 改动使用 Vite hot module replacement。在 macOS 上用 `Cmd+Option+I`，在 Windows/Linux 上用 `Ctrl+Shift+I` 打开 Electron DevTools。
 - Main-process 和 preload logs 会出现在运行 `npm run dev` 的终端中；它们的源码改动由 electron-vite 重新构建。
 - 如果要把 Node debugger attach 到 Electron main process，用 `npm run dev -- --inspect=5858` 启动，然后把 debugger attach 到 5858 端口。
-- development app 会读取并更新真实的 `~/.obelisk` 索引。在测试破坏性 rebuild 前请先备份。要隔离运行，可以用 disposable home directory 启动，例如 macOS/Linux 上 `HOME=/tmp/obelisk-dev npm run dev`，Windows 上先设置临时 `USERPROFILE`，然后在 **Settings** 中选择 fixture source directories。
+- development app 会读取并更新真实的 `~/.trajex` 索引。在测试破坏性 rebuild 前请先备份。要隔离运行，可以用 disposable home directory 启动，例如 macOS/Linux 上 `HOME=/tmp/trajex-dev npm run dev`，Windows 上先设置临时 `USERPROFILE`，然后在 **Settings** 中选择 fixture source directories。
 
 `better-sqlite3` 为常见平台提供预构建 binaries。如果 `npm ci` 回退到本地编译，请安装对应平台的 C/C++ 构建工具，然后重新运行 `npm ci`。
 
@@ -168,7 +168,7 @@ npm run dev
 ## 结构
 
 ```
-packages/core/                # @obelisk/core npm workspace（TypeScript + ESM）
+packages/core/                # @trajex/core npm workspace（TypeScript + ESM）
 ├── src/
 │   ├── providers/
 │   │   ├── types.ts          # Provider + TranscriptRecord contract
@@ -189,13 +189,13 @@ packages/core/                # @obelisk/core npm workspace（TypeScript + ESM�
 ├── package.json
 └── dist/                     # Generated package JS, declarations, and schema
 
-packages/cli/                 # @obelisk-apps/cli npm workspace
-├── src/obelisk.ts            # CLI shell + skill installer delegation
+packages/cli/                 # @trajex-apps/cli npm workspace
+├── src/trajex.ts            # CLI shell + skill installer delegation
 ├── scripts/build.mjs         # Compiles CLI + readable Core into one package
 ├── package.json
 └── dist/                     # Generated platform-neutral npm payload
 
-skill-doc/                    # docs-only obelisk agent skill 的源码
+skill-doc/                    # docs-only trajex agent skill 的源码
 ├── SKILL.md                  # Query and memory workflow
 └── references/               # Progressive-disclosure API/schema/pattern docs
     └── recap/                # Per-card recap retrieval + writing references
@@ -219,7 +219,7 @@ CONTEXT.md                    # Project glossary
 docs/adr/                     # Architecture decision records（0001–0006）
 ```
 
-可选的 `/obelisk recap` 流程只会在显式 `/obelisk recap` 意图下加载。它从 `skill-doc/references/recap/overview.md` 开始，并按卡片逐步推进：
+可选的 `/trajex recap` 流程只会在显式 `/trajex recap` 意图下加载。它从 `skill-doc/references/recap/overview.md` 开始，并按卡片逐步推进：
 
 - `skill-doc/references/recap/pattern1-cover.md` + `skill-doc/references/recap/writing1-cover.md`
 - `skill-doc/references/recap/pattern2-thinking.md` + `skill-doc/references/recap/writing2-thinking.md`
@@ -229,10 +229,10 @@ docs/adr/                     # Architecture decision records（0001–0006）
 
 ### 生成的构建产物
 
-- `packages/core/dist/` 由 `npm run build:core` 生成。它是编译后的内部 `@obelisk/core` workspace：JavaScript、type declarations 和 `schema.sql`。
-- `packages/cli/dist/` 由 `npm run build:cli` 生成。它是可发布的 `@obelisk-apps/cli` payload：薄命令 shell、可读的 compiled Core，以及 `schema.sql`。
-- `dist/obelisk-skill/` 由 `npm run build:skill` 生成。它是 docs-only skill artifact：`SKILL.md`、references 和 skill package metadata。
-- Skill publishing 会把该 artifact stage 到 `obelisk-skill` repository 中的 `skills/obelisk/`；repository root 只保留 `README.md` 和 `LICENSE`，用于 `npx skills` discovery。
+- `packages/core/dist/` 由 `npm run build:core` 生成。它是编译后的内部 `@trajex/core` workspace：JavaScript、type declarations 和 `schema.sql`。
+- `packages/cli/dist/` 由 `npm run build:cli` 生成。它是可发布的 `@trajex-apps/cli` payload：薄命令 shell、可读的 compiled Core，以及 `schema.sql`。
+- `dist/trajex-skill/` 由 `npm run build:skill` 生成。它是 docs-only skill artifact：`SKILL.md`、references 和 skill package metadata。
+- Skill publishing 会把该 artifact stage 到 `trajex-skill` repository 中的 `skills/trajex/`；repository root 只保留 `README.md` 和 `LICENSE`，用于 `npx skills` discovery。
 
 这些目录都是生成产物，不应该手动编辑。Electron app 会直接 import `packages/core/src/`，以便 electron-vite 可以 bundle Core。
 

@@ -364,7 +364,7 @@ function showNextMonth() {
 
 async function loadUsageStats() {
   try {
-    const data = await window.obelisk.getUsageStats({ source: 'all' });
+    const data = await window.trajex.getUsageStats({ source: 'all' });
     usageData.daily = data.daily || [];
     usageData.totalTokens = data.totalTokens || 0;
     usageData.peakDay = data.peakDay || null;
@@ -378,7 +378,7 @@ async function loadUsageStats() {
 let stopUsageUpdates = () => {};
 
 onMounted(async () => {
-  stopUsageUpdates = window.obelisk?.onIndexUpdated?.(() => {
+  stopUsageUpdates = window.trajex?.onIndexUpdated?.(() => {
     void loadUsageStats();
   }) || (() => {});
   await loadUsageStats();

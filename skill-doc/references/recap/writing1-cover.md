@@ -58,7 +58,7 @@ Use this top-level shape:
 
 ```ts
 type Recap = {
-  schema_version: "obelisk.recap.v1";
+  schema_version: "trajex.recap.v1";
   kind: "weekly" | "monthly";
   generated_at: string;
   period: { label: string; start: string; end: string; timezone: string };
@@ -79,5 +79,5 @@ type Recap = {
 };
 ```
 
-For app handoff, write JSON under `~/.obelisk/recap/`. Weekly filenames are
+For app handoff, write JSON under `~/.trajex/recap/`. Weekly filenames are
 `recap-{YYYY}-W{WW}.json`; monthly filenames are `recap-{YYYY}-{MM}.json`.

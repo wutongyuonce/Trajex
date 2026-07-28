@@ -33,9 +33,9 @@ class TestDatabase {
 }
 
 test('app indexer records build success without claiming daemon ownership', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-'));
   const claudeDir = join(home, '.claude');
-  const projectDir = join(claudeDir, 'projects', '-tmp-obelisk-app');
+  const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
   const sessionId = 'session-app-1';
   const jsonlPath = join(projectDir, `${sessionId}.jsonl`);
@@ -44,13 +44,13 @@ test('app indexer records build success without claiming daemon ownership', () =
       uuid: 'msg-app-1',
       type: 'user',
       timestamp: '2026-06-13T10:00:00Z',
-      cwd: '/tmp/obelisk-app',
+      cwd: '/tmp/trajex-app',
       message: { role: 'user', content: [{ type: 'text', text: 'hello from app indexer' }] },
     }),
     '',
   ].join('\n'));
 
-  const dbPath = join(claudeDir, 'obelisk.sqlite');
+  const dbPath = join(claudeDir, 'trajex.sqlite');
   const firstBuild = buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
 
   const db = new TestDatabase(dbPath);
@@ -60,7 +60,7 @@ test('app indexer records build success without claiming daemon ownership', () =
   assert.equal(db.prepare("SELECT uuid FROM messages_fts WHERE messages_fts MATCH 'hello'").get().uuid, 'msg-app-1');
   assert.equal(db.prepare("SELECT jsonl_path FROM index_state WHERE jsonl_path='__app_heartbeat__'").get(), undefined);
   assert.equal(db.prepare("SELECT jsonl_path FROM index_state WHERE jsonl_path='__app_last_successful_build__'").get().jsonl_path, '__app_last_successful_build__');
-  assert.equal(db.prepare('SELECT project_path FROM sessions WHERE id=?').get(sessionId).project_path, '/tmp/obelisk-app');
+  assert.equal(db.prepare('SELECT project_path FROM sessions WHERE id=?').get(sessionId).project_path, '/tmp/trajex-app');
   db.close();
 
   appendFileSync(jsonlPath, [
@@ -79,7 +79,7 @@ test('app indexer records build success without claiming daemon ownership', () =
     claudeDir,
     dbPath,
     DatabaseImpl: TestDatabase,
-    changedPaths: [`-tmp-obelisk-app/${sessionId}.jsonl`],
+    changedPaths: [`-tmp-trajex-app/${sessionId}.jsonl`],
   });
   assert.deepEqual(secondBuild.affectedSessionIds, [sessionId]);
   assert.equal(secondBuild.ftsRebuilt, false);
@@ -91,9 +91,9 @@ test('app indexer records build success without claiming daemon ownership', () =
 });
 
 test('app indexer refreshes unchanged Claude usage when input token semantics change', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-token-semantics-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-token-semantics-'));
   const claudeDir = join(home, '.claude');
-  const projectDir = join(claudeDir, 'projects', '-tmp-obelisk-app');
+  const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
   const sessionId = 'session-token-semantics-1';
   const jsonlPath = join(projectDir, `${sessionId}.jsonl`);
@@ -102,7 +102,7 @@ test('app indexer refreshes unchanged Claude usage when input token semantics ch
       uuid: 'msg-token-semantics-1',
       type: 'assistant',
       timestamp: '2026-06-13T10:00:00Z',
-      cwd: '/tmp/obelisk-app',
+      cwd: '/tmp/trajex-app',
       message: {
         role: 'assistant',
         content: [{ type: 'text', text: 'cached response' }],
@@ -117,7 +117,7 @@ test('app indexer refreshes unchanged Claude usage when input token semantics ch
     '',
   ].join('\n'));
 
-  const dbPath = join(claudeDir, 'obelisk.sqlite');
+  const dbPath = join(claudeDir, 'trajex.sqlite');
   buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
 
   const stale = new TestDatabase(dbPath);
@@ -130,7 +130,7 @@ test('app indexer refreshes unchanged Claude usage when input token semantics ch
     claudeDir,
     dbPath,
     DatabaseImpl: TestDatabase,
-    changedPaths: [`-tmp-obelisk-app/${sessionId}.jsonl`],
+    changedPaths: [`-tmp-trajex-app/${sessionId}.jsonl`],
   });
 
   const refreshed = new TestDatabase(dbPath);
@@ -146,9 +146,9 @@ test('app indexer refreshes unchanged Claude usage when input token semantics ch
 });
 
 test('force rebuild ignores stale JSONL index_state rows after session tables were cleared', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-force-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-force-'));
   const claudeDir = join(home, '.claude');
-  const projectDir = join(claudeDir, 'projects', '-tmp-obelisk-app');
+  const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
   const sessionId = 'session-force-1';
   const jsonlPath = join(projectDir, `${sessionId}.jsonl`);
@@ -157,13 +157,13 @@ test('force rebuild ignores stale JSONL index_state rows after session tables we
       uuid: 'msg-force-1',
       type: 'user',
       timestamp: '2026-06-13T10:00:00Z',
-      cwd: '/tmp/obelisk-app',
+      cwd: '/tmp/trajex-app',
       message: { role: 'user', content: [{ type: 'text', text: 'force rebuild should not trust stale state' }] },
     }),
     '',
   ].join('\n'));
 
-  const dbPath = join(claudeDir, 'obelisk.sqlite');
+  const dbPath = join(claudeDir, 'trajex.sqlite');
   buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
 
   const broken = new TestDatabase(dbPath);
@@ -181,9 +181,9 @@ test('force rebuild ignores stale JSONL index_state rows after session tables we
 });
 
 test('force rebuild bypasses stale message FTS delete triggers', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-force-fts-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-force-fts-'));
   const claudeDir = join(home, '.claude');
-  const projectDir = join(claudeDir, 'projects', '-tmp-obelisk-app');
+  const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
   const sessionId = 'session-force-fts-1';
   const jsonlPath = join(projectDir, `${sessionId}.jsonl`);
@@ -192,13 +192,13 @@ test('force rebuild bypasses stale message FTS delete triggers', () => {
       uuid: 'msg-force-fts-1',
       type: 'user',
       timestamp: '2026-06-13T10:00:00Z',
-      cwd: '/tmp/obelisk-app',
+      cwd: '/tmp/trajex-app',
       message: { role: 'user', content: [{ type: 'text', text: 'force rebuild should bulk clear without old fts deletes' }] },
     }),
     '',
   ].join('\n'));
 
-  const dbPath = join(claudeDir, 'obelisk.sqlite');
+  const dbPath = join(claudeDir, 'trajex.sqlite');
   buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
 
   const trapped = new TestDatabase(dbPath);
@@ -223,9 +223,9 @@ test('force rebuild bypasses stale message FTS delete triggers', () => {
 });
 
 test('force rebuild into a new database preserves existing memories', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-force-preserve-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-force-preserve-'));
   const claudeDir = join(home, '.claude');
-  const projectDir = join(claudeDir, 'projects', '-tmp-obelisk-app');
+  const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
   const sessionId = 'session-force-preserve-1';
   writeFileSync(join(projectDir, `${sessionId}.jsonl`), [
@@ -233,14 +233,14 @@ test('force rebuild into a new database preserves existing memories', () => {
       uuid: 'msg-force-preserve-1',
       type: 'user',
       timestamp: '2026-06-13T10:00:00Z',
-      cwd: '/tmp/obelisk-app',
+      cwd: '/tmp/trajex-app',
       message: { role: 'user', content: [{ type: 'text', text: 'force rebuild should preserve memories' }] },
     }),
     '',
   ].join('\n'));
 
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
-  const tempDbPath = join(home, '.obelisk', 'obelisk.rebuild.tmp');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  const tempDbPath = join(home, '.trajex', 'trajex.rebuild.tmp');
   buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
 
   const sourceDb = new TestDatabase(dbPath);
@@ -250,10 +250,10 @@ test('force rebuild into a new database preserves existing memories', () => {
   `).run(
     'mem-preserve-1',
     sessionId,
-    '-tmp-obelisk-app',
+    '-tmp-trajex-app',
     'msg-force-preserve-1',
     'msg-force-preserve-1',
-    '/tmp/obelisk-app/notes.md',
+    '/tmp/trajex-app/notes.md',
     '[]',
     'Decision: preserve memories when rebuilding the session index.',
     '2026-06-13T10:05:00Z',
@@ -279,9 +279,9 @@ test('force rebuild into a new database preserves existing memories', () => {
 });
 
 test('app indexer reports changed workflow JSON as an affected session', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-workflow-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-workflow-'));
   const claudeDir = join(home, '.claude');
-  const project = '-tmp-obelisk-app';
+  const project = '-tmp-trajex-app';
   const sessionId = 'session-workflow-1';
   const projectDir = join(claudeDir, 'projects', project);
   const workflowDir = join(projectDir, sessionId, 'workflows');
@@ -292,13 +292,13 @@ test('app indexer reports changed workflow JSON as an affected session', () => {
       uuid: 'msg-workflow-1',
       type: 'user',
       timestamp: '2026-06-13T10:00:00Z',
-      cwd: '/tmp/obelisk-app',
+      cwd: '/tmp/trajex-app',
       message: { role: 'user', content: [{ type: 'text', text: 'start workflow' }] },
     }),
     '',
   ].join('\n'));
 
-  const dbPath = join(claudeDir, 'obelisk.sqlite');
+  const dbPath = join(claudeDir, 'trajex.sqlite');
   buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
 
   const workflowPath = join(workflowDir, 'run-1.json');
@@ -319,9 +319,9 @@ test('app indexer reports changed workflow JSON as an affected session', () => {
 });
 
 test('app indexer marks UI-fallback control messages as meta at ingest time', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-meta-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-meta-'));
   const claudeDir = join(home, '.claude');
-  const projectDir = join(claudeDir, 'projects', '-tmp-obelisk-app');
+  const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
   const sessionId = 'session-meta-1';
   const jsonlPath = join(projectDir, `${sessionId}.jsonl`);
@@ -347,7 +347,7 @@ test('app indexer marks UI-fallback control messages as meta at ingest time', ()
     '',
   ].join('\n'));
 
-  const dbPath = join(claudeDir, 'obelisk.sqlite');
+  const dbPath = join(claudeDir, 'trajex.sqlite');
   buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
 
   const db = new TestDatabase(dbPath);
@@ -358,7 +358,7 @@ test('app indexer marks UI-fallback control messages as meta at ingest time', ()
 });
 
 test('app indexer loads Codex root sessions into the shared schema', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-codex-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -374,7 +374,7 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
       payload: {
         id: codexId,
         timestamp: '2026-06-14T16:19:59.842Z',
-        cwd: '/tmp/obelisk-app',
+        cwd: '/tmp/trajex-app',
         cli_version: '0.135.0-alpha.1',
         originator: 'Codex Desktop',
         source: 'vscode',
@@ -400,7 +400,7 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
     JSON.stringify({
       timestamp: '2026-06-14T16:20:03.000Z',
       type: 'response_item',
-      payload: { type: 'function_call_output', call_id: 'call_codex_1', output: '/tmp/obelisk-app' },
+      payload: { type: 'function_call_output', call_id: 'call_codex_1', output: '/tmp/trajex-app' },
     }),
     JSON.stringify({
       timestamp: '2026-06-14T16:20:04.000Z',
@@ -416,14 +416,14 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
     '',
   ].join('\n'));
 
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   const result = buildIndex({ claudeDir, codexDir, dbPath, DatabaseImpl: TestDatabase });
 
   const db = new TestDatabase(dbPath);
   const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(`codex:${codexId}`);
   assert.equal(session.source, 'codex');
-  assert.equal(session.project, '-tmp-obelisk-app');
-  assert.equal(session.project_path, '/tmp/obelisk-app');
+  assert.equal(session.project, '-tmp-trajex-app');
+  assert.equal(session.project_path, '/tmp/trajex-app');
   assert.equal(session.git_branch, 'feat/codex');
   assert.equal(session.version, '0.135.0-alpha.1');
   assert.equal(session.message_count, 3);
@@ -444,12 +444,12 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
   assert.equal(tool.message_uuid, `codex:${codexId}:000004`);
   const toolResult = db.prepare('SELECT message_uuid, content FROM tool_results WHERE tool_use_id=?').get(toolId);
   assert.equal(toolResult.message_uuid, `codex:${codexId}:000004`);
-  assert.equal(toolResult.content, '/tmp/obelisk-app');
+  assert.equal(toolResult.content, '/tmp/trajex-app');
   db.close();
 });
 
 test('app indexer accepts Codex changed paths relative to the sessions directory', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-codex-sessions-change-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-sessions-change-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -465,7 +465,7 @@ test('app indexer accepts Codex changed paths relative to the sessions directory
       payload: {
         id: codexId,
         timestamp: '2026-06-14T16:19:59.842Z',
-        cwd: '/tmp/obelisk-app',
+        cwd: '/tmp/trajex-app',
         cli_version: '0.135.0-alpha.1',
         thread_source: 'user',
       },
@@ -478,7 +478,7 @@ test('app indexer accepts Codex changed paths relative to the sessions directory
     '',
   ].join('\n'));
 
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   const result = buildIndex({
     claudeDir,
     codexDir,
@@ -497,7 +497,7 @@ test('app indexer accepts Codex changed paths relative to the sessions directory
 });
 
 test('app indexer uses Codex response_item messages only when no visible event message exists', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-codex-response-message-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-response-message-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -512,7 +512,7 @@ test('app indexer uses Codex response_item messages only when no visible event m
       payload: {
         id: codexId,
         timestamp: '2026-06-14T16:19:59.842Z',
-        cwd: '/tmp/obelisk-app',
+        cwd: '/tmp/trajex-app',
         cli_version: '0.135.0-alpha.1',
         source: 'vscode',
       },
@@ -554,7 +554,7 @@ test('app indexer uses Codex response_item messages only when no visible event m
     '',
   ].join('\n'));
 
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   buildIndex({ claudeDir, codexDir, dbPath, DatabaseImpl: TestDatabase });
 
   const db = new TestDatabase(dbPath);
@@ -567,7 +567,7 @@ test('app indexer uses Codex response_item messages only when no visible event m
 });
 
 test('app indexer skips Codex guardian review threads', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-codex-guardian-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-guardian-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -582,7 +582,7 @@ test('app indexer skips Codex guardian review threads', () => {
       payload: {
         id: guardianId,
         timestamp: '2026-06-14T18:12:00.000Z',
-        cwd: '/tmp/obelisk-app',
+        cwd: '/tmp/trajex-app',
         cli_version: '0.135.0-alpha.1',
         thread_source: 'subagent',
         source: { subagent: { other: 'guardian' } },
@@ -591,7 +591,7 @@ test('app indexer skips Codex guardian review threads', () => {
     JSON.stringify({
       timestamp: '2026-06-14T18:12:01.000Z',
       type: 'turn_context',
-      payload: { cwd: '/tmp/obelisk-app', model: 'codex-auto-review' },
+      payload: { cwd: '/tmp/trajex-app', model: 'codex-auto-review' },
     }),
     JSON.stringify({
       timestamp: '2026-06-14T18:12:02.000Z',
@@ -606,7 +606,7 @@ test('app indexer skips Codex guardian review threads', () => {
     '',
   ].join('\n'));
 
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   const result = buildIndex({ claudeDir, codexDir, dbPath, DatabaseImpl: TestDatabase });
 
   const db = new TestDatabase(dbPath);
@@ -619,7 +619,7 @@ test('app indexer skips Codex guardian review threads', () => {
 });
 
 test('app indexer removes stale Codex guardian rows when the JSONL was already indexed', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-codex-guardian-stale-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-guardian-stale-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -636,7 +636,7 @@ test('app indexer removes stale Codex guardian rows when the JSONL was already i
       payload: {
         id: guardianId,
         timestamp: '2026-06-14T18:12:00.000Z',
-        cwd: '/tmp/obelisk-app',
+        cwd: '/tmp/trajex-app',
         cli_version: '0.135.0-alpha.1',
         thread_source: 'subagent',
         source: { subagent: { other: 'guardian' } },
@@ -650,7 +650,7 @@ test('app indexer removes stale Codex guardian rows when the JSONL was already i
     '',
   ].join('\n'));
 
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   buildIndex({ claudeDir, codexDir: join(home, 'empty-codex'), dbPath, DatabaseImpl: TestDatabase });
 
   const db = new TestDatabase(dbPath);
@@ -679,7 +679,7 @@ test('app indexer removes stale Codex guardian rows when the JSONL was already i
 });
 
 test('app indexer maps Codex subagent threads onto parent sessions', () => {
-  const home = mkdtempSync(join(tmpdir(), 'obelisk-app-indexer-codex-subagent-'));
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-subagent-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -695,7 +695,7 @@ test('app indexer maps Codex subagent threads onto parent sessions', () => {
       payload: {
         id: parentId,
         timestamp: '2026-06-14T16:19:59.842Z',
-        cwd: '/tmp/obelisk-app',
+        cwd: '/tmp/trajex-app',
         cli_version: '0.135.0-alpha.1',
         source: 'vscode',
         git: { branch: 'feat/codex' },
@@ -726,7 +726,7 @@ test('app indexer maps Codex subagent threads onto parent sessions', () => {
       payload: {
         id: childId,
         timestamp: '2026-06-14T17:41:42.924Z',
-        cwd: '/tmp/obelisk-app',
+        cwd: '/tmp/trajex-app',
         cli_version: '0.135.0-alpha.1',
         source: {
           subagent: {
@@ -760,12 +760,12 @@ test('app indexer maps Codex subagent threads onto parent sessions', () => {
     JSON.stringify({
       timestamp: '2026-06-14T17:41:46.000Z',
       type: 'response_item',
-      payload: { type: 'function_call_output', call_id: 'call_child_1', output: '/tmp/obelisk-app' },
+      payload: { type: 'function_call_output', call_id: 'call_child_1', output: '/tmp/trajex-app' },
     }),
     '',
   ].join('\n'));
 
-  const dbPath = join(home, '.obelisk', 'obelisk.sqlite');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
   buildIndex({ claudeDir, codexDir, dbPath, DatabaseImpl: TestDatabase });
 
   const db = new TestDatabase(dbPath);
@@ -794,6 +794,6 @@ test('app indexer maps Codex subagent threads onto parent sessions', () => {
     JOIN messages m ON m.uuid = tr.message_uuid
     WHERE m.agent_id = ?
   `).get(`codex:${childId}`);
-  assert.equal(childResult.content, '/tmp/obelisk-app');
+  assert.equal(childResult.content, '/tmp/trajex-app');
   db.close();
 });

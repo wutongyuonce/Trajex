@@ -1,4 +1,4 @@
-# Obelisk Core：本地会话索引运行时解析
+# Trajex Core：本地会话索引运行时解析
 
 ## 1. 目的、范围与公共表面
 
@@ -10,7 +10,7 @@
   → 输出：SQLite 事实库、JSON 查询结果、SessionDetailSnapshot、memory 登记结果
 ```
 
-`@obelisk/core` 的包描述是“供 Obelisk transports 共享的索引与查询核心”；除主入口外，它还发布 db、indexer、providers、query、persist、transaction 和 session-detail 等子入口。`@obelisk-apps/cli` 是 Node 22.13+ 的命令行 transport，`bin` 指向 `dist/cli/src/obelisk.js`。
+`@trajex/core` 的包描述是“供 Trajex transports 共享的索引与查询核心”；除主入口外，它还发布 db、indexer、providers、query、persist、transaction 和 session-detail 等子入口。`@trajex-apps/cli` 是 Node 22.13+ 的命令行 transport，`bin` 指向 `dist/cli/src/trajex.js`。
 
 ## 2. 架构地图：系统里有什么
 
@@ -20,7 +20,7 @@
 
 ```text
 公共门面
-  packages/cli/src/obelisk.ts             ← CLI 参数、脚本读取、JSON 输出
+  packages/cli/src/trajex.ts             ← CLI 参数、脚本读取、JSON 输出
   packages/core/src/core.ts                ← 4 个高层函数：
                                                 buildIndex / searchText
                                                 executeQuery / executeAttune
@@ -57,7 +57,7 @@
 对应的调用链是：
 
 ```text
-obelisk --build
+trajex --build
   → core.buildIndex({ force: true })
     → indexer.buildIndex()
       → acquireWriterLease()
@@ -316,7 +316,7 @@ Query API 不暴露 remember/forget；Attune API 不暴露 search/sql。这个 A
 
 ## 7. 关键端到端链路：系统里发生什么
 
-### 链路 A：`obelisk --build` 如何成为可查询索引
+### 链路 A：`trajex --build` 如何成为可查询索引
 
 ```text
 CLI --build
@@ -332,7 +332,7 @@ CLI --build
 
 中止点：daemon heartbeat、lease 未获得、BEGIN busy、不可用事务、finalize 失败。普通坏 transcript 不是全局失败，而是进入 `skippedFiles`。
 
-### 链路 B：`obelisk --search` 在 daemon 存在时仍可工作
+### 链路 B：`trajex --search` 在 daemon 存在时仍可工作
 
 ```text
 CLI --search
@@ -350,7 +350,7 @@ CLI --search
 
 这里的“刷新被跳过”不是失败：daemon 已被视为索引所有者，CLI 仍可在现有 DB 上只读查询。
 
-### 链路 C：`obelisk --attune` 的双重写保护
+### 链路 C：`trajex --attune` 的双重写保护
 
 ```text
 CLI --attune script
@@ -425,7 +425,7 @@ QueryApi.raw(uuid)
 
 ## 心智模型
 
-把 Obelisk Core 记成三条不能混淆的边界：
+把 Trajex Core 记成三条不能混淆的边界：
 
 1. **Provider 边界**：异构原始会话先被翻译成 `TranscriptRecord`；
 2. **写入边界**：只有 persist 在受事务与 lease 保护时把 records 提交为 SQLite 事实；
@@ -455,7 +455,7 @@ QueryApi.raw(uuid)
 
 `schema-migrations.ts` 的 `COLUMN_MIGRATIONS` 是“加列白名单”：目前补齐 `source`、`content_type`、`is_meta`、`visibility`、tool presentation、workflow 父调用及 memory 审计列。`tableExists()` 防止对尚未由 schema 创建的新库执行 PRAGMA；`migrateCoreSchemaColumns()` 对每张表缓存一次列集合，缺失才 `ALTER TABLE ADD COLUMN`。它故意不能做删除/重命名/数据搬迁——这类破坏性演化必须另写 migration。
 
-`db.ts` 管的是文件与连接，而非业务写入：`migrateLegacyDbIfNeeded()` 只在新路径不存在时从旧 Claude 目录复制；`openDb()` 依次创建 `~/.obelisk`、打开 `DatabaseSync`、配置连接、schema 前后执行 additive migration；`openReadDb()` 只读且绝不建库/迁移；`openWriterLeaseDb()` 只打开独立锁库；`rebuildMemoryFts()` 隔离 memory FTS rebuild SQL。`TEXT_LIMIT=10000`、`CLAUDE_DIR`、`CODEX_DIR` 来自纯工具模块后再导出，避免两套路径常量漂移。
+`db.ts` 管的是文件与连接，而非业务写入：`migrateLegacyDbIfNeeded()` 只在新路径不存在时从旧 Claude 目录复制；`openDb()` 依次创建 `~/.trajex`、打开 `DatabaseSync`、配置连接、schema 前后执行 additive migration；`openReadDb()` 只读且绝不建库/迁移；`openWriterLeaseDb()` 只打开独立锁库；`rebuildMemoryFts()` 隔离 memory FTS rebuild SQL。`TEXT_LIMIT=10000`、`CLAUDE_DIR`、`CODEX_DIR` 来自纯工具模块后再导出，避免两套路径常量漂移。
 
 ### 10.2 纯解析工具：`parsing.ts`
 
@@ -556,7 +556,7 @@ buildIndex({force})
 
 ### 10.6 原子性与并发：`tx.ts`、`write-coordinator.ts`、`writer-lease.ts`
 
-`betterSqliteTransactionAdapter/nodeSqliteTransactionAdapter` 将两个 binding 的 transaction 属性转成统一函数。`runWriteTransaction()` 精确执行一次 `BEGIN IMMEDIATE → work → COMMIT`；若异常，`transactionState()` 决定是否尝试 rollback，`busyCode/errorCode` 和 `attachDiagnostics` 将阶段、label、rollback 结果、活跃状态附在原异常的 `obelisk` 字段，绝不以 cleanup 异常替换主错误。`configureConnection()` 统一设置 busy timeout、WAL、NORMAL。
+`betterSqliteTransactionAdapter/nodeSqliteTransactionAdapter` 将两个 binding 的 transaction 属性转成统一函数。`runWriteTransaction()` 精确执行一次 `BEGIN IMMEDIATE → work → COMMIT`；若异常，`transactionState()` 决定是否尝试 rollback，`busyCode/errorCode` 和 `attachDiagnostics` 将阶段、label、rollback 结果、活跃状态附在原异常的 `trajex` 字段，绝不以 cleanup 异常替换主错误。`configureConnection()` 统一设置 busy timeout、WAL、NORMAL。
 
 `write-coordinator` 不负责 SQL，它只读上述 diagnostics：`isBeginBusyFailure()` 表示尚未进事务的锁竞争，交给上层返回 busy；`hasUnusableTransaction()` 表示连接仍处于或未知事务，绝不可继续；`isRetryableWriteFailure()` 仅允许 work/commit busy 且已确定 rollback 后的失败。`runWithWriteRetry()` 默认三次/一秒/25ms 递增等待，`runRetryableWriteTransaction()` 只是将其包住 `runWriteTransaction()`。
 
@@ -572,8 +572,8 @@ buildIndex({force})
 
 最后 `core.ts` 是 transport 门面。`runInSandbox()` 以 30 秒 `node:vm` async IIFE 执行用户脚本，只注入 Query 或 Attune API 与基础 JS 全局对象。`searchText()` 先 passive build 后读库 search；`executeQuery()` 同样 build、以 Query API 跑 VM、finally close；`executeAttune()` 先 build 拒绝 daemon/busy，再等待至多一秒 lease，拿锁后重新检查 heartbeat，才 openDb 并仅以 Attune API 跑脚本。它是 memory 写的第二道 TOCTOU 保护。
 
-### 10.8 CLI 与发布：`packages/cli/src/obelisk.ts`、`scripts/build.mjs`
+### 10.8 CLI 与发布：`packages/cli/src/trajex.ts`、`scripts/build.mjs`
 
-CLI 的 `main()` 是薄 transport，所有成功结构化输出写 stdout JSON，失败也编码为 `{error,stack}` 且 exitCode=1。`--version/-v` 从 package.json 读版本；`--build` 调 `buildIndex({force:true})` 并返回 DB path；`--search` 拼接余下词为 FTS 文本；`--query`/`--attune` 使用绝对化后的脚本文件内容分别交给 Core；`install` 调用 `npx --yes skills add tommy0103/obelisk-skill` 并透传 stdio/status，Windows 特判 `npx.cmd` 与 shell。无匹配参数则打印 usage。
+CLI 的 `main()` 是薄 transport，所有成功结构化输出写 stdout JSON，失败也编码为 `{error,stack}` 且 exitCode=1。`--version/-v` 从 package.json 读版本；`--build` 调 `buildIndex({force:true})` 并返回 DB path；`--search` 拼接余下词为 FTS 文本；`--query`/`--attune` 使用绝对化后的脚本文件内容分别交给 Core；`install` 调用 `npx --yes skills add tommy0103/trajex-skill` 并透传 stdio/status，Windows 特判 `npx.cmd` 与 shell。无匹配参数则打印 usage。
 
 `scripts/build.mjs` 是发布边界而非运行时逻辑：先可恢复地删除 CLI `dist`，用 workspace 的 TypeScript 编译 CLI build tsconfig；因为 TypeScript 不会复制 SQL，最后确保 `dist/core/src/schema.sql` 存在并复制源 schema。于是发布包中的 CLI 可直接 import 同包可读的编译 Core，避免把数据库 DDL 遗漏在 npm payload 外。

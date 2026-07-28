@@ -137,7 +137,7 @@ async function restoreReaderStateAfterLayout() {
 }
 
 // --- Load session on mount or when id changes ---
-const FONT_SIZE_KEY = 'obelisk:session-font-size';
+const FONT_SIZE_KEY = 'trajex:session-font-size';
 const FONT_SIZES = [12, 13, 14, 15, 16, 18];
 const fontSizeIdx = ref(FONT_SIZES.indexOf(parseInt(localStorage.getItem(FONT_SIZE_KEY)) || 14));
 if (fontSizeIdx.value < 0) fontSizeIdx.value = 2;
@@ -180,14 +180,14 @@ function detachKeydown() {
   keydownAttached = false;
 }
 
-const HINT_KEY = 'obelisk:font-hint-shown';
+const HINT_KEY = 'trajex:font-hint-shown';
 const showFontHint = ref(false);
 
 onMounted(async () => {
   active.value = true;
   userScroll.attach(wrapRef.value);
   attachKeydown();
-  removeSessionUpdated = window.obelisk?.onSessionUpdated?.(({ sessionId } = {}) => {
+  removeSessionUpdated = window.trajex?.onSessionUpdated?.(({ sessionId } = {}) => {
     if (!active.value || !props.id || sessionId !== props.id) return;
     void liveReloadCoordinator.request();
   }) || null;

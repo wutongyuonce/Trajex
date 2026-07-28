@@ -211,7 +211,7 @@ async function run() {
     content_type: 'text',
     is_meta: 0,
   });
-  win.webContents.send('obelisk:session-updated', { sessionId: sessionA });
+  win.webContents.send('trajex:session-updated', { sessionId: sessionA });
 
   await navigate(win, sessionA);
   const restoredA = await scrollState(win);
@@ -259,7 +259,7 @@ async function run() {
     content_type: 'text',
     is_meta: 0,
   });
-  win.webContents.send('obelisk:session-updated', { sessionId: sessionB });
+  win.webContents.send('trajex:session-updated', { sessionId: sessionB });
   await navigate(win, sessionB);
   const restoredTail = await win.webContents.executeJavaScript(`(() => {
     const wrap = document.querySelector('.detail-wrap');

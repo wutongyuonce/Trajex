@@ -1,17 +1,17 @@
 # The CLI ships readable compiled JS; the skill remains docs-only
 
-**Context.** Obelisk reads a user's entire local Claude Code and Codex history,
+**Context.** Trajex reads a user's entire local Claude Code and Codex history,
 so auditability is the foundation of trust. Bundling/minifying Core into one
 opaque file would make the runtime harder to inspect. Shipping executable Core
 inside `.claude/skills` / `.agents/skills` would also blur the boundary between
 the agent's instructions and the local data runtime.
 
-**Decision.** `@obelisk-apps/cli` ships **readable, non-bundled, non-minified**
+**Decision.** `@trajex-apps/cli` ships **readable, non-bundled, non-minified**
 compiled JavaScript emitted straight from `tsc` (module structure and comments
 preserved, ~1:1 with the TypeScript source), plus `schema.sql`. It excludes the
 app, renderer, release assets, and tests. The separately published agent skill
 ships only `SKILL.md`, `references/`, and metadata; every executable action in
-the skill delegates to the installed `obelisk` command. Bundling into one file
+the skill delegates to the installed `trajex` command. Bundling into one file
 is deliberately rejected because it trades auditability for marginal size.
 
 **Consequences.** Runtime ownership is unambiguous: npm installs the CLI, while

@@ -1,6 +1,6 @@
 # Write-transaction rollback safety and SQLite concurrency
 
-**Context.** The app surfaced `Obelisk index build failed: cannot rollback - no
+**Context.** The app surfaced `Trajex index build failed: cannot rollback - no
 transaction is active`. That text was a secondary cleanup failure. SQLite had
 already ended the transaction, then the catch block's unguarded `ROLLBACK`
 threw over the primary exception and turned a skippable per-file failure into a
@@ -41,7 +41,7 @@ layers.
   observability/freshness marker and is not required for ownership. The CLI
   checks ownership again after acquiring the hard lease to close the TOCTOU
   window. Search/query connections are read-only.
-- A dedicated `.obelisk/writer.lock.sqlite` provides the cross-process safety
+- A dedicated `.trajex/writer.lock.sqlite` provides the cross-process safety
   mutex on every platform. Acquisition is `BEGIN IMMEDIATE` with non-blocking or
   bounded waiting; release is idempotent. App builds and heartbeats, CLI builds
   and attune, app schema/legacy migrations and memory mutations, and manual

@@ -18,13 +18,13 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const stageScript = join(repoRoot, 'packaging', 'stage-skill-repo.sh');
 
 test('skill release staging produces the npx skills repository layout', () => {
-  const root = mkdtempSync(join(tmpdir(), 'obelisk-skill-release-'));
+  const root = mkdtempSync(join(tmpdir(), 'trajex-skill-release-'));
   const artifact = join(root, 'artifact');
   const target = join(root, 'repo');
   try {
     mkdirSync(join(artifact, 'references'), { recursive: true });
     mkdirSync(join(target, '.git'), { recursive: true });
-    writeFileSync(join(artifact, 'SKILL.md'), '---\nname: obelisk\ndescription: test\n---\n');
+    writeFileSync(join(artifact, 'SKILL.md'), '---\nname: trajex\ndescription: test\n---\n');
     writeFileSync(join(artifact, 'package.json'), '{"type":"module"}\n');
     writeFileSync(join(artifact, 'references', 'api-reference.md'), '# API\n');
     writeFileSync(join(target, '.git', 'keep'), 'preserved\n');
@@ -37,13 +37,13 @@ test('skill release staging produces the npx skills repository layout', () => {
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
     assert.deepEqual(readdirSync(target).sort(), ['.git', 'LICENSE', 'README.md', 'skills']);
-    assert.deepEqual(readdirSync(join(target, 'skills')).sort(), ['obelisk']);
+    assert.deepEqual(readdirSync(join(target, 'skills')).sort(), ['trajex']);
     for (const relativePath of [
       'SKILL.md',
       'package.json',
       'references/api-reference.md',
     ]) {
-      assert.equal(existsSync(join(target, 'skills', 'obelisk', relativePath)), true);
+      assert.equal(existsSync(join(target, 'skills', 'trajex', relativePath)), true);
     }
     assert.equal(existsSync(join(target, '.git', 'keep')), true);
     assert.equal(existsSync(join(target, 'stale.txt')), false);

@@ -18,6 +18,6 @@
     <circle cx="80" cy="30" r="1.2" fill="#a855f7"/>
     <circle cx="150" cy="20" r="1.5" fill="#6366f1"/>
   </g>
-  <text x="184" y="46" font-family="Iowan Old Style, Charter, Georgia, serif" font-size="38" font-weight="500" fill="#1f2328" letter-spacing="-0.4">Obelisk</text>
+  <text x="184" y="46" font-family="Iowan Old Style, Charter, Georgia, serif" font-size="38" font-weight="500" fill="#1f2328" letter-spacing="-0.4">Trajex</text>
   <text x="184" y="72" font-family="Iowan Old Style, Charter, Georgia, serif" font-size="15" font-style="italic" fill="#6e7681">Let Coding agent search its own memory.</text>
 </svg>

@@ -1,6 +1,6 @@
-# Obelisk Query Patterns
+# Trajex Query Patterns
 
-These are copyable CodeAct patterns for `obelisk --query` scripts plus
+These are copyable CodeAct patterns for `trajex --query` scripts plus
 `--attune` memory mutation patterns. They are not new APIs. Adapt them to the
 user's scope and return compact evidence.
 
@@ -179,18 +179,18 @@ Use this only after the user approves writing memory and the markdown file
 already exists. `remember()` validates the file and stores a normalized absolute
 path, so keep the script small and return the registered record.
 
-Run this script with `obelisk --attune <script>`. The `--attune` runtime
+Run this script with `trajex --attune <script>`. The `--attune` runtime
 exposes only `remember()` and `forget()`, not retrieval helpers.
 
 ```js
 return remember({
-  path: '.obelisk/memories/memory-layer-design.md',
+  path: '.trajex/memories/memory-layer-design.md',
   session_id: 'source-session-id',
   message_start: 'first-message-uuid',
   message_end: 'last-message-uuid',
   anchors: [{ kind: 'file', path: 'SKILL.md' }],
   summary: [
-    'Decision: Obelisk uses one user-facing entry that queries both memory and raw sessions.',
+    'Decision: Trajex uses one user-facing entry that queries both memory and raw sessions.',
     'Memory records are prior notes and must be identified naturally when they influence an answer.',
     'New memory writes require human confirmation before the markdown file is written and registered.',
   ].join(' '),
@@ -204,7 +204,7 @@ the exact memory ID in a normal `--query` script first. If one candidate clearly
 matches the user's request, that request is approval to archive it; if several
 candidates match, ask which one to forget.
 
-Run the mutation with `obelisk --attune <script>`:
+Run the mutation with `trajex --attune <script>`:
 
 ```js
 return forget({
@@ -230,7 +230,7 @@ const archived = forget({
 });
 
 const created = remember({
-  path: '.obelisk/memories/updated-memory.md',
+  path: '.trajex/memories/updated-memory.md',
   session_id: 'current-session-id',
   message_start: 'first-message-uuid',
   message_end: 'last-message-uuid',
@@ -255,7 +255,7 @@ evidence pass, and optionally one targeted detail pass by stable IDs.
 
 ```js
 const project = '%quiet-zero%';
-const topic = 'obelisk retrieval semantics';
+const topic = 'trajex retrieval semantics';
 const ftsTopic = topic.replace(/[-_]/g, ' ');
 const facets = [
   'summary conclusion',
@@ -280,7 +280,7 @@ for (const facet of facets) {
 }
 
 for (const s of summaries({ project, limit: 8 })) {
-  if (/obelisk|retrieval|context|summary/i.test(`${s.content || ''} ${s.session_title || ''}`)) {
+  if (/trajex|retrieval|context|summary/i.test(`${s.content || ''} ${s.session_title || ''}`)) {
     candidates.push({
       kind: 'summary',
       facet: 'summary',
@@ -387,7 +387,7 @@ Keep the sweep small: 3-4 facets, `limit: 3` per facet, and at most 12 compact
 evidence rows.
 
 ```js
-const name = 'obelisk';
+const name = 'trajex';
 const facets = [
   'runtime CLI script',
   'schema SQLite FTS',
@@ -653,7 +653,7 @@ Use `subagents()` for metadata. Do not expand transcripts unless the user asks.
 ```js
 const rows = subagents({ project: '%quiet-zero%', limit: 50 });
 return rows
-  .filter(r => /obelisk/i.test(`${r.description || ''} ${r.agent_type || ''}`))
+  .filter(r => /trajex/i.test(`${r.description || ''} ${r.agent_type || ''}`))
   .map(r => ({
     agent_id: r.agent_id,
     agent_type: r.agent_type,
@@ -670,11 +670,11 @@ If the user asks for an exact sentinel, scoped project, or exact file, an empty
 result is valid. Report it; do not broaden automatically.
 
 ```js
-const needle = 'obelisk-impossible-sentinel-20260602';
+const needle = 'trajex-impossible-sentinel-20260602';
 const hits = search(`"${needle.replace(/-/g, ' ')}"`, { limit: 10 });
 const real = hits.filter(h => {
   const scope = `${h.session?.project || ''} ${h.message?.cwd || ''}`;
-  return !/SkillOpt[-/. ]outputs|obelisk_train|obelisk-eval/i.test(scope);
+  return !/SkillOpt[-/. ]outputs|trajex_train|trajex-eval/i.test(scope);
 });
 return real.map(h => ({
   session_id: h.session.id,

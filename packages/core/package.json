@@ -1,9 +1,9 @@
 {
-  "name": "@obelisk/core",
+  "name": "@trajex/core",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Shared indexing and query core for Obelisk transports.",
+  "description": "Shared indexing and query core for Trajex transports.",
   "exports": {
     ".": "./dist/core.js",
     "./db": "./dist/db.js",

@@ -1,7 +1,7 @@
 /**
  * SQLite schema 增量迁移模块。
  *
- * 模块定位：为已存在的 Obelisk 索引补充新列，不重建数据表。openDb() 在执行完整
+ * 模块定位：为已存在的 Trajex 索引补充新列，不重建数据表。openDb() 在执行完整
  * schema 前后调用它，使旧版本数据库能渐进升级。
  */
 import type { SqliteDb } from './sqlite-types.ts';

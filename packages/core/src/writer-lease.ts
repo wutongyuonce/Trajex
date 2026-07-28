@@ -1,11 +1,11 @@
 /**
  * 跨进程 SQLite writer lease。
  *
- * 模块定位：所有 Obelisk 写操作的硬互斥锁。锁放在独立 SQLite 文件中，以便
+ * 模块定位：所有 Trajex 写操作的硬互斥锁。锁放在独立 SQLite 文件中，以便
  * node:sqlite 与 better-sqlite3 复用相同锁语义；它与 index_state heartbeat 的
  * 软所有权提示互补。
  */
-// Cross-process single-writer lease shared by every Obelisk mutation. The
+// Cross-process single-writer lease shared by every Trajex mutation. The
 // lock lives in a dedicated SQLite database so node:sqlite and better-sqlite3
 // share identical locking semantics on every supported platform.
 

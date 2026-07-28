@@ -1,4 +1,4 @@
-# Obelisk Retrieval Semantics
+# Trajex Retrieval Semantics
 
 Read this before designing a non-trivial query. This is the query design frame;
 `pitfalls.md` is only the debug checklist.
@@ -88,7 +88,7 @@ Ordering and context are semantic:
 
 ### Evidence Before Conclusion
 
-Obelisk's raw session layer stores original structure, not precompiled claims:
+Trajex's raw session layer stores original structure, not precompiled claims:
 sessions, messages, summaries, tool calls/results, files, subagents, workflows,
 parent chains, and raw JSONL windows. The memory layer can store
 human-approved markdown conclusions, but treat them as prior notes to compare
@@ -140,7 +140,7 @@ the agent discovers the conflict without an explicit user request, it should
 answer from current evidence and ask before archiving or replacing the memory.
 
 Then synthesize the conclusion in the final answer. Do not pretend the raw
-evidence view is itself a stored Obelisk entity.
+evidence view is itself a stored Trajex entity.
 
 After synthesis, check whether the conclusion should become a memory. Offer to
 write one when the result is durable, likely to help future sessions, and not

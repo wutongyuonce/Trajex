@@ -1,10 +1,10 @@
 {
-  "name": "obelisk",
+  "name": "trajex",
   "version": "0.2.1",
-  "description": "Memory management for Obelisk — let Claude Code search its own memory",
-  "homepage": "https://github.com/tommy0103/obelisk",
+  "description": "Memory management for Trajex — let Claude Code search its own memory",
+  "homepage": "https://github.com/tommy0103/trajex",
   "author": {
-    "name": "Obelisk contributors",
+    "name": "Trajex contributors",
     "email": "tommy0103@users.noreply.github.com"
   },
   "main": "out/main/index.js",
@@ -24,8 +24,8 @@
     "test:electron:reader-state": "electron-vite build && electron --no-sandbox tests/electron-session-reader-state.mjs"
   },
   "build": {
-    "appId": "com.obelisk.app",
-    "productName": "Obelisk",
+    "appId": "com.trajex.app",
+    "productName": "Trajex",
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release"
@@ -51,7 +51,7 @@
         "deb"
       ],
       "category": "Development",
-      "maintainer": "Obelisk contributors <tommy0103@users.noreply.github.com>"
+      "maintainer": "Trajex contributors <tommy0103@users.noreply.github.com>"
     },
     "deb": {
       "compression": "bzip2"

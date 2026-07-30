@@ -4,8 +4,8 @@
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trajex-wordmark-d.svg">
   <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="540">
 </picture>
-[![stars](https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square)](https://github.com/wutongyuonce/Trajex/stargazers)
-[![version](https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square)](https://github.com/wutongyuonce/Trajex/releases)
+<a href="https://github.com/wutongyuonce/Trajex/stargazers"><img src="https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square" alt="stars"></a>
+<a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 
 数万行散落的 Claude Code、Codex 与 Kimi Code JSONL 会话，索引至同一个 SQLite 中：Agent 可通过 CLI /Skill 实现毫秒级查询，用户可通过 App 直观浏览。
 

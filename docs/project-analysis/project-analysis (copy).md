@@ -1468,7 +1468,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__codex_canonical_transcript_v2__" / "__claude_canonical_transcript_v2__" / "__kimi_canonical_transcript_v3__"
+jsonl_path = "__codex_canonical_transcript_v2__" / "__claude_canonical_transcript_v2__" / "__kimi_canonical_transcript_v2__" / "__pi_canonical_transcript_v2__"
               ↑ 不是路径，而是状态 key
 ```
 

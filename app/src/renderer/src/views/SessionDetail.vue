@@ -17,6 +17,7 @@ import { createSessionLiveReloadCoordinator } from '../session-live-reload.mjs';
 import { createSessionUserScroll } from '../session-user-scroll.mjs';
 import { useSessionTimelineViewport } from '../session-timeline-viewport.mjs';
 import { sessionReaderStateCache } from '../session-reader-state.mjs';
+import { sidechainMessageCount, visibleSessionMessages } from '../session-sidechains.mjs';
 import {
   createSessionSegments,
   findCurrentSessionSegment,
@@ -42,6 +43,7 @@ const session = computed(() => (
 ));
 const messages = shallowRef([]);
 const timelineItems = shallowRef([]);
+const showSidechain = ref(false);
 const loading = ref(false);
 const timelineReady = ref(false);
 const active = ref(false);
@@ -332,40 +334,20 @@ async function commitSessionSnapshot(latest) {
   if (!latest) return;
   liveSessionMetadata.value = latest;
   const incoming = latest?.messages || [];
-  const tailPatch = latest.messagePatch?.tailOnly
-    ? {
-        messages: incoming,
-        addedIds: latest.messagePatch.changedIds,
-        updatedIds: [],
-        removedIds: [],
-        changed: true,
-        tailOnly: true,
-      }
-    : null;
-  const reconciliation = tailPatch || applySnapshot(messages.value, incoming);
+  const reconciliation = applySnapshot(messages.value, incoming);
   const restoreTail = reconciliation.tailOnly
     && !userScroll.hasUpwardIntent()
     && timelineViewport.isFollowingTail();
   if (reconciliation.changed) {
     messages.value = reconciliation.messages;
-    if (tailPatch) {
-      const addedMessages = reconciliation.messages.slice(
-        reconciliation.messages.length - reconciliation.addedIds.length,
-      );
-      timelineItems.value = [
-        ...timelineItems.value,
-        ...reconcileTimelineItems([], addedMessages),
-      ];
-    } else {
-      timelineItems.value = reconcileTimelineItems(timelineItems.value, reconciliation.messages);
-      const retainedMessageUuids = new Set(reconciliation.messages.map(message => message.uuid));
-      disclosures.retainMessages(retainedMessageUuids);
-      for (const uuid of reconciliation.updatedIds) expandedMessageText.delete(uuid);
-      for (const uuid of expandedMessageText.keys()) {
-        if (!retainedMessageUuids.has(uuid)) expandedMessageText.delete(uuid);
-      }
-      await prepareReaderState(retainedMessageUuids);
+    timelineItems.value = reconcileTimelineItems(timelineItems.value, visibleMessages(reconciliation.messages));
+    const retainedMessageUuids = new Set(reconciliation.messages.map(message => message.uuid));
+    disclosures.retainMessages(retainedMessageUuids);
+    for (const uuid of reconciliation.updatedIds) expandedMessageText.delete(uuid);
+    for (const uuid of expandedMessageText.keys()) {
+      if (!retainedMessageUuids.has(uuid)) expandedMessageText.delete(uuid);
     }
+    await prepareReaderState(retainedMessageUuids);
   }
 
   if (!reconciliation.changed) {
@@ -383,6 +365,19 @@ async function commitSessionSnapshot(latest) {
     else await focusPendingMessage();
   }
 }
+
+function visibleMessages(source = messages.value) {
+  return visibleSessionMessages(source, session.value?.source, showSidechain.value);
+}
+
+const sidechainCount = computed(() => (
+  sidechainMessageCount(messages.value, session.value?.source)
+));
+
+watch(showSidechain, () => {
+  timelineItems.value = reconcileTimelineItems(timelineItems.value, visibleMessages());
+  void nextTick().then(syncTimelineScrollMargin);
+});
 
 async function focusPendingMessage() {
   const targetUuid = pendingFocusUuid.value;
@@ -437,11 +432,11 @@ const conversationRounds = computed(() => {
     if (!itemIndexByUuid.has(item.anchorUuid)) itemIndexByUuid.set(item.anchorUuid, index);
   });
   const userRounds = [];
-  messages.value.forEach((message, messageIndex) => {
+  visibleMessages().forEach((message, messageIndex) => {
     if (message.type !== 'user') return;
     const targetIndex = itemIndexByUuid.get(message.uuid);
     if (!Number.isInteger(targetIndex)) return;
-    const nextReply = messages.value
+    const nextReply = visibleMessages()
       .slice(messageIndex + 1)
       .find(next => next.type === 'user' || next.type === 'assistant');
     userRounds.push({
@@ -610,6 +605,12 @@ function navigateToSubagent(agentId) {
               <span>{{ session.git_branch }}</span>
             </template>
           </div>
+          <button
+            v-if="sidechainCount"
+            class="sidechain-toggle"
+            :aria-expanded="showSidechain"
+            @click="showSidechain = !showSidechain"
+          >{{ showSidechain ? 'Hide other branches' : `Show ${sidechainCount} messages from other branches` }}</button>
         </div>
 
         <!-- Message timeline -->
@@ -713,6 +714,17 @@ function navigateToSubagent(agentId) {
   scrollbar-width: none;
 }
 .detail-wrap::-webkit-scrollbar { display: none; }
+.sidechain-toggle {
+  margin-top: 12px;
+  padding: 5px 9px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  font: 11px var(--font-mono);
+  cursor: pointer;
+}
+.sidechain-toggle:hover { color: var(--fg-2); background: var(--surface-strong); }
 .first-open-loading {
   position: absolute;
   inset: 0;

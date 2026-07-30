@@ -1,7 +1,7 @@
 # Trajex
 
 Trajex is explicit memory infrastructure for coding agents: it indexes local
-Claude Code, Codex, and Kimi Code sessions into a queryable SQLite evidence layer, and a
+Claude Code, Codex, Kimi Code and Pi sessions into a queryable SQLite evidence layer, and a
 CodeAct runtime lets an agent write a small query, run it, and answer from real
 session history. This glossary pins the terms that are specific to Trajex; it is
 not a spec.
@@ -29,7 +29,7 @@ promoted to an external tool surface.
 ## Indexing
 
 **Provider adapter**:
-A pure per-source module (claude, codex, kimi, later pi, …) that owns its
+A pure per-source module (claude, codex, kimi, pi, …) that owns its
 descriptor, watch roots, discovery, parsing, cursor interpretation, and raw
 record lookup. It discovers `IndexUnit`s rather than assuming one transcript
 file per unit; Kimi uses a session directory containing multiple wire logs. It
@@ -39,6 +39,13 @@ parse/discover helpers live in `packages/core/src/parsing.ts`, which imports onl
 node:fs/path/os — deliberately node:sqlite-free so the compiled providers can be
 consumed by the app (whose Electron runtime has no `node:sqlite`).
 _Avoid_: parse core, parser, ingest
+
+**Pi session**:
+One JSONL file below `~/.pi/agent/sessions/`. Its entries form a tree; Trajex
+indexes every branch and marks entries outside the latest leaf path as a
+sidechain. The session reader presents the current path by default and lets a
+reader expand the other branches.
+_Avoid_: Pi project, Pi directory
 
 **Transcript record**:
 One provider-normalized fact (session, message, tool call, tool result, summary,

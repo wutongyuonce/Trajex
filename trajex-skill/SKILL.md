@@ -1,7 +1,7 @@
 ---
 name: trajex
 description: >
-  Search and query past Claude Code and Codex session history.
+  Search and query past Claude Code, Codex, Kimi Code, and Pi session history.
   Reactive: when the user asks "how did I fix X", "what did we do last time", "find the session where", "上次怎么修的", "之前的session", "历史记录".
   Proactive: when the user references past work you lack context for, when you're about to modify a file with complex edit history, when the user says "继续之前的" or "continue where we left off", or when understanding prior decisions would improve your current response.
   Memory: when the user says "记住这个", "remember this", "写入记忆", "save this conclusion", or when you determine a retrieval result contains a conclusion worth persisting.
@@ -13,22 +13,18 @@ allowed-tools:
 
 # trajex
 
-Search and query Claude Code and Codex session history stored in `~/.claude/`
-and `~/.codex/`.
-Trajex indexes sessions, messages, tool calls, tool results, summaries,
-subagents, workflows, workflow agents, parent chains, and raw JSONL lines into
-SQLite + FTS5.
+Search and query Claude Code, Codex, Kimi Code, and Pi session history from their configured local transcript roots.
+Defaults are `~/.claude/`, `~/.codex/`, `~/.kimi-code/`, and Pi's resolved sessions directory.
+Trajex indexes sessions, messages, tool calls, tool results, summaries, subagents, workflows, workflow agents, parent chains, and raw JSONL lines into SQLite + FTS5.
 
-Trajex has two transcript sources. Treat both as ordinary sessions by default:
-Claude rows use `source='claude'`; Codex rows use `source='codex'` and IDs
-prefixed with `codex:`. Use `source` only when provenance matters or the user
-asks to scope to one provider. Codex subagent child threads are mapped to the
-same `subagents` table; Codex workflow rows may be absent because Codex does not
-emit Claude-style workflow metadata.
+Trajex has four transcript sources. Treat all as ordinary sessions by default:
+Claude rows use `source='claude'`; Codex, Kimi Code, and Pi rows use `source='codex'`, `source='kimi'`, and `source='pi'`, with provider-prefixed IDs.
+Use `source` only when provenance matters or the user asks to scope to one provider.
+Codex and Kimi can project child agents into `subagents`.
+Pi support covers standard top-level official v3 session files only and does not index deeper nested subagent run transcripts.
 
-Trajex is a CodeAct memory layer: write a small JS query, run it locally, read
-the JSON, then answer. Do not turn history into a flat document or browse entire
-sessions by default.
+Trajex is a CodeAct memory layer: write a small JS query, run it locally, read the JSON, then answer.
+Do not turn history into a flat document or browse entire sessions by default.
 
 ## Quick Start
 
@@ -49,7 +45,8 @@ Custom query:
 
 3. Parse JSON stdout and answer with concise evidence.
 
-The query file runs inside `(async () => { ... })()`. Use `return` to emit JSON.
+The query file runs inside `(async () => { ... })()`.
+Use `return` to emit JSON.
 Query scripts are read-only: `remember()` and `forget()` are not available, and
 `sql()` only accepts read-only SELECT/WITH queries.
 
@@ -124,14 +121,19 @@ Use references by job, not by habit:
 Before writing a query, classify the task. Progressive disclosure is useful, but
 skipping the relevant reference usually costs extra query rounds.
 
-- Read `references/query-patterns.md` before the first query for broad synthesis, progress summaries, design history, ordinary weekly/monthly reviews, or questions that ask what the user did, learned, decided, tried, or abandoned. Start from the first-pass or one-shot synthesis pattern, then run a faceted detail pass if needed.
-- Read `references/retrieval-semantics.md` before multi-step retrieval, scoped project/file/session searches, or synthesis/conclusion/history questions. It defines the query design frame.
-- Read `references/schema.md` before raw `sql()` unless the needed table/column relationship is already explicit here. It is intentionally short and SQL-focused. Do this before running the SQL, not after a missing-column error. Do not start with raw SQL for broad synthesis unless helpers cannot express the needed aggregation or join.
+- Read `references/query-patterns.md` before the first query for broad synthesis, progress summaries, design history, ordinary weekly/monthly reviews, or questions that ask what the user did, learned, decided, tried, or abandoned.
+  Start from the first-pass or one-shot synthesis pattern, then run a faceted detail pass if needed.
+- Read `references/retrieval-semantics.md` before multi-step retrieval, scoped project/file/session searches, or synthesis/conclusion/history questions.
+  It defines the query design frame.
+- Read `references/schema.md` before raw `sql()` unless the needed table/column relationship is already explicit here.
+  It is intentionally short and SQL-focused.
+  Do this before running the SQL, not after a missing-column error.
+  Do not start with raw SQL for broad synthesis unless helpers cannot express the needed aggregation or join.
 - Read `references/api-reference.md` when helper option names, return fields, scalar shorthand behavior, or `remember()`/`forget()` details are unclear.
 - Read `references/pitfalls.md` after an error or when FTS syntax, aliases, ordering, row shapes, or compact/raw tradeoffs are unclear.
 
-If a helper row shape is unclear, first run a tiny scoped query and return
-`Object.keys(row)` or a compact sample. Do not invent field names.
+If a helper row shape is unclear, first run a tiny scoped query and return `Object.keys(row)` or a compact sample.
+Do not invent field names.
 
 For approved memory mutations, follow the Memory Layer section below first.
 Use `references/query-patterns.md` for copyable `--attune` scripts
@@ -154,34 +156,29 @@ Returns:
    context }]
 ```
 
-`context` here means temporal neighbors: nearby messages in the same session by
-timestamp. It is not the parent chain. Use `context(uuid)` or `trace(uuid)` for
-causal/parent-chain context.
+`context` here means temporal neighbors: nearby messages in the same session by timestamp.
+It is not the parent chain.
+Use `context(uuid)` or `trace(uuid)` for causal/parent-chain context.
 
 Use `message.content_type` to keep evidence boundaries intact:
 `text` is user/assistant visible language, `thinking` is trace/debug material,
 `tool_use` marks a tool-call message whose details live in `tool_calls`, and
 `tool_result` marks a tool-result message whose details live in `tool_results`.
-`unknown` is a conservative fallback. Do not treat `thinking` as a user-visible
-assistant conclusion. Real user input is `type='user'` plus `content_type='text'`;
-do not invent a separate `user_message` content type.
+`unknown` is a conservative fallback.
+Do not treat `thinking` as a user-visible assistant conclusion.
+Real user input is `type='user'` plus `content_type='text'`; do not invent a separate `user_message` content type.
 
-Use `message.is_meta` to separate transcript control-plane material from
-conversation evidence. `is_meta=1` marks injected caveats, command envelopes, or
-other messages that entered the transcript as user-role content but should not
-be treated as the user's request by default. `search()` and `thread()` omit meta
-messages unless `includeMeta: true` is passed; `context()` and `trace()` preserve
-the original chain and expose `is_meta` on rows.
+Use `message.is_meta` to separate transcript control-plane material from conversation evidence.
+`is_meta=1` marks injected caveats, command envelopes, or other messages that entered the transcript as user-role content but should not be treated as the user's request by default.
+`search()` and `thread()` omit meta messages unless `includeMeta: true` is passed; `context()` and `trace()` preserve the original chain and expose `is_meta` on rows.
 
 Opts: `{ limit, sessionId, project, after, before, cwd, source, includeMeta }`.
 
-`project` is a SQL `LIKE` filter over `sessions.project`, not an exact project
-identity. Results are already ordered by FTS5 rank; lower rank sorts earlier.
-Prefer returned order over manually interpreting numeric rank unless you are
-deliberately using FTS5 semantics.
+`project` is a SQL `LIKE` filter over `sessions.project`, not an exact project identity.
+Results are already ordered by FTS5 rank; lower rank sorts earlier.
+Prefer returned order over manually interpreting numeric rank unless you are deliberately using FTS5 semantics.
 
-`source` can be `'claude'`, `'codex'`, or omitted. Omitted means search all
-indexed sources.
+`source` can be `'claude'`, `'codex'`, `'kimi'`, `'pi'`, or omitted. Omitted means search all indexed sources.
 
 ### `context(uuid)`
 
@@ -256,42 +253,33 @@ If field, context, ordering, FTS, or helper semantics affect the query, read
 
 ## Memory Layer
 
-Trajex has a persistent memory layer alongside raw session data. Every
-retrieval queries both layers: `memories()` for prior conclusions, `search()`
-and helpers for raw session evidence. Use memory as prior notes, not final
-authority. If a memory record influences your answer, say naturally that it was
-previously recorded, and compare it with raw session evidence when correctness
-depends on it. Raw session data is the evidence layer, but one hit is not a
-complete truth; query and cite it compactly.
+Trajex has a persistent memory layer alongside raw session data.
+Every retrieval queries both layers: `memories()` for prior conclusions, `search()` and helpers for raw session evidence.
+Use memory as prior notes, not final authority.
+If a memory record influences your answer, say naturally that it was previously recorded, and compare it with raw session evidence when correctness depends on it.
+Raw session data is the evidence layer, but one hit is not a complete truth; query and cite it compactly.
 
-The memory layer is English-indexed. Use English terms in `memories({ query })`
-even when the user asks in another language. Write every `remember().summary`
-in English, regardless of the current conversation language. The runtime rejects
-obvious CJK text in memory queries and summaries as a guardrail.
+The memory layer is English-indexed.
+Use English terms in `memories({ query })` even when the user asks in another language.
+Write every `remember().summary` in English, regardless of the current conversation language.
+The runtime rejects obvious CJK text in memory queries and summaries as a guardrail.
 
-**Recall:** query `memories({ query: 'English topic terms', project: '...' })`
-to find prior conclusions relevant to the current task. Translate non-English
-user requests into concise English query terms before calling `memories()`.
-Memory recall uses safe FTS5 tokenization over `summary` and `path`, so
-hyphens/punctuation are tokenized instead of causing raw `MATCH` syntax errors.
-Like other list helpers, passing a string is treated as `sessionId`, and passing
-a number is treated as `limit`. Read the file at `path` for full content.
-`memories()` returns active memories only. An archived memory is
-management/audit data, not recall data.
+**Recall:** query `memories({ query: 'English topic terms', project: '...' })` to find prior conclusions relevant to the current task.
+Translate non-English user requests into concise English query terms before calling `memories()`.
+Memory recall uses safe FTS5 tokenization over `summary` and `path`, so hyphens/punctuation are tokenized instead of causing raw `MATCH` syntax errors.
+Like other list helpers, passing a string is treated as `sessionId`, and passing a number is treated as `limit`.
+Read the file at `path` for full content.
+`memories()` returns active memories only.
+An archived memory is management/audit data, not recall data.
 
-Good memory candidates include design decisions, project conventions, abandoned
-alternatives, repeated failure causes, workflow patterns, and conclusions
-synthesized across multiple raw evidence points. Do not propose memory for
-one-off lookups, uncertain findings, or conclusions already covered by existing
-memories.
+Good memory candidates include design decisions, project conventions, abandoned alternatives, repeated failure causes, workflow patterns, and conclusions synthesized across multiple raw evidence points.
+Do not propose memory for one-off lookups, uncertain findings, or conclusions already covered by existing memories.
 
-**Mutation approvals:** judging whether to use a memory in the current answer is
-an agent decision and does not require approval. Persistent memory changes do.
-If the user explicitly says a memory is wrong, outdated, should be forgotten, or
-should now say something else, that request is the approval to archive or update
-the exact matching memory. Do not ask for a second confirmation unless multiple
-memories could match. If you notice a possible conflict yourself, explain it
-briefly and ask before changing memory state.
+**Mutation approvals:** judging whether to use a memory in the current answer is an agent decision and does not require approval.
+Persistent memory changes do.
+If the user explicitly says a memory is wrong, outdated, should be forgotten, or should now say something else, that request is the approval to archive or update the exact matching memory.
+Do not ask for a second confirmation unless multiple memories could match.
+If you notice a possible conflict yourself, explain it briefly and ask before changing memory state.
 
 **Writing memories:** after a retrieval produces a conclusion worth persisting,
 propose writing a memory file. The user must approve. Flow:

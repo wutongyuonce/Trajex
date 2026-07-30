@@ -204,6 +204,7 @@ test('main process watches every root declared by the built-in provider registry
   mkdirSync(join(claudeDir, 'projects'), { recursive: true });
   mkdirSync(join(codexDir, 'sessions'), { recursive: true });
   mkdirSync(join(home, '.kimi-code', 'sessions'), { recursive: true });
+  mkdirSync(join(home, '.pi', 'agent', 'sessions'), { recursive: true });
   mkdirSync(join(home, '.trajex'), { recursive: true });
   writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
   process.env.HOME = home;
@@ -262,6 +263,7 @@ test('main process watches every root declared by the built-in provider registry
       join(codexDir, 'session_index.jsonl'),
       join(home, '.kimi-code', 'sessions'),
       join(home, '.kimi-code', 'session_index.jsonl'),
+      join(home, '.pi', 'agent', 'sessions'),
     ]);
     assert.equal(serviceOptions[0].watchDirs.includes(codexDir), false);
   } finally {

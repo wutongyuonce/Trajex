@@ -1,7 +1,7 @@
 {
   "name": "trajex",
   "version": "0.2.0",
-  "description": "Memory management for Trajex — let Claude Code search its own memory",
+  "description": "Browse and manage indexed Claude Code, Codex, Kimi Code, and Pi session memory",
   "homepage": "https://github.com/tommy0103/trajex",
   "author": {
     "name": "Trajex contributors",

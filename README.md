@@ -8,7 +8,7 @@
 <a href="https://github.com/wutongyuonce/Trajex/stargazers"><img src="https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square" alt="stars"></a>
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 
-数万行散落的 Claude Code、Codex 与 Kimi Code JSONL 会话，索引至同一个 SQLite 中：<br>
+数万行散落的 Claude Code、Codex、Kimi Code 与 Pi JSONL 会话，索引至同一个 SQLite 中：<br>
 Agent 可通过 CLI /Skill 实现毫秒级查询，用户可通过 App 直观浏览。
 
 </div>
@@ -21,7 +21,7 @@ Trajex 有两面，它们共享同一个 SQLite 索引：
 
 **App 侧** — Electron 桌面 app，供人浏览 sessions、管理 memories、查看使用统计，以及查看每周 recap cards。
 
-两者都读取同一个 `~/.trajex/trajex.sqlite` 数据库。索引器会读取 `~/.claude/projects` 中的 Claude Code transcripts、`~/.codex/sessions` 中的 Codex transcripts，以及 `~/.kimi-code/sessions` 或 `$KIMI_CODE_HOME/sessions` 中的 Kimi Code sessions。
+两者都读取同一个 `~/.trajex/trajex.sqlite` 数据库。索引器会读取 `~/.claude/projects` 中的 Claude Code transcripts、`~/.codex/sessions` 中的 Codex transcripts、`~/.kimi-code/sessions` 或 `$KIMI_CODE_HOME/sessions` 中的 Kimi Code sessions，以及 `~/.pi/agent/sessions` 中的 Pi sessions。
 
 ## 多 Provider 支持
 
@@ -31,7 +31,9 @@ Codex root threads 会成为普通 Trajex sessions。当 parent-thread metadata 
 
 Kimi session directories 会各自成为一个 Trajex session。主会话和 child-agent 的 `wire.jsonl` streams 会被投影到同一套 messages、tools、summaries 和 subagents 表。undo/clear 会以完整 session replay 方式处理，因此被撤回的 wire records 不会残留在索引中。
 
-为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions` 和 `~/.kimi-code/sessions`。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
+每个 Pi session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，因此 Trajex 会保存全部分支，并将不在最新叶节点路径上的消息标记为 sidechain；详情页默认折叠这些其他分支。
+
+为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions`、`~/.kimi-code/sessions` 和 `~/.pi/agent/sessions`。在 Settings 中修改 Pi 路径时，应填写 Pi agent root，Trajex 会读取其 `sessions` 子目录。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
 
 ## App 与 CLI 的关系
 
@@ -145,7 +147,7 @@ npm ci
 npm run dev
 ```
 
-`electron-vite` 会启动 renderer dev server 并打开 Electron。首次运行时，Trajex 会创建 `~/.trajex/trajex.sqlite`，索引可用的 Claude Code 和 Codex transcripts，然后监听它们的变化。默认 sources 是 `~/.claude/projects` 和 `~/.codex/sessions`；你可以在 **Settings** 中指向不同目录。在 Windows 上，Trajex 还会检查常见 WSL distributions 中的 Claude Code 目录。
+`electron-vite` 会启动 renderer dev server 并打开 Electron。首次运行时，Trajex 会创建 `~/.trajex/trajex.sqlite`，索引可用的 Claude Code、Codex、Kimi Code 和 Pi transcripts，然后监听它们的变化。默认 sources 可在 **Settings** 中改为其他目录。在 Windows 上，Trajex 还会检查常见 WSL distributions 中的 Claude Code 目录。
 
 ## 调试 App
 
@@ -160,7 +162,7 @@ npm run dev
 
 | Layer | Source | 捕获内容 |
 |-------|--------|----------|
-| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl` | Title、project、timestamps、git branch、source |
+| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi `sessions/<project>/*.jsonl` | Title、project、timestamps、git branch、source |
 | **Messages** | user + assistant turns | Full text、model、token usage、parent chain |
 | **Tool calls** | every tool invocation | Tool name、input、file paths |
 | **Subagents** | Claude `subagents/agent-<id>.jsonl`; Codex child threads | Agent type、description、full conversation |
@@ -180,6 +182,7 @@ packages/core/                # @trajex/core npm workspace（TypeScript + ESM）
 │   │   ├── claude.ts         # Claude Code adapter（行增量）
 │   │   ├── codex.ts          # Codex adapter（全量重解析）
 │   │   └── kimi.ts           # Kimi Code adapter（session projection）
+│   │   └── pi.ts             # Pi adapter（tree + sidechain projection）
 │   ├── session-detail.ts     # Provider-independent transcript projection
 │   ├── persist.ts            # Binding-agnostic record writer（upsert/merge）
 │   ├── tx.ts                 # Write transaction + connection config

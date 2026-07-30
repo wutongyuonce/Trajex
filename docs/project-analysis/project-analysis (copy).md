@@ -2,24 +2,279 @@
 
 ## 项目定位
 
-**Trajex** 是一个为 AI 编码助手（Claude Code、Codex、Kimi Code）提供**会话记录索引与查询**的本地运行时。它将各个 AI 工具的聊天记录、工具调用、工作流等结构化写入 SQLite，并提供 FTS5 全文搜索和记忆管理能力。
+Trajex 是“编码 Agent 的显式记忆基础设施”（Claude Code、Codex、Kimi Code、Pi）：
 
-给两类用户使用：
+1. 读取本机已有的 Agent 会话历史。
 
-- Agent：通过 CLI 写 JS 查询历史证据。
-- 人：通过 Electron app 浏览 session、memory、activity、recap 等。
+2. 把不同供应商的日志格式统一成一套 canonical(规范的) transcript records。
+
+3. 持久化到 `~/.trajex/trajex.sqlite` 并索引，提供 FTS5 全文搜索和记忆管理能力。
+
+4. 提供两类访问方式：
+
+   - Agent 侧：`trajex` Skill 通过 CLI 让 Agent 用 JS 查询历史证据。
+
+     ```js
+     const hits = search("auth bug", { limit: 10 });
+     const details = hits.map(h => context(h.message.uuid));
+     return { hits, details };
+     ```
+
+     这里 JS 是编排语言，`search/context/sessions/failures/fileHistory` 等是预设查询 API。
+
+   - 人类侧：Electron 桌面 app 浏览 session、memory、activity、recap。
+
+核心设计不是“为每个 provider 写一套 app/CLI 逻辑”，而是：
+
+```text
+provider 原始日志
+  -> provider adapter
+  -> TranscriptRecord[]
+  -> shared persist
+  -> SQLite
+  -> query sandbox / app session detail
+```
+
+这个设计的稳定中心是 `TranscriptRecord`，不是数据库表，也不是某个 provider 的 JSONL 格式。
 
 ## 心智模型
 
-把 Trajex Core 记成三条不能混淆的边界：
+Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有三条稳定边界：
 
-1. **Provider 边界**：异构原始会话 JSONL 先被翻译成 `TranscriptRecord`；
-2. **写入边界**：只有 persist 在受事务与 lease 保护时把 records 提交为 SQLite 事实；
-3. **读取边界**：Query/Detail 只消费 canonical 或已持久化事实，memory 写入则由独立、受限的 Attune API 承担。
+1. provider adapter 边界
+   - 每个 provider 自己理解原始日志。
+   - 输出统一 `TranscriptRecord`。
+   - Codex 的去重、guardian 删除、child thread 映射都在这里完成。
 
-因此，改解析规则通常应落在 Provider；改写入语义应落在 persist/transaction；改用户可见检索能力应落在 query/detail。若一个改动跨过这些边界，必须同时检查其对应的状态不变量与端到端链路。
+2. persist 写入/query 检索边界
+   - persist 是唯一写库语义。
+   - SQLite 是证据层，不是 provider 语义源头。
+   - query sandbox 给 Agent 一个可编程、只读、证据优先的检索面。
+
+3. app presentation 边界
+   - app 不直接理解 Codex wire format。
+   - app 从 DB rows 或 canonical records assembly 出可读 timeline。
+   - 实时刷新通过 daemon、worker、patch、虚拟列表保证体验。
+
+二开时最重要的是守住这三条边界：provider 差异留在 provider，写库语义留在 persist，改用户可见检索能力应落在 query，阅读体验留在 assembly/renderer。这样新增 provider 或扩展 Codex 时，改动面会很小，也不会让 app、CLI、query API 被 provider-specific 逻辑污染。
 
 ## 各文件定位与关系
+
+
+
+```ts
+Provider Adapter
+  负责理解各家 Agent 原始日志
+
+TranscriptRecord
+  负责统一表达会话事实
+
+Persist Layer
+  负责唯一写库语义
+
+SQLite + FTS
+  负责结构化证据与全文搜索
+
+CLI
+  给 Agent 提供可编程查询入口
+
+Electron App
+  给人提供可视化浏览，并作为 daemon 实时维护索引
+```
+
+```mermaid
+flowchart TB
+  %% =========================
+  %% Raw Sources
+  %% =========================
+  subgraph RAW["原始 Agent 历史文件"]
+    CODEX_JSONL["Codex<br/>~/.codex/sessions/**/*.jsonl"]
+    CODEX_INDEX["Codex metadata<br/>~/.codex/session_index.jsonl"]
+    CLAUDE_JSONL["Claude Code<br/>~/.claude/projects/**/*.jsonl"]
+    CLAUDE_HISTORY["Claude metadata<br/>~/.claude/history.jsonl"]
+    KIMI_LOGS["Kimi Code<br/>~/.kimi-code/sessions"]
+  end
+
+  %% =========================
+  %% Provider Layer
+  %% =========================
+  subgraph PROVIDERS["packages/core/src/providers：Provider Adapter 层"]
+    REGISTRY["Provider Registry<br/>createBuiltinProviderRegistry()"]
+
+    CODEX_PROVIDER["Codex Provider<br/>providers/codex.ts"]
+    CLAUDE_PROVIDER["Claude Provider<br/>providers/claude.ts"]
+    KIMI_PROVIDER["Kimi Provider<br/>providers/kimi.ts"]
+
+    DISCOVER["discover(ctx)<br/>发现需要索引的 IndexUnit"]
+    PARSE["parse(unit, cursor)<br/>原始日志 -> TranscriptRecord"]
+    RAW_LOOKUP["raw(input)<br/>从 DB message 找回原始日志行"]
+  end
+
+  RAW --> REGISTRY
+  REGISTRY --> CODEX_PROVIDER
+  REGISTRY --> CLAUDE_PROVIDER
+  REGISTRY --> KIMI_PROVIDER
+
+  CODEX_JSONL --> CODEX_PROVIDER
+  CODEX_INDEX --> CODEX_PROVIDER
+  CLAUDE_JSONL --> CLAUDE_PROVIDER
+  CLAUDE_HISTORY --> CLAUDE_PROVIDER
+  KIMI_LOGS --> KIMI_PROVIDER
+
+  CODEX_PROVIDER --> DISCOVER
+  CLAUDE_PROVIDER --> DISCOVER
+  KIMI_PROVIDER --> DISCOVER
+
+  DISCOVER --> PARSE
+  CODEX_PROVIDER --> RAW_LOOKUP
+  CLAUDE_PROVIDER --> RAW_LOOKUP
+  KIMI_PROVIDER --> RAW_LOOKUP
+
+  %% =========================
+  %% Canonical Records
+  %% =========================
+  subgraph RECORDS["统一中间语言：TranscriptRecord"]
+    SESSION_REC["session"]
+    MESSAGE_REC["message"]
+    TOOL_CALL_REC["tool_call"]
+    TOOL_RESULT_REC["tool_result"]
+    SUBAGENT_REC["subagent"]
+    WORKFLOW_REC["workflow"]
+    SUMMARY_REC["summary"]
+    DELETE_REC["delete-session"]
+  end
+
+  PARSE --> RECORDS
+
+  %% =========================
+  %% Index Orchestration
+  %% =========================
+  subgraph INDEXING["索引编排层"]
+    PROVIDER_PLAN["createProviderIndexPlan()<br/>读取 index_state cursor<br/>生成待索引计划"]
+    INDEX_PLAN["indexProviderPlan()<br/>逐个 unit 执行 parse + persist"]
+    BUILD_INDEX["buildIndex()<br/>CLI passive pull / App daemon 共用主流程"]
+    WRITER_LEASE["Writer Lease<br/>跨进程写锁<br/>防止 CLI 和 App 同时写"]
+    TX["Transaction<br/>每个 IndexUnit 一个写事务<br/>finalize 一个事务"]
+  end
+
+  REGISTRY --> PROVIDER_PLAN
+  PROVIDER_PLAN --> INDEX_PLAN
+  INDEX_PLAN --> BUILD_INDEX
+  BUILD_INDEX --> WRITER_LEASE
+  BUILD_INDEX --> TX
+  RECORDS --> INDEX_PLAN
+
+  %% =========================
+  %% Persist / SQLite
+  %% =========================
+  subgraph SQLITE["~/.trajex/trajex.sqlite：证据层"]
+    PERSIST["persist.ts<br/>唯一写库层<br/>provider-agnostic"]
+
+    SESSIONS["sessions<br/>会话元信息"]
+    MESSAGES["messages<br/>消息正文、role、model、cwd、agent_id"]
+    TOOL_CALLS["tool_calls<br/>工具调用名、输入、文件路径"]
+    TOOL_RESULTS["tool_results<br/>工具输出、错误状态"]
+    SUBAGENTS["subagents<br/>Claude subagent / Codex child thread"]
+    WORKFLOWS["workflows / workflow_agents<br/>Claude workflow"]
+    SUMMARIES["summaries<br/>摘要"]
+    MEMORIES["memories<br/>用户批准的长期记忆"]
+    INDEX_STATE["index_state<br/>cursor、heartbeat、build marker"]
+    FTS["messages_fts / memories_fts<br/>FTS5 全文倒排索引"]
+  end
+
+  INDEX_PLAN --> PERSIST
+  PERSIST --> SESSIONS
+  PERSIST --> MESSAGES
+  PERSIST --> TOOL_CALLS
+  PERSIST --> TOOL_RESULTS
+  PERSIST --> SUBAGENTS
+  PERSIST --> WORKFLOWS
+  PERSIST --> SUMMARIES
+  PERSIST --> INDEX_STATE
+  MESSAGES --> FTS
+  MEMORIES --> FTS
+
+  %% =========================
+  %% CLI / Agent Side
+  %% =========================
+  subgraph CLI_SIDE["Agent 侧：CLI + JS Query Sandbox"]
+    CLI["packages/cli/src/trajex.ts<br/>trajex --query / --search / --build"]
+    CORE["packages/core/src/core.ts<br/>executeQuery() / searchText() / executeAttune()"]
+    SANDBOX["VM Sandbox<br/>Agent 写 JS 组合查询"]
+    QUERY_API["createQueryApi(db)<br/>search / sessions / context / thread<br/>failures / fileHistory / sql / memories"]
+    AGENT["Coding Agent<br/>根据 JSON 结果回答用户"]
+  end
+
+  CLI --> CORE
+  CORE --> BUILD_INDEX
+  CORE --> SANDBOX
+  SANDBOX --> QUERY_API
+  QUERY_API --> SQLITE
+  QUERY_API --> AGENT
+
+  %% =========================
+  %% Electron App Side
+  %% =========================
+  subgraph APP_SIDE["Electron App：UI + 本地索引 daemon"]
+    MAIN["Electron Main Process<br/>app/src/main/index.ts"]
+    PRELOAD["Preload<br/>window.trajex IPC API"]
+    RENDERER["Vue Renderer<br/>Sessions / Memory / Activity / Recap / Settings"]
+    SESSION_DETAIL["SessionDetail.vue<br/>timeline、tool 展示、全文展开、阅读状态"]
+  end
+
+  SQLITE --> MAIN
+  MAIN --> PRELOAD
+  PRELOAD --> RENDERER
+  RENDERER --> SESSION_DETAIL
+
+  %% =========================
+  %% App Daemon
+  %% =========================
+  subgraph DAEMON["App Daemon：实时维护 SQLite"]
+    SERVICE["indexer-service.ts<br/>chokidar 监听、debounce、heartbeat、重试"]
+    WORKER_CLIENT["indexer-worker-client.ts<br/>Main -> Worker 的 Promise RPC"]
+    WORKER["indexer-worker.ts<br/>Worker Thread 中运行 buildIndex"]
+    APP_INDEXER["app/src/main/indexer.ts<br/>better-sqlite3 版本 buildIndex"]
+    HEARTBEAT["__app_heartbeat__<br/>告诉 CLI：App 正在负责写索引"]
+    NOTIFY["notifyIndexUpdated()<br/>通知 renderer 增量刷新"]
+  end
+
+  MAIN --> SERVICE
+  SERVICE --> WORKER_CLIENT
+  WORKER_CLIENT --> WORKER
+  WORKER --> APP_INDEXER
+  APP_INDEXER --> PROVIDER_PLAN
+  APP_INDEXER --> INDEX_PLAN
+  APP_INDEXER --> PERSIST
+  SERVICE --> HEARTBEAT
+  HEARTBEAT --> INDEX_STATE
+  APP_INDEXER --> NOTIFY
+  NOTIFY --> RENDERER
+
+  RAW --> SERVICE
+
+  %% =========================
+  %% Session Detail Assembly
+  %% =========================
+  subgraph ASSEMBLY["展示投影层"]
+    ASSEMBLE["assembleSessionDetail()<br/>DB rows / TranscriptRecord -> UI timeline"]
+    PATCH["session-patch.mjs<br/>create/apply patch<br/>增量刷新长 session"]
+    FULLTEXT["getMessageFullText()<br/>通过 provider.raw 回源 JSONL 取未截断文本"]
+  end
+
+  MAIN --> ASSEMBLE
+  ASSEMBLE --> SESSION_DETAIL
+  MAIN --> PATCH
+  PATCH --> SESSION_DETAIL
+  SESSION_DETAIL --> FULLTEXT
+  FULLTEXT --> RAW_LOOKUP
+```
+
+
+
+
+
+
 
 公共门面位于最上方；下方分为写入主线、读取/记忆主线和展示投影。数据库契约与工具层是所有路径的共同基础，Provider 只负责把来源格式投影为统一记录。
 
@@ -29,34 +284,33 @@
   packages/core/src/core.ts                ← 4 个高层函数：
                                                 buildIndex / searchText
                                                 executeQuery / executeAttune
-       │
-       ├────────────────────────── 写入主线 ────────────────────────────┐
-       │                                                               │
-       │  四、索引编排与并发层                                             │
-       │    indexer.ts                 ← 所有权、计划、提交、finalize      │
-       │    provider-indexing.ts       ← Provider 计划与每 unit 执行      │
-       │    tx.ts / write-coordinator.ts ← 原子写与有界重试                │
-       │    writer-lease.ts            ← 跨进程单 writer 锁               │
-       │               │                                                │
-       │  三、持久化层                                                    │
-       │    persist.ts                 ← TranscriptRecord → SQLite 行   │
-       │               │                                                │
-       │  二、Provider 适配层                                             │
-       │    providers/types.ts         ← TranscriptRecord / Provider 契约│
-       │    providers/{claude,codex,kimi}.ts ← 原始文件 → 统一记录         │
-       │    providers/{registry,builtins}.ts ← 注册、根目录、raw 回源      │
-       │               │                                                │
-       │  一、数据库契约与工具层                                            │
-       │    db.ts / schema.sql / schema-migrations.ts / sqlite-types.ts │
-       │                              ← DB 生命周期、DDL、迁移、类型面      │
-       │    parsing.ts                 ← 文件发现、JSONL、文本、Codex ID   │
-       │                                                                │
-       └────────────────────────── 读取与投影 ────────────────────────────┘
-           五、检索与记忆层
-             query.ts               ← Query API、Attune API、只读 SQL、FTS、memory soft delete
 
-           六、展示投影层
-             session-detail.ts      ← canonical transcript / SQLite rows → SessionDetailSnapshot
+写入主线
+  四、索引编排与并发层                                             
+    indexer.ts                 ← 所有权、计划、提交、finalize      
+    provider-indexing.ts       ← Provider 计划与每 unit 执行      
+    tx.ts / write-coordinator.ts ← 原子写与有界重试                
+    writer-lease.ts            ← 跨进程单 writer 锁               
+               │                                                
+  三、Provider 适配层                                             
+    providers/types.ts         ← TranscriptRecord / Provider 契约
+    providers/{claude,codex,kimi}.ts ← 原始文件 → 统一记录         
+    providers/{registry,builtins}.ts ← 注册、根目录、raw 回源      
+               │                                                
+  二、持久化层                                                    
+    persist.ts                 ← TranscriptRecord → SQLite 行   
+               │                                                
+  一、数据库契约与工具层                                            
+    db.ts / schema.sql / schema-migrations.ts / sqlite-types.ts 
+                              ← DB 生命周期、DDL、迁移、类型面      
+    parsing.ts                 ← 文件发现、JSONL、文本、Codex ID   
+                                                                
+读取与投影
+  五、检索与记忆层
+    query.ts               ← Query API、Attune API、只读 SQL、FTS、memory soft delete
+
+  六、展示投影层
+    session-detail.ts      ← canonical transcript / SQLite rows → SessionDetailSnapshot
 ```
 
 完整主链：
@@ -207,6 +461,71 @@ finalize 只在所有 unit 已提交或被明确跳过后运行；它失败会�
 
 Provider 不依赖数据库，`persist.ts` 和 `session-detail.ts` 不应识别特定 Provider 的原始 JSON 字段。
 
+## 数据流总览
+
+### 12.1 CLI 查询数据流
+
+```text
+用户/Agent 运行 trajex --query query.js
+  -> packages/cli/src/trajex.ts
+  -> executeQuery(scriptContent)
+  -> buildIndex()
+      -> inspect heartbeat/recent build
+      -> acquire writer lease
+      -> provider registry
+      -> discover changed IndexUnits
+      -> provider.parse(unit, cursor)
+      -> persist(...)
+      -> finalize FTS/project paths/markers
+  -> openReadDb()
+  -> createQueryApi(db)
+  -> run JS sandbox
+  -> stdout JSON
+  -> Agent 根据 JSON 回答自然语言
+```
+
+### 12.2 app daemon 数据流
+
+```text
+Electron ready
+  -> startBackgroundResources
+  -> createWorkerBuildIndex
+  -> startIndexerService
+  -> chokidar watch providerRegistry.watchRoots(...)
+  -> scheduleBuild debounce/stability
+  -> worker buildIndex({ changedPaths })
+  -> createProviderIndexPlan
+  -> provider.parse + persist
+  -> finalize markers
+  -> notifyIndexUpdated / notifySessionUpdated
+  -> renderer fetch patch
+  -> apply patch
+  -> timeline update
+```
+
+### 12.3 Codex 单文件解析数据流
+
+```text
+~/.codex/sessions/.../<thread>.jsonl
+  -> discoverCodexJsonlFiles
+  -> discoverAt 补 session_index title/update
+  -> parse 读完整文件
+  -> 找 session_meta
+  -> 判断 guardian/delete-session
+  -> 判断 parent thread
+  -> 第一遍收集 event_msg visible keys
+  -> 第二遍逐行转换
+      event_msg user/agent/reasoning -> message
+      collab_agent_spawn_end -> tool_call + subagent
+      task_complete -> turn duration
+      token_count -> token usage
+      response_item message -> dedup 后 message
+      response_item *_call -> tool_call
+      response_item *_output -> tool_result
+  -> root 生成 session，child 生成 subagent
+  -> persist 写 SQLite
+```
+
 
 
 ### 一、@trajex/core（核心包）
@@ -274,7 +593,23 @@ Provider 不依赖数据库，`persist.ts` 和 `session-detail.ts` 不应识别�
 
 `package.json` 中的 `"bin": {"trajex": "dist/cli/src/trajex.js"}` 使其可通过 `trajex` 命令调用。
 
-## CLI 入口核心调用链 `cli/src/trajex.ts`
+## 一、索引编排
+
+### CLI 入口核心调用链 `cli/src/trajex.ts`
+
+安装 CLI 只是安装 `trajex` 命令：
+
+```bash
+npm install -g @trajex-apps/cli
+```
+
+真正索引发生在运行命令时：
+
+```bash
+trajex --build
+trajex --search "auth bug"
+trajex --query query.js
+```
 
 CLI 只做参数路由、脚本文件读取和 JSON 输出。它不拥有数据库连接、Provider 选择或检索逻辑。
 
@@ -286,9 +621,49 @@ CLI 只做参数路由、脚本文件读取和 JSON 输出。它不拥有数据�
 | `trajex --query file.js`  | core.ts `executeQuery(scriptContent)`  | 在只读 JS 沙箱执行，输出 return 值 |
 | `trajex --attune file.js` | core.ts `executeAttune(scriptContent)` | 在 writer lease 内执行 memory 变更 |
 
-### 构建索引流程 (`trajex --build`)
+CLI 每次查询前会调用 `buildIndex()`，这叫 **passive pull mode：没有后台常驻，运行时拉取更新**。
 
-```
+主要流程：
+
+1. `inspectBuildOwnership()`
+   - 如果 DB 不存在，允许构建。
+   - 如果 app heartbeat 新鲜，跳过构建，避免 CLI 和 app 同时写。
+   - 如果最近刚构建过，也可跳过。
+
+2. `acquireWriterLease(...)`
+   - 获取跨进程写锁。
+   - 写锁使用独立的 `.trajex/writer.lock.sqlite`。
+   - heartbeat 是策略，writer lease 是硬保护。
+
+3. `openDb()`
+   - 初始化/migrate schema。
+
+4. force build 时清理派生表。
+   - 不清 memories。
+
+5. `createBuiltinProviderRegistry()`
+   - 注册 Claude/Codex/Kimi。
+
+6. `createProviderIndexPlan(db, registry, { force })`
+   - 对每个 provider 调 discover。
+   - 计算待处理 IndexUnit。
+   - 处理 index version marker。
+
+7. `indexProviderPlan(...)`
+   - 每个 unit 一个 transaction。
+   - 调 `persist(db, unit, provider.parse(...))`。
+   - 单文件失败可 skip，数据库 busy 可 stop。
+
+8. finalize transaction：
+   - `refreshSessionProjectPaths(db)`
+   - rebuild `messages_fts`
+   - rebuild memory FTS
+   - 写 `__last_build__`
+   - 写 provider version markers。
+
+#### 构建索引流程 (`trajex --build`)
+
+```ts
 trajex.ts --build
   → core.ts buildIndex({ force: true })
     → indexer.ts buildIndex()
@@ -308,7 +683,7 @@ trajex.ts --build
       → release()                     // 释放锁
 ```
 
-### 搜索流程 (`trajex --search "xxx"`)
+#### 搜索流程 (`trajex --search "xxx"`)
 
 ```
 trajex.ts --search "xxx"
@@ -320,7 +695,7 @@ trajex.ts --search "xxx"
     → db.close()
 ```
 
-### 查询脚本流程 (`trajex --query <file>`)
+#### 查询脚本流程 (`trajex --query <file>`)
 
 ```
 trajex.ts --query <file.js>
@@ -332,7 +707,7 @@ trajex.ts --query <file.js>
     → db.close()
 ```
 
-### 记忆操作流程 (`trajex --attune <file>`)
+#### 记忆操作流程 (`trajex --attune <file>`)
 
 ```
 trajex.ts --attune <file.js>
@@ -346,86 +721,101 @@ trajex.ts --attune <file.js>
     → release()
 ```
 
+### core runtime
 
+文件：`packages/core/src/core.ts`
 
+对外暴露四个核心能力：
 
+- `buildIndex`
+- `searchText`
+- `executeQuery`
+- `executeAttune`
 
-## 一、总体数据流
-
-```ts
-buildIndex()
-  -> createProviderIndexPlan()
-  -> provider.discover({ lastCursor, changedPaths })
-  -> discover 判断哪些 IndexUnit 需要处理
-  -> provider.parse(unit, cursor)
-  -> persist(...)
-```
+其中 `runInSandbox(api, scriptContent)` 是 Agent 查询的 CodeAct 核心：
 
 ```ts
-Provider Adapter 适配器解析不同格式 (claude.ts / codex.ts / kimi.ts)
-    │  统一 yield TranscriptRecord[]
-    ▼
-persist.ts (写库 SQLite)
-    │  INSERT / UPDATE / DELETE
-    ▼
-┌────────────────────────────────────────────────────┐
-│  sessions  ← 工具调用时用到的文件路径索引             │
-│  messages  ← 触发器 → messages_fts (FTS 全文搜索)    │
-│  tool_calls  工具调用与结果关联                       │
-│  tool_results  ↓                                    │
-│  subagents    子代理（含 workflow_agents）            │
-│  workflows    ↓                                     │
-│  workflow_agents                                   │
-│  summaries                                         │
-├────────────────────────────────────────────────────┤
-│  index_state  ← 索引进度追踪（__last_build__ 等）     │
-├────────────────────────────────────────────────────┤
-│  memories  ← 人工写入 → memories_fts (FTS 记忆搜索)  │
-│              (attend API: remember / forget)        │
-└────────────────────────────────────────────────────┘
-    ▲
-query.ts (查询 API)
-    │  search() / context() / sessions() / memories()
-    │  sql() / overview() / raw()
-    ▼
-CLI / Electron App
+runInNewContext(`(async()=>{${scriptContent}})()`, ctx, { timeout: 30000 })
 ```
 
-## Provider Adapter 适配器
+它把 JS 脚本包成 async IIFE，在 VM sandbox 中运行，返回 JSON 可序列化结果。
 
-Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解自己的日志格式，翻译成统一 TranscriptRecord**：
+sandbox 注入：
 
-| 特性         | Claude                          | Codex                           | Kimi                                                 |
-| ------------ | ------------------------------- | ------------------------------- | ---------------------------------------------------- |
-| 数据来源     | `~/.claude/projects/**/*.jsonl` | `~/.codex/sessions/**/*.jsonl`  | `~/.kimi-code/sessions/**/state.json` + `wire.jsonl` |
-| 发现方式     | 目录遍历 + mtime                | 目录遍历 + guardian 检测        | 目录遍历 + session_dir                               |
-| 解析方式     | 流式逐行，支持 delta            | 全量缓冲，event/response 关联   | 全量投影，支持 undo/compaction                       |
-| countMode    | delta (增量)                    | total (全量)                    | total (全量重删)                                     |
-| 特殊能力     | 子代理 / 工作流                 | guardian 线程删除 / agent spawn | context.undo / context.clear / compaction            |
-| 原始消息获取 | `rawClaude()` 行匹配            | `rawCodex()` 行号定位           | `rawFromWire()` 文件分割                             |
+- query API 或 attune API。
+- JSON/Math/Array/Object/Set/Map/Date/RegExp 等基础对象。
+- console/setTimeout。
 
-它负责：
+### Provider indexing
 
-  - 负责找到变化了的文件：discover() 去 ~/.codex/sessions 发现 JSONL 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断文件有没有变
+文件：`packages/core/src/provider-indexing.ts`
 
-    > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
-    >
-    > * Claude 是 line-incremental，所以 Claude cursor 里的 `linesProcessed` 会被用来跳过旧行。
-    >
-    > * Codex 是 full-reparse，所以对 Codex：
-    >
-    >   ```
-    >   mtime 用来判断文件有没有变
-    >   linesProcessed 更多是记录文件当前总行数
-    >   ```
+这一层是 app 和 CLI 共享的 provider 编排。
 
-  - 负责解析文件内容：parse() 读取某个 JSONL，把它翻译成 TranscriptRecord
+- `storedProviderCursor(db, key)`
+  - 从 `index_state` 读 cursor。
 
-  - 负责回查原文：raw() 根据 SQLite message uuid 找回原始 JSONL 行
+- `sourceAlreadyIndexed(db, source)`
+  - 判断某 provider 是否已有 session。
 
-  - 负责告诉 app 监听哪里：watchRoots() 告诉 app daemon 应该监听哪些目录
+- `createProviderIndexPlan(...)`
+  - 遍历 registry provider。
+  - 如果 provider 的 `indexVersionMarker` 缺失，说明解析语义升级过。
+  - 如果 marker 缺失且该 source 已有数据，则 full reindex 该 source。
+  - discover 时把 `lastCursor` 注入给 provider。
 
-## Provider Adapter 与统一事实流的完整契约 `types.ts`
+- `indexProviderPlan(...)`
+  - 顺序执行每个 item。
+  - 每个 item 调用传入的 `runTransaction`。
+  - 成功记录 committed。
+  - 失败按 `onError` 返回 skip 或 stop。
+
+- `writeProviderIndexMarkers(...)`
+  - provider 无失败且未中止时写入 index version marker。
+
+## 二、Provider Adapter 与统一事实流的完整契约 `providers/types.ts`
+
+这里定义的是跨层边界。最重要的类型是：
+
+- `Cursor`
+  - provider 自己解释的增量游标。
+  - 目前用字符串存储在 `index_state` 的 `mtime` 和 `lines_processed` 中。
+  - orchestration 只保存和回传，不理解业务含义。
+
+- `IndexUnit`
+  - 一次索引工作的最小单位。
+  - 对 Claude 来说通常是一个 JSONL 文件。
+  - 对 Codex 来说也是一个 session JSONL。
+  - 对 Kimi 这种目录型 provider，也可以是一个目录或逻辑 session。
+  - 关键字段：
+    - `key`：稳定索引 key，通常是文件路径。
+    - `sessionId`：写入 Trajex 后的 session id。
+    - `project`：项目 slug。
+    - `isSubagent/agentId`：子线程或 subagent 信息。
+    - `meta`：provider 私有信息，外层不解释。
+
+- `TranscriptRecord`
+  - canonical transcript language。
+  - 这是项目最重要的抽象。
+  - 所有 provider 最终都要 emit 这些 record：
+    - `session`
+    - `message`
+    - `tool_call`
+    - `tool_result`
+    - `summary`
+    - `subagent`
+    - `workflow`
+    - `workflow_agent`
+    - `message-turn-duration`
+    - `delete-session`
+
+- `ProviderAdapter`
+  - 虽然片段中 `Provider` 接口只展示了纯 parse/discover 的核心形状，实际 adapter 还包含 descriptor、watchRoots、raw、indexVersionMarker。
+  - app 和 CLI 都通过 registry 使用它，而不是到处 `if source === 'codex'`。
+
+这层的定位：把“不同日志格式如何表示一次工具调用”这种 provider 差异，全部关在 adapter 里。
+
+
 
 `types.ts` 的作用是规定跨模块传递的数据形状。可以把它看成 Trajex 的“海关申报单”：Claude、Codex、Kimi 各自带着完全不同的原始文件格式进来，但一旦越过 Provider 边界，后面的索引、写库、查询、CLI 和 Electron 都只接收这份统一申报单，不再判断原始 JSONL 是谁生成的。
 
@@ -444,6 +834,24 @@ claude.ts / codex.ts / kimi.ts           provider-indexing.ts
 - 向上，Provider 只 `yield TranscriptRecord`，持久化层将其写入 SQLite，读取层只查询 SQLite 或在需要原文时调用统一的 `raw()` 回源接口。
 
 因此本节应配合主线阅读：先了解一个 adapter 如何发现和解析，再看同一份 `TranscriptRecord` 怎样被 `persist.ts` 分派到各表，最后看 `query.ts`、CLI、Electron 如何消费写好的事实。
+
+### Provider 接口：谁负责发现，谁负责解析
+
+```ts
+interface Provider {
+  readonly name: string;
+  discover(ctx: DiscoverContext): IndexUnit[];
+  parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRecord, Cursor>;
+}
+```
+
+| 成员                  | 职责与边界                                                   |
+| --------------------- | ------------------------------------------------------------ |
+| `name`                | 稳定 provider 标签，写入消息和 session 的 `source`，如 `claude`、`codex`。它是数据身份，不应随 UI 文案变化。 |
+| `discover(ctx)`       | 扫描自己的根目录/数据库/辅助文件，读取 `ctx.lastCursor()` 做变更判断，返回待处理 unit。它不应写 Trajex 主数据库。 |
+| `parse(unit, cursor)` | 读取一个已发现 unit，从 cursor 继续或全量解析，将来源事件翻译为规范 record 流，最终 `return` 新 cursor。它不应直接调用 SQLite SQL。 |
+
+这就是“Provider Adapter 解析不同格式”的精确定义：不是让三个解析器遵循相同文件格式，而是让它们都实现相同的发现、流式解析和回源能力。格式相关的目录结构、mtime 规则、原始 ID 生成、子线程发现和字段提取留在 `claude.ts`、`codex.ts`、`kimi.ts`；跨来源的一致写入留在 `persist.ts`。
 
 ### `parse()` 实际返回流式 Generator，不是一次性数组
 
@@ -524,7 +932,7 @@ index_state 的 value = Cursor
 
 所以发现阶段不是“索引”。`discover()` 只回答“有哪些 unit 值得处理”；真正读取原始内容从 `parse()` 开始，真正改变数据库从 `persist()` 开始。
 
-### 13.3 `TranscriptRecord`：十种规范事实/操作
+### `TranscriptRecord`：十种规范事实/操作
 
 ```ts
 type TranscriptRecord =
@@ -535,7 +943,7 @@ type TranscriptRecord =
 
 前八种主要是事实投影；最后两种是对既有事实做定点更新或撤回的操作。以下“表”指 `schema.sql` 中的持久化目标；所有记录都会在 `persist.ts` 的同一事务内被消费。
 
-#### 13.3.1 `SessionRecord` → `sessions`
+#### 1 `SessionRecord` → `sessions`
 
 `SessionRecord` 是一次会话的聚合行，通常在一个 unit 的消息流已扫描完后发出，因为开始/结束时间和 message count 往往要跨整份 transcript 才能确定。
 
@@ -555,7 +963,7 @@ type TranscriptRecord =
 
 `project_path` 不在该接口中。`indexer.ts` 的 `refreshSessionProjectPaths()` 会在所有 unit 写完后，从持久化的 `messages.cwd` 统计并调用 `inferProjectPath()` 推断它。这避免 Provider 在各自局部视角中做不一致的路径猜测。
 
-#### 13.3.2 `MessageRecord` → `messages`，并由触发器同步 `messages_fts`
+#### 2 `MessageRecord` → `messages`，并由触发器同步 `messages_fts`
 
 `MessageRecord` 是整个模型最核心的事实。`MessageVisibility` 的取值只允许 `'visible' | 'hidden'`：可见性是在 Provider 解析时规范化的，展示层不会靠文本内容再次猜测系统上下文是否应显示。
 
@@ -582,7 +990,7 @@ type TranscriptRecord =
 
 `messages` 写入、更新、删除会触发 `messages_fts` 同步。FTS 保存的是全文检索倒排索引；`query.search()` 用它找候选消息，再 join 回普通表取 session、时间和上下文，不能把 FTS 虚表当作权威消息存储。
 
-#### 13.3.3 `ToolCallRecord` → `tool_calls`
+#### 3 `ToolCallRecord` → `tool_calls`
 
 一条 assistant 消息可以发起零到多次工具调用：
 
@@ -593,13 +1001,12 @@ type TranscriptRecord =
 | `message_uuid`      | 发起调用的 assistant 消息，关联 `messages.uuid`。            |
 | `session_id`        | 冗余保存的 session 外键，便于按会话检索而不用每次 join。     |
 | `name`              | 工具名，如 Read、Edit、Bash、Agent、Workflow、shell。        |
-| `presentation`      | `'default'` 是普通工具展示；`'skill'` 表示应按 skill 调用处理。 |
 | `input_json`        | 工具输入的 JSON 字符串；保留字符串可避免 Provider 之间参数形状被强行统一。 |
 | `file_path`         | 能从调用参数识别出的目标文件路径。`query.fileHistory()` 正是从 `tool_calls.file_path` 查文件历史。 |
 
 这里需要修正主线图中“`sessions` ← 工具调用时用到的文件路径索引”的表述：工具调用的主要文件路径在 `tool_calls.file_path`，结果相关路径在 `tool_results.file_path`；`sessions` 的路径字段是原 transcript 的 `jsonl_path`，以及最终推断出的 `project_path`。
 
-#### 13.3.4 `ToolResultRecord` → `tool_results`
+#### 4 `ToolResultRecord` → `tool_results`
 
 | 字段                  | 含义                                                         |
 | --------------------- | ------------------------------------------------------------ |
@@ -613,7 +1020,7 @@ type TranscriptRecord =
 
 关系是 `messages → tool_calls → tool_results`，但结果在 transcript 中可晚于调用出现，所以 Provider 只需按原始顺序 yield；`persist` 负责以 ID 建立可查询事实。
 
-#### 13.3.5 `SummaryRecord` → `summaries`
+#### 5 `SummaryRecord` → `summaries`
 
 | 字段              | 含义                                                         |
 | ----------------- | ------------------------------------------------------------ |
@@ -626,7 +1033,7 @@ type TranscriptRecord =
 
 `query.summaries()` 读取这张表。它保存的是来源已经产生的摘要，不等同于用户批准的长期 memory。
 
-#### 13.3.6 `SubagentRecord` → `subagents`
+#### 6 `SubagentRecord` → `subagents`
 
 | 字段                  | 含义                                                        |
 | --------------------- | ----------------------------------------------------------- |
@@ -643,7 +1050,7 @@ type TranscriptRecord =
 
 `subagents` 不是子 Agent 的对话正文。正文仍在 `messages`，并以 `messages.agent_id = subagents.agent_id` 表示归属。
 
-#### 13.3.7 `WorkflowRecord` → `workflows`
+#### 7 `WorkflowRecord` → `workflows`
 
 | 字段                           | 含义                                                         |
 | ------------------------------ | ------------------------------------------------------------ |
@@ -660,7 +1067,7 @@ type TranscriptRecord =
 | `status`                       | 如 running、completed、failed。                              |
 | `workflow_name`                | workflow 名称；可为空。                                      |
 
-#### 13.3.8 `WorkflowAgentRecord` → `workflow_agents`
+#### 8 `WorkflowAgentRecord` → `workflow_agents`
 
 它是 workflow 内的成员明细，不是 `subagents` 的子表。两者都描述 Agent，但关联维度不同：`subagents` 描述由会话工具启动的子线程；`workflow_agents` 描述某个 `run_id` 内的执行成员。
 
@@ -676,7 +1083,7 @@ type TranscriptRecord =
 
 同一 row 可能由两个独立 unit、且以任意顺序产出：子代理 `.meta.json` 只知道类型/描述，workflow run JSON 只知道阶段、状态和统计。`persist` 的冲突更新使用逐列 `COALESCE(excluded.col, col)` 合并，因此所有贡献者必须生成相同的 `agent_id`，否则会变成两条不完整记录。
 
-#### 13.3.9 `MessageTurnDurationRecord` → 定向更新 `messages.turn_duration_ms`
+#### 9 `MessageTurnDurationRecord` → 定向更新 `messages.turn_duration_ms`
 
 ```ts
 { kind: 'message-turn-duration', uuid, turn_duration_ms }
@@ -684,7 +1091,7 @@ type TranscriptRecord =
 
 它不是一张独立表，而是补写一条已经存在的消息的 assistant turn 耗时。来源可能在后续事件/文件中才透露该时长，所以 Provider 不必重写完整 `MessageRecord`；`persist` 按 `uuid` 做定向 `UPDATE`，只影响 `turn_duration_ms`，不触碰消息其余列。
 
-#### 13.3.10 `DeleteSessionRecord` → 删除该会话的派生事实
+#### 10 `DeleteSessionRecord` → 删除该会话的派生事实
 
 ```ts
 { kind: 'delete-session', sessionId }
@@ -692,25 +1099,9 @@ type TranscriptRecord =
 
 同样不是表行。Provider 在识别到不应被展示/索引的会话时发出它，例如 Codex guardian 或 auto-review 线程。`persist` 按 `sessionId` 清除该 session 下相关事实，防止旧 cursor 或先前索引残留出现在查询中。它不意味着删除用户人工写入的 `memories`：memory 是单独的用户域数据，不能被来源 replay 随意清空。
 
-### 13.4 Provider 接口：谁负责发现，谁负责解析
 
-```ts
-interface Provider {
-  readonly name: string;
-  discover(ctx: DiscoverContext): IndexUnit[];
-  parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRecord, Cursor>;
-}
-```
 
-| 成员                  | 职责与边界                                                   |
-| --------------------- | ------------------------------------------------------------ |
-| `name`                | 稳定 provider 标签，写入消息和 session 的 `source`，如 `claude`、`codex`。它是数据身份，不应随 UI 文案变化。 |
-| `discover(ctx)`       | 扫描自己的根目录/数据库/辅助文件，读取 `ctx.lastCursor()` 做变更判断，返回待处理 unit。它不应写 Trajex 主数据库。 |
-| `parse(unit, cursor)` | 读取一个已发现 unit，从 cursor 继续或全量解析，将来源事件翻译为规范 record 流，最终 `return` 新 cursor。它不应直接调用 SQLite SQL。 |
-
-这就是“Provider Adapter 解析不同格式”的精确定义：不是让三个解析器遵循相同文件格式，而是让它们都实现相同的发现、流式解析和回源能力。格式相关的目录结构、mtime 规则、原始 ID 生成、子线程发现和字段提取留在 `claude.ts`、`codex.ts`、`kimi.ts`；跨来源的一致写入留在 `persist.ts`。
-
-### 13.5 描述、监视、原文回源：`ProviderDescriptor`、`RawLookup`、`RawRecord`、`ProviderAdapter`
+### 描述、监视、原文回源：`ProviderDescriptor`、`RawLookup`、`RawRecord`、`ProviderAdapter`
 
 #### `ProviderDescriptor`
 
@@ -751,6 +1142,28 @@ interface ProviderDescriptor {
 
 这些辅助行不是绕开 SQLite 的捷径，而是让 Provider 无需重新猜测 session 与子线程关系。`readonly` 也表明 `raw()` 只能读取来源，不应修改上游或数据库。
 
+##### Codex：从规范 UUID 精确回读 JSONL 行
+
+Codex 的 message UUID 由 Trajex 按原线程 ID 与 JSONL 行号构造：`codex:<threadId>:<lineNumber>`，例如 `codex:019e8951-xxx:37`。因此 `rawCodex()` 不需要扫描消息正文来猜测目标：
+
+1. 解析 `messageUuid`，取得 thread ID 和 line number；不符合该形状直接返回 `null`。
+2. 主会话（`agentId === null`）优先使用 `session.jsonl_path`；子线程则在 Codex `sessions/` 树中按 thread ID 查找对应 rollout JSONL。
+3. 顺序读取目标文件至该行，返回完整原始 JSONL 文本；找不到文件或行则返回 `null`。
+4. 对 `event_msg` 的文本字段和 `response_item.message.content` 额外投影 `messageText`，使 UI 可展示未截断的可读正文，而 `text` 仍是原始 JSONL 行。
+
+这一路径选择依赖 `RawLookup` 提供的 `session.jsonl_path` 与 `agentId`，但用于精确定位的主键仍是 UUID 内的 thread ID 和行号。
+
+##### Claude：按主会话、子代理或 workflow agent 选择 transcript
+
+Claude 的消息 UUID 来自原始 JSONL 行本身，而不含行号；`rawClaude()` 必须选择正确文件后扫描匹配的 `uuid`：
+
+1. 先从 `session.jsonl_path` 取得主 transcript；没有它即无法回源。
+2. 普通消息留在主 JSONL 中查找。普通 subagent 改读 `subagents/<agentId>.jsonl`。
+3. 若 `workflowAgent.run_id` 存在，改读 `subagents/workflows/<runId>/<agentId>.jsonl`，因为 workflow agent 使用独立目录。
+4. 逐行解析并匹配 `obj.uuid === messageUuid`；命中后返回原始 JSONL 行，并从 `obj.message.content` 投影 `messageText`。
+
+`subagent` 和 `workflowAgent` 不是替代 UUID 的二级查询条件，而是选择原始文件的路由信息。两者都缺失时，Claude 只在主 transcript 中查找。
+
 #### `RawRecord`：原文的可分页返回值
 
 | 字段           | 含义                                                         |
@@ -786,7 +1199,7 @@ interface ProviderAdapter extends Provider {
 
 `ProviderAdapter` 因而是 registry 真正接受的完整适配器；`Provider` 则是索引编排只需要的最小子集。前者不要求 `persist` 知道 UI，后者也不要求每个索引调用方依赖 Electron watcher。
 
-### 13.6 从 `kind` 到 SQLite，再到 Query/CLI/App
+### 从 `kind` 到 SQLite，再到 Query/CLI/App
 
 下表把上面的类型契约接回主线。`persist.ts` 是唯一共享落库入口；Provider 不直接发 SQL，`query.ts` 也不直接读原始 Provider 目录。
 
@@ -828,7 +1241,7 @@ query.ts
 CLI（一次性命令）与 Electron App（IPC + watcher + renderer）
 ```
 
-### 13.7 用这份契约阅读具体 Provider 的顺序
+### 用这份契约阅读具体 Provider 的顺序
 
 阅读 `providers/claude.ts`、`codex.ts`、`kimi.ts` 时，可按同一张检查表追踪，而不是先陷入各家 JSON 字段：
 
@@ -840,9 +1253,117 @@ CLI（一次性命令）与 Electron App（IPC + watcher + renderer）
 
 只要每个 Provider 满足这份契约，增加来源通常只需实现一个 adapter 并注册它；`persist.ts`、FTS、`query.ts`、CLI、Electron 的大部分代码不需要为“又多了一种 JSON 格式”分支。这正是 `providers/types.ts` 作为主链枢纽的价值。
 
-## 为什么 Codex 要这样
+```ts
+Provider Adapter 适配器解析不同格式 (claude.ts / codex.ts / kimi.ts)
+    │  统一 yield TranscriptRecord[]
+    ▼
+persist.ts (写库 SQLite)
+    │  INSERT / UPDATE / DELETE
+    ▼
+┌────────────────────────────────────────────────────┐
+│  sessions  ← 工具调用时用到的文件路径索引             │
+│  messages  ← 触发器 → messages_fts (FTS 全文搜索)    │
+│  tool_calls  工具调用与结果关联                       │
+│  tool_results  ↓                                    │
+│  subagents    子代理（含 workflow_agents）            │
+│  workflows    ↓                                     │
+│  workflow_agents                                   │
+│  summaries                                         │
+├────────────────────────────────────────────────────┤
+│  index_state  ← 索引进度追踪（__last_build__ 等）     │
+├────────────────────────────────────────────────────┤
+│  memories  ← 人工写入 → memories_fts (FTS 记忆搜索)  │
+│              (attend API: remember / forget)        │
+└────────────────────────────────────────────────────┘
+    ▲
+query.ts (查询 API)
+    │  search() / context() / sessions() / memories()
+    │  sql() / overview() / raw()
+    ▼
+CLI / Electron App
+```
 
-因为 Codex 里同一条可见消息可能同时出现在：
+## Provider registry
+
+文件：
+
+- `packages/core/src/providers/builtins.ts`
+- `packages/core/src/providers/registry.ts`
+
+`createBuiltinProviderRegistry()` 注册内置 provider：
+
+```ts
+createClaudeProvider(...)
+createCodexProvider(...)
+createKimiProvider(...)
+```
+
+registry 做四件事：
+
+1. `catalog()`：给 app settings/source catalog 使用，返回 provider 名称、vendor、默认路径、颜色。
+2. `get(source)`：按 source 找 adapter。
+3. `list()`：索引编排时遍历所有 provider。
+4. `watchRoots(configuredRoots)`：app daemon 用它决定监听哪些目录。
+5. `raw(input)`：根据消息 source 路由回对应 provider，读取原始日志行。
+
+二开新增 provider 时，核心动作是新增 `providers/xxx.ts`，然后在 `builtins.ts` 注册。理想情况下，schema、persist、query、app 不需要加 provider 分支。
+
+## 三、Provider Adapter 适配器：Provider 原始条目 → `TranscriptRecord` 映射
+
+Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解自己的日志格式，翻译成统一 TranscriptRecord**：
+
+| 特性         | Claude                          | Codex                           | Kimi                                                 |
+| ------------ | ------------------------------- | ------------------------------- | ---------------------------------------------------- |
+| 数据来源     | `~/.claude/projects/**/*.jsonl` | `~/.codex/sessions/**/*.jsonl`  | `~/.kimi-code/sessions/**/state.json` + `wire.jsonl` |
+| 发现方式     | 目录遍历 + mtime                | 目录遍历 + guardian 检测        | 目录遍历 + session_dir                               |
+| 解析方式     | 流式逐行，支持 delta            | 全量缓冲，event/response 关联   | 全量投影，支持 undo/compaction                       |
+| countMode    | delta (增量)                    | total (全量)                    | total (全量重删)                                     |
+| 特殊能力     | 子代理 / 工作流                 | guardian 线程删除 / agent spawn | context.undo / context.clear / compaction            |
+| 原始消息获取 | `rawClaude()` 行匹配            | `rawCodex()` 行号定位           | `rawFromWire()` 文件分割                             |
+
+它负责：
+
+  - 负责找到变化了的文件：discover() 去 ~/.codex/sessions 发现 JSONL 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断文件有没有变
+
+    > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
+    >
+    > * Claude 是 line-incremental，所以 Claude cursor 里的 `linesProcessed` 会被用来跳过旧行。
+    >
+    > * Codex 是 full-reparse，所以对 Codex：
+    >
+    >   ```
+    >   mtime 用来判断文件有没有变
+    >   linesProcessed 更多是记录文件当前总行数
+    >   ```
+
+  - 负责解析文件内容：parse() 读取某个 JSONL，把它翻译成 TranscriptRecord
+
+  - 负责回查原文：raw() 根据 SQLite message uuid 找回原始 JSONL 行
+
+  - 负责告诉 app 监听哪里：watchRoots() 告诉 app daemon 应该监听哪些目录
+
+
+
+Provider 的工作不是把 JSONL 行逐条镜像到 SQLite，而是提取可查询、可展示且能建立关联的事实。一条原始条目可产生多个 record（例如 assistant 工具调用），也可以只更新解析过程中的局部状态，或被明确忽略。下面的“形状”只列解析器实际读取的关键字段，省略与事实投影无关的原始字段。
+
+### Claude Code：主/子会话 JSONL + workflow JSON
+
+主会话和子 Agent transcript 都是 JSONL，常见消息行的骨架为 `{"type":"user"|"assistant","uuid":"…","parentUuid":"…","timestamp":"…","message":{"role":"…","content":"…"|[…]}}`。主会话下还可能有 `workflows/*.json` 和子 Agent 的 `.meta.json`。
+
+| 原始条目或块                                                 | 产出的 record                                           | 设计细节 / 不产出情况                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------- | ------------------------------------------------------------ |
+| `user` / `assistant` 消息行                                  | `message`                                               | 保留 `uuid`、`parentUuid`、时间、角色、文本、cwd、model、usage、skill 和 sidechain 标记；`message.content` 的内容类型决定 `content_type`。Claude 的 message 均为 `visibility: 'visible'`，即使被识别为 meta/skill instruction。 |
+| assistant `message.content[]` 中 `{type:"tool_use",id,name,input}` | 同一 assistant message + `tool_call`                    | message 是承载工具调用的锚点；每个 block 以原 `id` 作为 tool call ID，并从常见参数提取 `file_path`。 |
+| user `message.content[]` 中 `{type:"tool_result",tool_use_id,content,is_error}` | user `message` + `tool_result`                          | result 用 `tool_use_id` 指回前述 call；正文可为字符串或文本块数组，会投影/截断为 `content`。 |
+| `{type:"system",subtype:"away_summary",content}`             | `summary`                                               | `source: 'away_summary'`；不是普通消息。                     |
+| `{type:"system",subtype:"turn_duration",parentUuid,durationMs}` | `message-turn-duration`                                 | 只补写已存在 assistant message 的耗时。                      |
+| `{type:"ai-title",aiTitle}`                                  | 无独立 record                                           | 只更新最后产出的 `session.title`。其它 system 条目、没有 uuid 的消息和未知类型不产出。 |
+| `workflows/*.json` 的 `{runId,workflowName,workflowProgress,…}` | `workflow`、多个 `workflow_agent`                       | parser 扫主 transcript 的 `Workflow` tool call 及其 result，按 run ID/名称回填 `parent_tool_use_id`；workflow JSON 本身不是 message。 |
+| 子 Agent JSONL + 同名 `.meta.json`                           | 子 Agent `message`，以及 `subagent` 或 `workflow_agent` | 子线程消息带 `agent_id`；普通子代理 metadata 形成 `subagent`，属于 workflow run 时改为补充该 run 的 `workflow_agent`。子线程不产生 `session` record。 |
+
+### Codex：一份 rollout JSONL 中的多种顶层行
+
+Codex 一份 session 是 rollout JSONL。Codex 里同一条可见消息可能同时出现在：
 
 ```
 event_msg
@@ -858,7 +1379,7 @@ response_item
 
 这两条其实是同一条 assistant 回复。如果只增量看后面几行，很容易不知道它是不是和前面重复。
 
-所以 Codex adapter 会：
+所以 Codex adapter 解析器需要每次都全量读取 JSONL 并比较 `event_msg` 与 `response_item`，因为相同的可见消息可能在两类行中镜像出现，且先后顺序不保证。主会话最终产生 `countMode: 'total'` 的 `session`。
 
 ```
 读完整文件
@@ -868,420 +1389,50 @@ response_item
 最后输出当前完整会话结果
 ```
 
-## raw lookup 输入是什么
-
-大概是：
-
-```
-{
-  source: "codex" | "claude",
-  messageUuid: "...",
-  session: {...},
-  agentId: "...",
-  subagent: {...},
-  workflowAgent: {...}
-}
-```
-
-它告诉 provider：
-
-```
-这是哪个 provider 的消息
-message uuid 是什么
-它属于哪个 session
-它是不是 subagent / workflow agent
-session 的 jsonl_path 是哪里
-```
-
-然后 provider 自己根据自己的文件结构找原始行。
-
-## Codex 怎么 raw lookup
-
-Codex 的 message uuid 是 Trajex 自己生成的：
-
-```
-codex:<threadId>:<lineNumber>
-```
-
-比如：
-
-```
-codex:019e8951-xxx:000037
-```
-
-这个 uuid 里已经带了：
-
-```
-threadId = 019e8951-xxx
-lineNumber = 37
-```
-
-所以 Codex raw lookup 会：
-
-```
-1. 解析 messageUuid，拿到 threadId 和 lineNumber
-2. 如果是 root session，用 sessions.jsonl_path 找文件
-3. 如果是 child thread，就在 ~/.codex/sessions 下找对应 thread JSONL
-4. 读取第 lineNumber 行
-5. 返回原始 JSONL 文本
-```
-
-返回类似：
-
-```
-{
-  text: "{ \"type\": \"event_msg\", ... }",
-  totalLength: 1234,
-  offset: 0,
-  limit: 1234,
-  hasMore: false,
-  messageText: "用户可读正文"
-}
-```
-
-## Claude 怎么 raw lookup
-
-Claude 原始 message 本来就有 uuid：
-
-```
-{
-  "uuid": "a1",
-  "type": "assistant",
-  ...
-}
-```
-
-所以 Claude raw lookup 会：
-
-```
-1. 找 session.jsonl_path
-2. 如果是普通消息，就在主 session JSONL 里找包含这个 uuid 的行
-3. 如果是 subagent，就去 subagents/<agentId>.jsonl
-4. 如果是 workflow agent，就去 subagents/workflows/<runId>/<agentId>.jsonl
-5. 找到 uuid 匹配的那一行
-6. 返回原始 JSONL 文本和提取出的 messageText
-```
-
-adapter 不直接写 SQLite。写库统一交给 persist layer。
-
-### 统一 `TranscriptRecord` 事实条目
-
-Trajex 最重要的中间抽象是 `TranscriptRecord`。它把不同 provider 的原始日志统一成几类事实条目：
-
-```
-session
-message
-tool_call
-tool_result
-subagent
-workflow
-summary
-memory
-```
-
-这样后续写库、查询、展示都不需要直接理解 Codex 或 Claude 的原始 JSONL 格式。
-
-#### 1. `session`
-
-一条会话的元信息。对应 `sessions` 表。
-
-```
-id
-  session 唯一 ID。
-  Claude 通常是原始 sessionId。
-  Codex 会加前缀：codex:<threadId>。
-
-title 会话标题。可能来自 Claude history、Codex session_index、thread_name_updated 等。
-
-project 项目 slug，例如从路径编码出来的项目名。
-
-project_path 推断出的真实项目路径，例如 /Users/a/project/foo。
-
-started_at session 开始时间。
-
-ended_at session 最后更新时间 / 结束时间。
-
-git_branch 当时所在 git branch。
-
-version Agent CLI 版本，例如 Codex cli_version 或 Claude version。
-
-message_count 主线消息数量。
-
-jsonl_path 原始主 transcript 文件路径。
-
-source 来源 provider，例如 claude、codex、kimi。
-```
-
-在 `TranscriptRecord` 里还多一个只给 persist 用的字段：
-
-```
-countMode
-  total / delta。
-  决定 message_count 是替换还是累加。
-```
-
-#### 2. `message`
-
-一条对话消息。对应 `messages` 表。
-
-```
-uuid
-  message 唯一 ID。
-  Claude 原始 JSONL 通常自带 uuid。
-  Codex 没有天然 uuid，Trajex 生成 codex:<threadId>:<lineNumber>。
-
-session_id 属于哪个 session。
-
-type 消息类型，常见 user / assistant。
-
-parent_uuid 上一条 / 父消息 uuid。
-
-timestamp 消息时间。
-
-role user / assistant / developer 等角色。Trajex 主要展示 user、assistant。
-
-text 消息文本。索引时可能截断。
-
-content_type 内容类型，常见：
-  text
-  thinking
-  tool_use
-  tool_result
-  skill_instructions
-  unknown
-
-is_meta 是否是元消息，例如系统提醒、环境上下文、skill instructions。
-
-visibility
-  visible / hidden。
-  Codex 的 environment_context 这类会被 hidden。
-
-model 使用的模型。
-
-is_sidechain 是否是 sidechain / subagent 消息。
-
-agent_id
-  如果属于子 Agent，这里是子 Agent ID。
-  主线消息通常为 null。
-
-input_tokens 输入 token 数。
-
-output_tokens 输出 token 数。
-
-cwd 当时工作目录。
-
-skill Claude attributionSkill 等 skill 来源。
-
-turn_duration_ms 该 assistant turn 耗时。
-
-source 来源 provider。
-```
-
-#### 3. `tool_call`
-
-一次工具调用。对应 `tool_calls` 表。
-
-```
-id
-  工具调用唯一 ID。
-  Claude 来自 tool_use.id。
-  Codex 通常是 codex:<threadId>:<call_id>。
-
-message_uuid 哪条 assistant message 发起了这个工具调用。
-
-session_id 属于哪个 session。
-
-name 工具名，例如 Read、Edit、Bash、Agent、Workflow、shell、web_search 等。
-
-presentation 展示类型：default、skill
-
-input_json 工具输入，JSON 字符串。
-
-file_path
-  如果能识别出文件路径，就存这里。
-  Claude 的 Read/Edit/Write/NotebookEdit 会提取 file_path。
-```
-
-关系：
-
-```
-tool_calls.message_uuid -> messages.uuid
-```
-
-#### 4. `tool_result`
-
-一次工具调用结果。对应 `tool_results` 表。
-
-```
-tool_use_id
-  对应哪个 tool call。
-  指向 tool_calls.id。
-
-message_uuid
-  哪条 message 承载了这个结果。
-  Claude 中通常是 user/tool_result message。
-  Codex 中可能是 parser 关联到 tool call message。
-
-session_id 属于哪个 session。
-
-content 工具返回内容。可能被截断。
-
-file_path 工具结果关联的文件路径，如果有。
-
-is_error 是否错误：
-  0 = 非错误
-  1 = 错误
-```
-
-关系：
-
-```
-tool_results.tool_use_id -> tool_calls.id
-tool_results.message_uuid -> messages.uuid
-```
-
-#### 5. `subagent`
-
-子 Agent / Codex child thread 的结构化信息。对应 `subagents` 表。
-
-```
-agent_id
-  子 Agent 唯一 ID。
-  Claude 可能是 agent-xxx。
-  Codex child thread 是 codex:<childThreadId>。
-
-session_id 挂在哪个父 session 下。
-
-parent_tool_use_id
-  哪个 tool call 启动了这个 subagent。
-  指向 tool_calls.id。
-
-agent_type 子 Agent 类型，例如 reviewer、general-purpose 等。
-
-description 子 Agent 描述 / 昵称 / 任务说明。
-
-duration_ms 子 Agent 运行耗时。
-
-total_tokens 子 Agent 总 token 数。
-```
-
-注意：
-
-```
-subagents 不是消息。
-子 Agent 的具体对话仍然在 messages 表里，用 messages.agent_id 区分。
-```
-
-#### 6. `workflow`
-
-一次 workflow run。对应 `workflows` 表。
-
-```
-run_id workflow run 唯一 ID。
-
-session_id 属于哪个 session。
-
-parent_tool_use_id
-  哪个 Workflow tool call 启动了它。
-  指向 tool_calls.id。
-
-task_id workflow 任务 ID。
-
-script workflow 脚本内容。
-
-result_json workflow 结果，JSON 字符串。
-
-timestamp workflow 时间。
-
-agent_count workflow 中 agent 数量。
-
-duration_ms workflow 总耗时。
-
-total_tokens workflow 总 token。
-
-status workflow 状态，例如 completed / running / failed。
-
-workflow_name workflow 名称。
-```
-
-workflow agent 明细不在 `workflows` 表，而在 `workflow_agents` 表：
-
-```
-agent_id
-run_id
-session_id
-agent_type
-description
-phase
-label
-model
-state
-duration_ms
-tokens
-tool_calls
-```
-
-#### 7. `summary`
-
-摘要。对应 `summaries` 表。
-
-```
-id summary 唯一 ID。
-
-session_id 属于哪个 session。
-
-timestamp 摘要时间。
-
-source 摘要来源，例如 away_summary。
-
-content 摘要正文。
-```
-
-Claude 的：
-
-```
-system + subtype = away_summary
-```
-
-会映射到这里。
-
-#### 8. `memory`
-
-用户批准沉淀的长期记忆。对应 `memories` 表。
-
-```
-id memory 唯一 ID。
-
-session_id 这条 memory 关联的来源 session。
-
-project 关联项目。
-
-message_start 证据范围起始 message uuid。
-
-message_end 证据范围结束 message uuid。
-
-path memory markdown 文件路径。
-
-anchors 证据锚点，JSON 字符串。
-
-summary memory 摘要。
-
-created_at 创建时间。
-
-deleted_at 删除 / 归档时间。为空表示 active。
-
-deleted_reason 删除 / 归档原因。
-```
-
-memory 不是自动总结替代原始证据，而是：
-
-```
-用户批准后的结论缓存
-```
-
-它仍然应该能通过 session/message anchors 回到原始证据。
-
-## 统一 SQLite 数据模型 `schema.sql`
+| 原始条目或 payload                                           | 产出的 record                                                | 设计细节 / 不产出情况                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `{type:"session_meta",payload:{id,cwd,git,cli_version,…}}`   | 最后的 `session`                                             | 提供 session ID、项目、初始时间、分支和版本；本身不产生 message。guardian thread 则只产生 `delete-session`。 |
+| `{type:"turn_context",payload:{cwd,model,…}}`                | 无独立 record                                                | 只更新随后 message 的 cwd/model。`payload.summary` 是摘要模式（如 `auto`），不是会话摘要。 |
+| `{type:"event_msg",payload:{type:"user_message"|"agent_message",…}}` | `message`                                                    | 映射为 user/assistant text；被环境上下文包裹的 user 文本标为 `hidden`，skill instruction 标为 meta。 |
+| `{type:"event_msg",payload:{type:"agent_reasoning",…}}`      | assistant `message`                                          | `content_type: 'thinking'`，正文来自事件文本；详情组装时可附着到后续回复/工具调用。 |
+| `{type:"event_msg",payload:{type:"collab_agent_spawn_end",call_id,new_thread_id,…}}` | assistant tool-use `message`、`tool_call`、`subagent`        | 统一命名为 `Agent` 工具，并把新线程作为子代理挂到该调用。    |
+| `event_msg` 的 `task_complete` / `token_count` / `thread_name_updated` | `message-turn-duration` / 直接补充已缓存 message / 最后的 `session.title` | token 数会补到最近的 assistant text message，不另发 token record。 |
+| `{type:"response_item",payload:{type:"message",role,content}}` | `message`                                                    | 跳过 developer role；若与已见 `event_msg` 的 role+text 相同则去重，不重复产出。 |
+| `response_item` 的 `function_call`、`custom_tool_call`、`tool_search_call`、`web_search_call` | tool-use `message` + `tool_call`                             | call ID 被 namespaced；工具输入保留为 JSON 字符串。          |
+| 对应的 `*_output`                                            | `tool_result`                                                | 用 call ID 回挂；如果输出先后关系无法恢复，`message_uuid` 可为空字符串，但关联主键仍是 tool ID。 |
+| `response_item.reasoning`、顶层 `compacted`、`event_msg.context_compacted` | 不产出                                                       | reasoning 的完整内容是加密字段、可读 `summary` 目前可为空；compacted 也没有可读摘要，不能伪造 `summary` record。 |
+
+### Pi：一份具有分支树的 session JSONL
+
+Pi 文件第一行是 `{type:"session",version:3,id,cwd,…}`；其余条目有 `id` 和 `parentId`，形成分支树。解析器全量 replay，沿末尾条目反向追溯 active path；所有分支仍会投影，非 active path 消息标记 `is_sidechain: 1`，让 UI 决定是否展示。
+
+| 原始条目或字段                                               | 产出的 record                                                | 设计细节 / 不产出情况                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| session header                                               | 最后的 `session`                                             | 提供 session ID、cwd、version、起止时间；自身不产出 message。 |
+| `{type:"session_info",name}` / `{type:"model_change",modelId}` | 无独立 record                                                | 前者更新最后的 session title；后者只参与后续 message 的 model 继承。 |
+| `{type:"compaction"|"branch_summary",summary}`               | `summary`                                                    | `source: 'pi'`，保留来源提供的摘要正文。                     |
+| `{type:"custom_message",content,display}`                    | `message`                                                    | role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
+| `{type:"message",message:{role:"user",content}}`             | user `message`                                               | 仅文本 content 产生消息。                                    |
+| assistant 的 `content[]` text / thinking / toolCall part     | 每个 part 各产生 assistant `message`；toolCall 另有 `tool_call` | 以 `:partIndex` 后缀生成稳定 message ID，并串成 parent chain；usage 只附到最后一个可导航 part。 |
+| `message.role === "toolResult"`                              | tool-result `message` + `tool_result`                        | `toolCallId` 关联前述工具；错误状态写入 result。             |
+| `message.role === "bashExecution"`                           | `message`                                                    | 形成 `content_type: 'bash'` 的文本投影；不另造 `tool_result`。未知条目和无可投影文本的条目不产出。 |
+
+### Kimi Code：`state.json` + main/subagent wire JSONL
+
+Kimi 不是“单一 JSONL = session”：`state.json` 提供 session/agent 元数据，`wire.jsonl` 以及各 agent wire 文件提供事件。它每次重建整个 session，并先发 `delete-session`，随后发 `countMode: 'total'` 的 session 与全部投影记录，避免 `context.undo` / `context.clear` 留下过期事实。
+
+| 原始 state 或 wire 条目                                      | 产出的 record                                     | 设计细节 / 不产出情况                                        |
+| ------------------------------------------------------------ | ------------------------------------------------- | ------------------------------------------------------------ |
+| `state.json` 的 title / lastPrompt / createdAt / updatedAt / agents | `session`、多个 `subagent`                        | state 不是 message；非 main agent 从 labels/type/swarmItem 提取子代理资料。 |
+| `{type:"config.update",modelAlias}`                          | 无独立 record                                     | 只更新随后 message 的 model。                                |
+| `{type:"context.append_message",message:{id,role,content,toolCalls,…}}` | `message`，以及可能的 `tool_call` / `tool_result` | 原 message role、文本投影和 content type 被保留；tool calls 在同一 message 上展开。role 为 `tool` 且有 `toolCallId` 时产生 result。 |
+| `{type:"context.apply_compaction",contextSummary|summary}`   | `summary`                                         | 取可读的 context summary，`source: 'compaction'`；同时重置投影中的可撤回上下文状态。 |
+| `{type:"context.append_loop_event",event:{type:"content.part",…}}` | assistant `message`                               | part 的文本与类型决定 message；按 `stepUuid` 归属到一次 step。 |
+| 同类 loop event 的 `tool.call` / `tool.result`               | tool-use `message` + `tool_call` / `tool_result`  | tool ID 按 session+agent 命名空间化，结果回挂到 call。       |
+| loop event `step.end`                                        | `message-turn-duration`，并补 token               | 只补该 step 的最后一个 message。                             |
+| `context.clear` / `context.undo`                             | 无独立 record                                     | 在内存投影中移除或回退受影响的 message/tool/result/duration，再统一 full replacement；未知事件不产出。 |
+
+## 四、SQLite Schema 数据模型 `schema.sql`
 
 此文件保存可再生 transcript 索引与人工确认的 memories。Provider 先输出 TranscriptRecord，persist 再按本 schema 写表；FTS 虚表与 trigger 由 SQLite 从 messages/memories 自动维护，查询层使用 MATCH 而不是扫描原表，即搜索时用：`SELECT ... FROM messages_fts WHERE text MATCH 'keywords'` 而不是：`SELECT ... FROM messages WHERE text LIKE '%keywords%'`，前者走 FTS 索引（快），后者全表扫描（慢）。
 
@@ -1850,226 +2001,70 @@ memory: “auth bug 是因为 token refresh race condition”
 它是根据 s1 里 m20 到 m35 这段对话得出的
 ```
 
-
-
-## SQLite 连接生命周期 `db.ts`
-
-为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责 schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
-
-未导出但对内使用的关键模块：
-
-```typescript
-const { DatabaseSync } = require('node:sqlite');
-```
-
-这是 Node 22.13+ 内置的同步 SQLite 绑定，是三个连接工厂（`openDb`, `openReadDb`, `openWriterLeaseDb`）的底层依赖。
-
-1、导出常量和 schema 初始化
-
-```ts
-const TRAJEX_DIR = path.join(os.homedir(), '.trajex');
-const DB_PATH = path.join(TRAJEX_DIR, 'trajex.sqlite');
-// 将同目录下的 schema.sql 文件内容读取为字符串，存入常量 SCHEMA 。
-const SCHEMA = fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
-```
-
-| 导出名        | 值                          | 说明                           |
-| ------------- | --------------------------- | ------------------------------ |
-| `DB_PATH`     | `~/.trajex/trajex.sqlite` | 主索引数据库路径（新统一位置） |
-| `TRAJEX_DIR` | `~/.trajex`                | Trajex 数据目录               |
-
-2、导出函数：三个连接工程和 FTS 重建
-
-```ts
-function openDb(): NodeSqliteDb {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  const db = new DatabaseSync(DB_PATH);
-  configureConnection(db, { busyTimeoutMs: 250 });
-  migrateCoreSchemaColumns(db);
-  db.exec(SCHEMA);
-  migrateCoreSchemaColumns(db);
-  return db;
-}
-
-// Queries and daemon-arbitration checks must never migrate/configure the index.
-// The caller is responsible for ensuring the database exists first.
-/** 打开只读主索引，供查询和 daemon 所有权判断使用。 */
-function openReadDb(): NodeSqliteDb {
-  const db = new DatabaseSync(DB_PATH, { readOnly: true });
-  db.exec('PRAGMA busy_timeout=250');
-  return db;
-}
-
-/** 打开独立锁库；该连接只承载 writer lease，不承载业务表。 */
-function openWriterLeaseDb(lockPath: string): NodeSqliteDb {
-  return new DatabaseSync(lockPath);
-}
-
-/** 批量写入结束后，由 memories 表重新派生 content-backed FTS。 */
-function rebuildMemoryFts(db: SqliteDb): void {
-  db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
-}
-```
-
-* `openDb()` — 打开可写主索引
-
-  ```ts
-  function openDb(): NodeSqliteDb
-  ```
-
-  **调用链**: `migrateLegacyDbIfNeeded()` → `mkdir -p ~/.trajex` → `new DatabaseSync` → `configureConnection` → `migrateCoreSchemaColumns` → `exec(SCHEMA)` → `migrateCoreSchemaColumns`
-
-  - **migrateLegacyDbIfNeeded()**: 如果 `~/.trajex/trajex.sqlite` 不存在但 `~/.claude/trajex.sqlite` 存在，复制旧库到新位置
-
-  - **configureConnection(db, { busyTimeoutMs: 250 })**: 设置 `busy_timeout=250`, `journal_mode=WAL`, `synchronous=NORMAL`
-
-  - **migrateCoreSchemaColumns(db)**: 对已有表的列做 ADD COLUMN 渐进迁移（执行两次：建表前 + 建表后，覆盖已存在表和新表）
-
-  - **db.exec(SCHEMA)**: 执行 `schema.sql` 中的 CREATE TABLE IF NOT EXISTS / CREATE TRIGGER
-
-
-* `openReadDb()` — 打开只读主索引
-
-  ```ts
-  function openReadDb(): NodeSqliteDb
-  ```
-
-  - 使用 `{ readOnly: true }` 模式打开 `DB_PATH`
-
-  - 仅设置 `busy_timeout=250`
-
-  - **不执行任何迁移或 DDL** — 防止查询引擎隐式建库
-
-
-* `openWriterLeaseDb(lockPath)` — 打开独立锁库
-
-  ```ts
-  function openWriterLeaseDb(lockPath: string): NodeSqliteDb
-  ```
-
-  - 打开一个独立的 SQLite 文件（通常是 `writer.lock.sqlite`）
-
-  - 这个库**只承载写入锁**，不包含任何业务表
-
-  - 利用 SQLite 的 `BEGIN IMMEDIATE` 实现跨进程互斥
-
-
-* `rebuildMemoryFts(db)` — 重建记忆 FTS 索引
-
-  ```ts
-  function rebuildMemoryFts(db: SqliteDb): void
-  ```
-
-  - 执行 `INSERT INTO memories_fts(memories_fts) VALUES('rebuild')`
-
-  - FTS5 的特殊语法：触发表内数据从 `content=` 表重新构建全文索引
-
-
-3、重导出（import 自 `parsing.ts` 的透传）
-
-```typescript
-export { ..., trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines, fs, path, os };
-```
-
-这些都是从 `parsing.ts` **原样再导出**的，目的是让 `db.ts` 的使用者（如 `indexer.ts`, `query.ts`）可以从 `db.ts` 统一引入重要的工具函数和 Node 原生模块，而不需要直接依赖 `parsing.ts`。具体有：
-
-| 导出                   | 类型      | 说明                                           |
-| ---------------------- | --------- | ---------------------------------------------- |
-| `trunc`                | 函数      | 字符串截断（超 `TEXT_LIMIT` 则切片）           |
-| `truncJson`            | 函数      | JSON 深层截断后序列化                          |
-| `extractText`          | 函数      | 从 `content` 数组提取文本                      |
-| `extractContentType`   | 函数      | 推断 content 类型（text/thinking/tool_use 等） |
-| `extractMessageIsMeta` | 函数      | 判断消息是否为 meta 消息                       |
-| `filePath`             | 函数      | 从工具调用输入提取文件路径                     |
-| `isDir`                | 函数      | 检查路径是否为目录                             |
-| `readLines`            | 函数      | 文件逐行回调读取                               |
-| `fs`                   | Node 模块 | `node:fs`（CommonJS require）                  |
-| `path`                 | Node 模块 | `node:path`                                    |
-| `os`                   | Node 模块 | `node:os`                                      |
-
-
-
-## 事务原语 `tx.ts`
-
-Core 写入链的最低层事务边界。它把 CLI 使用的 `node:sqlite` 与桌面端使用的 `better-sqlite3` 适配成同一种 `BEGIN IMMEDIATE → work → COMMIT` 协议，并在失败时保留足够诊断信息，交给上层判断能否重试。
-
-```typescript
-indexer.ts / app main indexer
-     → write-coordinator.ts / runRetryableWriteTransaction()
-       → 本文件 / runWriteTransaction()
-         → persist() 或 force-cleanup / finalize 写操作
-indexer.ts / app/src/main/indexer.ts
-    │  db: NodeSqliteHandle / BetterSqliteHandle
-    │
-    ├─ nodeSqliteTransactionAdapter(db)   ◄── CLI 路径
-    └─ betterSqliteTransactionAdapter(db) ◄── 桌面 App 路径
-            │
-            ▼
-        WriteTxDb
-            │
-    write-coordinator.ts
-        runRetryableWriteTransaction()
-            │
-            ▼
-        runWriteTransaction(txDb, work, { label })
-            │
-            ├─ BEGIN IMMEDIATE
-            ├─ work()   ← 通常是 persist() 或 force-cleanup
-            ├─ COMMIT
-            └─ 失败 → attachDiagnostics(error, WriteTxDiagnostics) → throw
-```
-
-
-
-```ts
-tx.ts (事务原语)
-  │
-  ├─ configureConnection ──── db.ts (CLI)
-  │                           └── app/src/main/indexer.ts (桌面 App)
-  │
-  ├─ nodeSqliteTransactionAdapter ── indexer.ts (CLI 路径)
-  │                                  └── tests/write-transaction.test.mjs
-  │
-  ├─ betterSqliteTransactionAdapter ─ app/src/main/indexer.ts (桌面 App 路径)
-  │
-  └─ runWriteTransaction
-        ├── write-coordinator.ts   ← 核心调用链: indexer.ts 通过
-        │                            runRetryableWriteTransaction → runWriteTransaction
-        ├── app/src/main/indexer.ts (writeHeartbeat)
-        └── tests/write-transaction.test.mjs
-```
-
-## `persist.ts` 维护数据库表关系
-
-以写入消息为例：
-
-```
-// persist.ts 写入 messages 时，session_id 
-是从 TranscriptRecord 中取的同一条记录的字段
-// 而 TranscriptRecord 是 Provider 适配器
-（claude.ts / codex.ts / kimi.ts）解析 
-JSONL 时填充的
-// 写入 tool_calls 时，message_uuid 也是从同
-一条 TranscriptRecord 中取的值
-```
-
-整个写入都在同一个 runWriteTransaction 事务内完成：
-
-```
-BEGIN IMMEDIATE
-  → persist(): 先写 session，再写 
-  messages，再写 tool_calls，再写 
-  tool_results...
-  → 所有 FK 关系在应用层通过 
-  TranscriptRecord 保证
-COMMIT
-```
-
-
-
-## Persist Layer 设计
+## 五、Persist Layer 设计 `persist.ts`
 
 `persist` 是唯一写库层。**把 TranscriptRecord 按正确写入规则落进 SQLite**，不关心原始 provider。
+
+这是项目最值得保护的层：它既 provider-agnostic，也 SQLite binding-agnostic。
+
+输入：
+
+```ts
+persist(db, unit, provider.parse(unit, cursor))
+```
+
+输出：
+
+- 写入所有 transcript records。
+- 写入新的 cursor 到 `index_state`。
+- 返回 cursor。
+
+### statements
+
+`statements(db)` 预编译所有 SQL：
+
+- `msg`：messages upsert。
+- `tc`：tool_calls insert/replace。
+- `tr`：tool_results insert/replace。
+- `sum`：summaries insert/replace。
+- `ses`：sessions insert/replace。
+- `sub`：subagents merge。
+- `wf`：workflows insert/replace。
+- `wa`：workflow_agents merge。
+- `turn`：更新 message duration。
+- `idx`：更新 index_state。
+- `getSession`：session merge 前取旧值。
+
+### write switch
+
+`write(r)` 根据 `r.kind` 分发。
+
+重点语义：
+
+- `message`
+  - `ON CONFLICT(uuid) DO UPDATE`
+  - Codex full-reparse 时同 uuid 会覆盖为最新解析结果。
+
+- `session`
+  - 先查旧 session。
+  - `started_at` 取 min。
+  - `ended_at` 取 max。
+  - title/project/git/version 等使用新值优先，否则保留旧值。
+  - `countMode === 'delta'` 时累加 message_count。
+  - `countMode === 'total'` 时替换 message_count。
+
+- `subagent` / `workflow_agent`
+  - 用 `COALESCE(excluded.col, old.col)` 合并。
+  - 因为同一行可能由多个来源补齐，例如 spawn event 先给 parent tool id，子线程文件后给 tokens/duration。
+
+- `message-turn-duration`
+  - targeted update。
+  - 不影响 message 其他字段。
+
+- `delete-session`
+  - 调用 `deleteSession` 级联删除 session、messages、tool_calls、tool_results、subagents、workflows 等。
+
+
 
 它不是简单 insert，还要处理“数据库已经有旧数据”的情况。
 
@@ -2296,440 +2291,224 @@ Codex: full-reparse，用 total 替换 message_count
 
 这让不同 provider 的增量语义可以共用一套写库逻辑，adapter 与 persist 实现分离。
 
-## CLI 的思想
+### `persist.ts` 维护数据库表关系
 
-安装 CLI：
-
-```
-npm install -g @trajex-apps/cli
-```
-
-只是安装 `trajex` 命令。真正索引发生在运行命令时：
+以写入消息为例：
 
 ```
-trajex --build
-trajex --search "auth bug"
-trajex --query query.js
+// persist.ts 写入 messages 时，session_id 
+是从 TranscriptRecord 中取的同一条记录的字段
+// 而 TranscriptRecord 是 Provider 适配器
+（claude.ts / codex.ts / kimi.ts）解析 
+JSONL 时填充的
+// 写入 tool_calls 时，message_uuid 也是从同
+一条 TranscriptRecord 中取的值
 ```
 
-CLI 查询前会调用 `buildIndex()`，自动扫描本机 JSONL，把新内容同步进 SQLite。这叫 passive pull mode：没有后台常驻，运行时拉取更新。
-
-Agent 使用时不是调用一堆固定命令，而是写 JS 查询脚本：
+整个写入都在同一个 runWriteTransaction 事务内完成：
 
 ```
-const hits = search("auth bug", { limit: 10 });
-const details = hits.map(h => context(h.message.uuid));
-return { hits, details };
+BEGIN IMMEDIATE
+  → persist(): 先写 session，再写 
+  messages，再写 tool_calls，再写 
+  tool_results...
+  → 所有 FK 关系在应用层通过 
+  TranscriptRecord 保证
+COMMIT
 ```
 
-这里 JS 是编排语言，`search/context/sessions/failures/fileHistory` 等是预设查询 API。
+## SQLite 连接生命周期 `db.ts`
 
-**9. Electron App 架构**
+为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责 schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
 
-Electron app 可以理解成两部分：
+未导出但对内使用的关键模块：
 
-```
-Electron app = UI 浏览器 + 本地索引 daemon
-```
-
-UI 部分负责展示：
-
-- Sessions
-- Session Detail
-- Memory
-- Activity
-- Recap
-- Settings
-
-daemon 部分负责实时维护 SQLite：
-
-```
-写 heartbeat
-用 chokidar 监听 provider roots
-文件变化时 scheduleBuild
-debounce + 等文件写稳定
-调用 worker buildIndex
-写 SQLite
-通知 renderer 更新
-定时继续写 heartbeat
+```typescript
+const { DatabaseSync } = require('node:sqlite');
 ```
 
-**10. Worker 与 daemon**
+这是 Node 22.13+ 内置的同步 SQLite 绑定，是三个连接工厂（`openDb`, `openReadDb`, `openWriterLeaseDb`）的底层依赖。
 
-索引任务可能很重：扫描文件、解析 JSONL、写 SQLite、重建 FTS。为了不阻塞 Electron main process，app 把索引任务放到 worker thread。
-
-`indexer-worker-client.ts` 是主进程和 worker 的通信桥：
-
-```
-main process -> postMessage({ id, args })
-worker -> buildIndex(args)
-worker -> postMessage({ id, result })
-```
-
-它用自增 id 和 pending map 把每次 build 请求包装成 Promise。
-
-**11. Heartbeat 与 chokidar**
-
-heartbeat 是 app daemon 写进 `index_state` 的特殊 marker：
-
-```
-jsonl_path = __app_heartbeat__
-mtime = Date.now()
-```
-
-作用是告诉 CLI：app 还活着，正在负责写索引。CLI 看到最近 60 秒内有 heartbeat，就不主动写 SQLite，避免和 app 抢写。
-
-chokidar 用来监听 provider roots：
-
-```
-~/.codex/sessions
-~/.codex/session_index.jsonl
-~/.claude/projects
-~/.claude/history.jsonl
-```
-
-文件新增、修改、删除会触发 `scheduleBuild`。Trajex 不会立刻 build，而是 debounce 并等待文件写稳定，避免读到半截 JSONL 或频繁写库。
-
-**12. 项目设计总结**
-
-Trajex 的设计边界很清晰：
-
-```
-Provider Adapter
-  负责理解各家 Agent 原始日志
-
-TranscriptRecord
-  负责统一表达会话事实
-
-Persist Layer
-  负责唯一写库语义
-
-SQLite + FTS
-  负责结构化证据与全文搜索
-
-CLI
-  给 Agent 提供可编程查询入口
-
-Electron App
-  给人提供可视化浏览，并作为 daemon 实时维护索引
-```
-
-```mermaid
-flowchart TB
-  %% =========================
-  %% Raw Sources
-  %% =========================
-  subgraph RAW["原始 Agent 历史文件"]
-    CODEX_JSONL["Codex<br/>~/.codex/sessions/**/*.jsonl"]
-    CODEX_INDEX["Codex metadata<br/>~/.codex/session_index.jsonl"]
-    CLAUDE_JSONL["Claude Code<br/>~/.claude/projects/**/*.jsonl"]
-    CLAUDE_HISTORY["Claude metadata<br/>~/.claude/history.jsonl"]
-    KIMI_LOGS["Kimi Code<br/>~/.kimi-code/sessions"]
-  end
-
-  %% =========================
-  %% Provider Layer
-  %% =========================
-  subgraph PROVIDERS["packages/core/src/providers：Provider Adapter 层"]
-    REGISTRY["Provider Registry<br/>createBuiltinProviderRegistry()"]
-
-    CODEX_PROVIDER["Codex Provider<br/>providers/codex.ts"]
-    CLAUDE_PROVIDER["Claude Provider<br/>providers/claude.ts"]
-    KIMI_PROVIDER["Kimi Provider<br/>providers/kimi.ts"]
-
-    DISCOVER["discover(ctx)<br/>发现需要索引的 IndexUnit"]
-    PARSE["parse(unit, cursor)<br/>原始日志 -> TranscriptRecord"]
-    RAW_LOOKUP["raw(input)<br/>从 DB message 找回原始日志行"]
-  end
-
-  RAW --> REGISTRY
-  REGISTRY --> CODEX_PROVIDER
-  REGISTRY --> CLAUDE_PROVIDER
-  REGISTRY --> KIMI_PROVIDER
-
-  CODEX_JSONL --> CODEX_PROVIDER
-  CODEX_INDEX --> CODEX_PROVIDER
-  CLAUDE_JSONL --> CLAUDE_PROVIDER
-  CLAUDE_HISTORY --> CLAUDE_PROVIDER
-  KIMI_LOGS --> KIMI_PROVIDER
-
-  CODEX_PROVIDER --> DISCOVER
-  CLAUDE_PROVIDER --> DISCOVER
-  KIMI_PROVIDER --> DISCOVER
-
-  DISCOVER --> PARSE
-  CODEX_PROVIDER --> RAW_LOOKUP
-  CLAUDE_PROVIDER --> RAW_LOOKUP
-  KIMI_PROVIDER --> RAW_LOOKUP
-
-  %% =========================
-  %% Canonical Records
-  %% =========================
-  subgraph RECORDS["统一中间语言：TranscriptRecord"]
-    SESSION_REC["session"]
-    MESSAGE_REC["message"]
-    TOOL_CALL_REC["tool_call"]
-    TOOL_RESULT_REC["tool_result"]
-    SUBAGENT_REC["subagent"]
-    WORKFLOW_REC["workflow"]
-    SUMMARY_REC["summary"]
-    DELETE_REC["delete-session"]
-  end
-
-  PARSE --> RECORDS
-
-  %% =========================
-  %% Index Orchestration
-  %% =========================
-  subgraph INDEXING["索引编排层"]
-    PROVIDER_PLAN["createProviderIndexPlan()<br/>读取 index_state cursor<br/>生成待索引计划"]
-    INDEX_PLAN["indexProviderPlan()<br/>逐个 unit 执行 parse + persist"]
-    BUILD_INDEX["buildIndex()<br/>CLI passive pull / App daemon 共用主流程"]
-    WRITER_LEASE["Writer Lease<br/>跨进程写锁<br/>防止 CLI 和 App 同时写"]
-    TX["Transaction<br/>每个 IndexUnit 一个写事务<br/>finalize 一个事务"]
-  end
-
-  REGISTRY --> PROVIDER_PLAN
-  PROVIDER_PLAN --> INDEX_PLAN
-  INDEX_PLAN --> BUILD_INDEX
-  BUILD_INDEX --> WRITER_LEASE
-  BUILD_INDEX --> TX
-  RECORDS --> INDEX_PLAN
-
-  %% =========================
-  %% Persist / SQLite
-  %% =========================
-  subgraph SQLITE["~/.trajex/trajex.sqlite：证据层"]
-    PERSIST["persist.ts<br/>唯一写库层<br/>provider-agnostic"]
-
-    SESSIONS["sessions<br/>会话元信息"]
-    MESSAGES["messages<br/>消息正文、role、model、cwd、agent_id"]
-    TOOL_CALLS["tool_calls<br/>工具调用名、输入、文件路径"]
-    TOOL_RESULTS["tool_results<br/>工具输出、错误状态"]
-    SUBAGENTS["subagents<br/>Claude subagent / Codex child thread"]
-    WORKFLOWS["workflows / workflow_agents<br/>Claude workflow"]
-    SUMMARIES["summaries<br/>摘要"]
-    MEMORIES["memories<br/>用户批准的长期记忆"]
-    INDEX_STATE["index_state<br/>cursor、heartbeat、build marker"]
-    FTS["messages_fts / memories_fts<br/>FTS5 全文倒排索引"]
-  end
-
-  INDEX_PLAN --> PERSIST
-  PERSIST --> SESSIONS
-  PERSIST --> MESSAGES
-  PERSIST --> TOOL_CALLS
-  PERSIST --> TOOL_RESULTS
-  PERSIST --> SUBAGENTS
-  PERSIST --> WORKFLOWS
-  PERSIST --> SUMMARIES
-  PERSIST --> INDEX_STATE
-  MESSAGES --> FTS
-  MEMORIES --> FTS
-
-  %% =========================
-  %% CLI / Agent Side
-  %% =========================
-  subgraph CLI_SIDE["Agent 侧：CLI + JS Query Sandbox"]
-    CLI["packages/cli/src/trajex.ts<br/>trajex --query / --search / --build"]
-    CORE["packages/core/src/core.ts<br/>executeQuery() / searchText() / executeAttune()"]
-    SANDBOX["VM Sandbox<br/>Agent 写 JS 组合查询"]
-    QUERY_API["createQueryApi(db)<br/>search / sessions / context / thread<br/>failures / fileHistory / sql / memories"]
-    AGENT["Coding Agent<br/>根据 JSON 结果回答用户"]
-  end
-
-  CLI --> CORE
-  CORE --> BUILD_INDEX
-  CORE --> SANDBOX
-  SANDBOX --> QUERY_API
-  QUERY_API --> SQLITE
-  QUERY_API --> AGENT
-
-  %% =========================
-  %% Electron App Side
-  %% =========================
-  subgraph APP_SIDE["Electron App：UI + 本地索引 daemon"]
-    MAIN["Electron Main Process<br/>app/src/main/index.ts"]
-    PRELOAD["Preload<br/>window.trajex IPC API"]
-    RENDERER["Vue Renderer<br/>Sessions / Memory / Activity / Recap / Settings"]
-    SESSION_DETAIL["SessionDetail.vue<br/>timeline、tool 展示、全文展开、阅读状态"]
-  end
-
-  SQLITE --> MAIN
-  MAIN --> PRELOAD
-  PRELOAD --> RENDERER
-  RENDERER --> SESSION_DETAIL
-
-  %% =========================
-  %% App Daemon
-  %% =========================
-  subgraph DAEMON["App Daemon：实时维护 SQLite"]
-    SERVICE["indexer-service.ts<br/>chokidar 监听、debounce、heartbeat、重试"]
-    WORKER_CLIENT["indexer-worker-client.ts<br/>Main -> Worker 的 Promise RPC"]
-    WORKER["indexer-worker.ts<br/>Worker Thread 中运行 buildIndex"]
-    APP_INDEXER["app/src/main/indexer.ts<br/>better-sqlite3 版本 buildIndex"]
-    HEARTBEAT["__app_heartbeat__<br/>告诉 CLI：App 正在负责写索引"]
-    NOTIFY["notifyIndexUpdated()<br/>通知 renderer 增量刷新"]
-  end
-
-  MAIN --> SERVICE
-  SERVICE --> WORKER_CLIENT
-  WORKER_CLIENT --> WORKER
-  WORKER --> APP_INDEXER
-  APP_INDEXER --> PROVIDER_PLAN
-  APP_INDEXER --> INDEX_PLAN
-  APP_INDEXER --> PERSIST
-  SERVICE --> HEARTBEAT
-  HEARTBEAT --> INDEX_STATE
-  APP_INDEXER --> NOTIFY
-  NOTIFY --> RENDERER
-
-  RAW --> SERVICE
-
-  %% =========================
-  %% Session Detail Assembly
-  %% =========================
-  subgraph ASSEMBLY["展示投影层"]
-    ASSEMBLE["assembleSessionDetail()<br/>DB rows / TranscriptRecord -> UI timeline"]
-    PATCH["session-patch.mjs<br/>create/apply patch<br/>增量刷新长 session"]
-    FULLTEXT["getMessageFullText()<br/>通过 provider.raw 回源 JSONL 取未截断文本"]
-  end
-
-  MAIN --> ASSEMBLE
-  ASSEMBLE --> SESSION_DETAIL
-  MAIN --> PATCH
-  PATCH --> SESSION_DETAIL
-  SESSION_DETAIL --> FULLTEXT
-  FULLTEXT --> RAW_LOOKUP
-```
-
-## 1. 项目一句话
-
-Trajex 是“编码 Agent 的显式记忆基础设施”：
-
-1. 读取本机已有的 Agent 会话历史。
-2. 把不同供应商的日志格式统一成一套 canonical(规范的) transcript records。
-3. 持久化到 `~/.trajex/trajex.sqlite`。
-4. 提供两类访问方式：
-   - Agent 侧：`trajex` CLI 让 Agent 用 JS 查询历史证据。
-   - 人类侧：Electron 桌面 app 浏览 session、memory、activity、recap。
-
-核心设计不是“为每个 provider 写一套 app/CLI 逻辑”，而是：
-
-```text
-provider 原始日志
-  -> provider adapter
-  -> TranscriptRecord[]
-  -> shared persist
-  -> SQLite
-  -> query sandbox / app session detail
-```
-
-这个设计的稳定中心是 `TranscriptRecord`，不是数据库表，也不是某个 provider 的 JSONL 格式。
-
-## 2. 仓库结构
-
-### 根目录
-
-- `README.md`：产品介绍、安装、运行方式、总体结构。
-- `PRODUCT.md`：产品定位和设计原则。
-- `CONTEXT.md`：项目术语表，定义 provider adapter、TranscriptRecord、persist layer、daemon/passive 模式等核心概念。
-- `package.json`：monorepo 根配置，workspaces 指向 `packages/*`。
-- `tests/*.test.mjs`：覆盖 provider 解析、持久化、app indexer、session detail、query、runtime 等行为。
-- `docs/adr/*.md`：架构决策记录。理解项目演进时很有用，尤其是 `0001`、`0002`、`0003`、`0006`、`0007`。
-
-### packages
-
-- `packages/core`：项目核心。包含 provider 适配、索引编排、数据库 schema、持久化、查询沙箱、写锁等。
-- `packages/cli`：命令行入口。非常薄，主要调用 core 的 `buildIndex/searchText/executeQuery/executeAttune`。
-
-### app
-
-- `app/src/main`：Electron 主进程。管理窗口、SQLite 连接、IPC、索引 daemon、文件监听、设置。
-- `app/src/preload`：安全暴露 `window.trajex` IPC API 给 renderer。
-- `app/src/renderer`：Vue 前端。负责 session 列表、详情、memory、activity、recap、settings 等界面。
-- `app/src/shared`：主进程与 renderer 共享的 session detail assembly、patch 类型和 patch 算法。
-
-## 3. packages/core：项目心脏
-
-`packages/core` 的职责可以拆成六层：
-
-1. provider contract：定义所有适配器必须输出什么。
-2. provider adapters：Claude/Codex/Kimi 各自发现和解析原始数据。
-3. provider indexing：把 registry 里的 provider 组织成索引计划。
-4. persist：把 canonical records 写入 SQLite。
-5. query/runtime：给 CLI 和 Agent 提供 CodeAct 查询 API。
-6. database/transaction/lease：处理 schema、连接、事务、并发写锁。
-
-### 3.1 Provider contract
-
-文件：`packages/core/src/providers/types.ts`
-
-这里定义的是跨层边界。最重要的类型是：
-
-- `Cursor`
-  - provider 自己解释的增量游标。
-  - 目前用字符串存储在 `index_state` 的 `mtime` 和 `lines_processed` 中。
-  - orchestration 只保存和回传，不理解业务含义。
-
-- `IndexUnit`
-  - 一次索引工作的最小单位。
-  - 对 Claude 来说通常是一个 JSONL 文件。
-  - 对 Codex 来说也是一个 session JSONL。
-  - 对 Kimi 这种目录型 provider，也可以是一个目录或逻辑 session。
-  - 关键字段：
-    - `key`：稳定索引 key，通常是文件路径。
-    - `sessionId`：写入 Trajex 后的 session id。
-    - `project`：项目 slug。
-    - `isSubagent/agentId`：子线程或 subagent 信息。
-    - `meta`：provider 私有信息，外层不解释。
-
-- `TranscriptRecord`
-  - canonical transcript language。
-  - 这是项目最重要的抽象。
-  - 所有 provider 最终都要 emit 这些 record：
-    - `session`
-    - `message`
-    - `tool_call`
-    - `tool_result`
-    - `summary`
-    - `subagent`
-    - `workflow`
-    - `workflow_agent`
-    - `message-turn-duration`
-    - `delete-session`
-
-- `ProviderAdapter`
-  - 虽然片段中 `Provider` 接口只展示了纯 parse/discover 的核心形状，实际 adapter 还包含 descriptor、watchRoots、raw、indexVersionMarker。
-  - app 和 CLI 都通过 registry 使用它，而不是到处 `if source === 'codex'`。
-
-这层的定位：把“不同日志格式如何表示一次工具调用”这种 provider 差异，全部关在 adapter 里。
-
-### 3.2 Provider registry
-
-文件：
-
-- `packages/core/src/providers/builtins.ts`
-- `packages/core/src/providers/registry.ts`
-
-`createBuiltinProviderRegistry()` 注册内置 provider：
+1、导出常量和 schema 初始化
 
 ```ts
-createClaudeProvider(...)
-createCodexProvider(...)
-createKimiProvider(...)
+const TRAJEX_DIR = path.join(os.homedir(), '.trajex');
+const DB_PATH = path.join(TRAJEX_DIR, 'trajex.sqlite');
+// 将同目录下的 schema.sql 文件内容读取为字符串，存入常量 SCHEMA 。
+const SCHEMA = fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 ```
 
-registry 做四件事：
+| 导出名        | 值                          | 说明                           |
+| ------------- | --------------------------- | ------------------------------ |
+| `DB_PATH`     | `~/.trajex/trajex.sqlite` | 主索引数据库路径（新统一位置） |
+| `TRAJEX_DIR` | `~/.trajex`                | Trajex 数据目录               |
 
-1. `catalog()`：给 app settings/source catalog 使用，返回 provider 名称、vendor、默认路径、颜色。
-2. `get(source)`：按 source 找 adapter。
-3. `list()`：索引编排时遍历所有 provider。
-4. `watchRoots(configuredRoots)`：app daemon 用它决定监听哪些目录。
-5. `raw(input)`：根据消息 source 路由回对应 provider，读取原始日志行。
+2、导出函数：三个连接工程和 FTS 重建
 
-二开新增 provider 时，核心动作是新增 `providers/xxx.ts`，然后在 `builtins.ts` 注册。理想情况下，schema、persist、query、app 不需要加 provider 分支。
+```ts
+function openDb(): NodeSqliteDb {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+  const db = new DatabaseSync(DB_PATH);
+  configureConnection(db, { busyTimeoutMs: 250 });
+  migrateCoreSchemaColumns(db);
+  db.exec(SCHEMA);
+  migrateCoreSchemaColumns(db);
+  return db;
+}
 
-## 4. Codex 适配核心
+// Queries and daemon-arbitration checks must never migrate/configure the index.
+// The caller is responsible for ensuring the database exists first.
+/** 打开只读主索引，供查询和 daemon 所有权判断使用。 */
+function openReadDb(): NodeSqliteDb {
+  const db = new DatabaseSync(DB_PATH, { readOnly: true });
+  db.exec('PRAGMA busy_timeout=250');
+  return db;
+}
+
+/** 打开独立锁库；该连接只承载 writer lease，不承载业务表。 */
+function openWriterLeaseDb(lockPath: string): NodeSqliteDb {
+  return new DatabaseSync(lockPath);
+}
+
+/** 批量写入结束后，由 memories 表重新派生 content-backed FTS。 */
+function rebuildMemoryFts(db: SqliteDb): void {
+  db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
+}
+```
+
+* `openDb()` — 打开可写主索引
+
+  ```ts
+  function openDb(): NodeSqliteDb
+  ```
+
+  **调用链**: `migrateLegacyDbIfNeeded()` → `mkdir -p ~/.trajex` → `new DatabaseSync` → `configureConnection` → `migrateCoreSchemaColumns` → `exec(SCHEMA)` → `migrateCoreSchemaColumns`
+
+  - **migrateLegacyDbIfNeeded()**: 如果 `~/.trajex/trajex.sqlite` 不存在但 `~/.claude/trajex.sqlite` 存在，复制旧库到新位置
+
+  - **configureConnection(db, { busyTimeoutMs: 250 })**: 设置 `busy_timeout=250`, `journal_mode=WAL`, `synchronous=NORMAL`
+
+  - **migrateCoreSchemaColumns(db)**: 对已有表的列做 ADD COLUMN 渐进迁移（执行两次：建表前 + 建表后，覆盖已存在表和新表）
+
+  - **db.exec(SCHEMA)**: 执行 `schema.sql` 中的 CREATE TABLE IF NOT EXISTS / CREATE TRIGGER
+
+
+* `openReadDb()` — 打开只读主索引
+
+  ```ts
+  function openReadDb(): NodeSqliteDb
+  ```
+
+  - 使用 `{ readOnly: true }` 模式打开 `DB_PATH`
+
+  - 仅设置 `busy_timeout=250`
+
+  - **不执行任何迁移或 DDL** — 防止查询引擎隐式建库
+
+
+* `openWriterLeaseDb(lockPath)` — 打开独立锁库
+
+  ```ts
+  function openWriterLeaseDb(lockPath: string): NodeSqliteDb
+  ```
+
+  - 打开一个独立的 SQLite 文件（通常是 `writer.lock.sqlite`）
+
+  - 这个库**只承载写入锁**，不包含任何业务表
+
+  - 利用 SQLite 的 `BEGIN IMMEDIATE` 实现跨进程互斥
+
+
+* `rebuildMemoryFts(db)` — 重建记忆 FTS 索引
+
+  ```ts
+  function rebuildMemoryFts(db: SqliteDb): void
+  ```
+
+  - 执行 `INSERT INTO memories_fts(memories_fts) VALUES('rebuild')`
+
+  - FTS5 的特殊语法：触发表内数据从 `content=` 表重新构建全文索引
+
+
+3、重导出（import 自 `parsing.ts` 的透传）
+
+```typescript
+export { ..., trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines, fs, path, os };
+```
+
+这些都是从 `parsing.ts` **原样再导出**的，目的是让 `db.ts` 的使用者（如 `indexer.ts`, `query.ts`）可以从 `db.ts` 统一引入重要的工具函数和 Node 原生模块，而不需要直接依赖 `parsing.ts`。具体有：
+
+| 导出                   | 类型      | 说明                                           |
+| ---------------------- | --------- | ---------------------------------------------- |
+| `trunc`                | 函数      | 字符串截断（超 `TEXT_LIMIT` 则切片）           |
+| `truncJson`            | 函数      | JSON 深层截断后序列化                          |
+| `extractText`          | 函数      | 从 `content` 数组提取文本                      |
+| `extractContentType`   | 函数      | 推断 content 类型（text/thinking/tool_use 等） |
+| `extractMessageIsMeta` | 函数      | 判断消息是否为 meta 消息                       |
+| `filePath`             | 函数      | 从工具调用输入提取文件路径                     |
+| `isDir`                | 函数      | 检查路径是否为目录                             |
+| `readLines`            | 函数      | 文件逐行回调读取                               |
+| `fs`                   | Node 模块 | `node:fs`（CommonJS require）                  |
+| `path`                 | Node 模块 | `node:path`                                    |
+| `os`                   | Node 模块 | `node:os`                                      |
+
+
+
+## 事务原语 `tx.ts`
+
+Core 写入链的最低层事务边界。它把 CLI 使用的 `node:sqlite` 与桌面端使用的 `better-sqlite3` 适配成同一种 `BEGIN IMMEDIATE → work → COMMIT` 协议，并在失败时保留足够诊断信息，交给上层判断能否重试。
+
+```typescript
+indexer.ts / app main indexer
+     → write-coordinator.ts / runRetryableWriteTransaction()
+       → 本文件 / runWriteTransaction()
+         → persist() 或 force-cleanup / finalize 写操作
+indexer.ts / app/src/main/indexer.ts
+    │  db: NodeSqliteHandle / BetterSqliteHandle
+    │
+    ├─ nodeSqliteTransactionAdapter(db)   ◄── CLI 路径
+    └─ betterSqliteTransactionAdapter(db) ◄── 桌面 App 路径
+            │
+            ▼
+        WriteTxDb
+            │
+    write-coordinator.ts
+        runRetryableWriteTransaction()
+            │
+            ▼
+        runWriteTransaction(txDb, work, { label })
+            │
+            ├─ BEGIN IMMEDIATE
+            ├─ work()   ← 通常是 persist() 或 force-cleanup
+            ├─ COMMIT
+            └─ 失败 → attachDiagnostics(error, WriteTxDiagnostics) → throw
+```
+
+
+
+```ts
+tx.ts (事务原语)
+  │
+  ├─ configureConnection ──── db.ts (CLI)
+  │                           └── app/src/main/indexer.ts (桌面 App)
+  │
+  ├─ nodeSqliteTransactionAdapter ── indexer.ts (CLI 路径)
+  │                                  └── tests/write-transaction.test.mjs
+  │
+  ├─ betterSqliteTransactionAdapter ─ app/src/main/indexer.ts (桌面 App 路径)
+  │
+  └─ runWriteTransaction
+        ├── write-coordinator.ts   ← 核心调用链: indexer.ts 通过
+        │                            runRetryableWriteTransaction → runWriteTransaction
+        ├── app/src/main/indexer.ts (writeHeartbeat)
+        └── tests/write-transaction.test.mjs
+```
+
+
+
+
+
+## Codex 适配核心
 
 文件：`packages/core/src/providers/codex.ts`
 
@@ -3142,7 +2921,7 @@ Codex 相关 helper 主要集中在后半段。
 
 这让 app 可以索引时保存截断文本，但需要时仍能从原始文件拿全文。
 
-## 5. Claude Code 适配与 Codex 的差异
+## Claude Code 适配与 Codex 的差异
 
 文件：`packages/core/src/providers/claude.ts`
 
@@ -3223,243 +3002,13 @@ Claude 的 `parse` 主要处理：
 - Claude workflow 是独立结构，Codex 目前主要是 child thread/subagent 映射。
 - Claude 可以增量跳行，Codex 为保证去重全量重放。
 
-## 6. persist：唯一写库层
 
-文件：`packages/core/src/persist.ts`
 
-这是项目最值得保护的层：它既 provider-agnostic，也 SQLite binding-agnostic。
 
-输入：
 
-```ts
-persist(db, unit, provider.parse(unit, cursor))
-```
 
-输出：
 
-- 写入所有 transcript records。
-- 写入新的 cursor 到 `index_state`。
-- 返回 cursor。
-
-### 6.1 statements
-
-`statements(db)` 预编译所有 SQL：
-
-- `msg`：messages upsert。
-- `tc`：tool_calls insert/replace。
-- `tr`：tool_results insert/replace。
-- `sum`：summaries insert/replace。
-- `ses`：sessions insert/replace。
-- `sub`：subagents merge。
-- `wf`：workflows insert/replace。
-- `wa`：workflow_agents merge。
-- `turn`：更新 message duration。
-- `idx`：更新 index_state。
-- `getSession`：session merge 前取旧值。
-
-### 6.2 write switch
-
-`write(r)` 根据 `r.kind` 分发。
-
-重点语义：
-
-- `message`
-  - `ON CONFLICT(uuid) DO UPDATE`
-  - Codex full-reparse 时同 uuid 会覆盖为最新解析结果。
-
-- `session`
-  - 先查旧 session。
-  - `started_at` 取 min。
-  - `ended_at` 取 max。
-  - title/project/git/version 等使用新值优先，否则保留旧值。
-  - `countMode === 'delta'` 时累加 message_count。
-  - `countMode === 'total'` 时替换 message_count。
-
-- `subagent` / `workflow_agent`
-  - 用 `COALESCE(excluded.col, old.col)` 合并。
-  - 因为同一行可能由多个来源补齐，例如 spawn event 先给 parent tool id，子线程文件后给 tokens/duration。
-
-- `message-turn-duration`
-  - targeted update。
-  - 不影响 message 其他字段。
-
-- `delete-session`
-  - 调用 `deleteSession` 级联删除 session、messages、tool_calls、tool_results、subagents、workflows 等。
-
-### 6.3 为什么 persist 不懂 Codex
-
-persist 只认 `TranscriptRecord`，不认 provider 原始结构。Codex 的 child thread、guardian thread、tool call 格式都必须在 adapter 中翻译完成。
-
-这也是二开时的边界：
-
-- 新 provider 的格式差异：改 adapter。
-- 统一写库语义：改 persist。
-- 新 record kind 或 schema：同时改 types、schema、persist、session detail、tests。
-
-## 7. SQLite schema
-
-文件：`packages/core/src/schema.sql`
-
-核心表：
-
-- `sessions`
-  - session-level 元数据。
-  - `source` 区分 claude/codex/kimi。
-  - `jsonl_path` 指向原始主 transcript。
-
-- `messages`
-  - 对话消息。
-  - `uuid` 是主键。
-  - `agent_id` 用于 subagent/child thread。
-  - `visibility` 控制 hidden context。
-  - `content_type` 区分 text/thinking/tool_use/tool_result/skill_instructions。
-  - `source` 保留 provider 来源。
-
-- `tool_calls`
-  - 工具调用。
-  - `id` 是主键。
-  - `message_uuid` 连接发起工具调用的 assistant message。
-
-- `tool_results`
-  - 工具结果。
-  - `tool_use_id` 是主键。
-  - `message_uuid` 连接结果消息。
-
-- `subagents`
-  - Claude subagents 和 Codex child threads 统一落在这里。
-
-- `workflows` / `workflow_agents`
-  - Claude workflow 支持。
-
-- `summaries`
-  - away summaries 等。
-
-- `index_state`
-  - 文件 cursor。
-  - app heartbeat。
-  - build markers。
-  - provider index version markers。
-
-- `memories`
-  - 人类批准的 durable memory registry。
-
-FTS：
-
-- `messages_fts`
-  - 对 message text 做 FTS5。
-  - triggers 维护 insert/delete/update。
-
-- `memories_fts`
-  - 对 memory path/summary 做 FTS5。
-
-索引：
-
-- messages 按 session/agent/timestamp/source。
-- sessions 按 source。
-- tool calls/results 按 session/message/file。
-- workflows/subagents/summaries 按 session/run。
-
-## 8. 索引编排
-
-### 8.1 CLI passive pull
-
-文件：`packages/core/src/indexer.ts`
-
-CLI 每次查询前会调用 `buildIndex()`，这叫 passive pull mode。
-
-主要流程：
-
-1. `inspectBuildOwnership()`
-   - 如果 DB 不存在，允许构建。
-   - 如果 app heartbeat 新鲜，跳过构建，避免 CLI 和 app 同时写。
-   - 如果最近刚构建过，也可跳过。
-
-2. `acquireWriterLease(...)`
-   - 获取跨进程写锁。
-   - 写锁使用独立的 `.trajex/writer.lock.sqlite`。
-   - heartbeat 是策略，writer lease 是硬保护。
-
-3. `openDb()`
-   - 初始化/migrate schema。
-
-4. force build 时清理派生表。
-   - 不清 memories。
-
-5. `createBuiltinProviderRegistry()`
-   - 注册 Claude/Codex/Kimi。
-
-6. `createProviderIndexPlan(db, registry, { force })`
-   - 对每个 provider 调 discover。
-   - 计算待处理 IndexUnit。
-   - 处理 index version marker。
-
-7. `indexProviderPlan(...)`
-   - 每个 unit 一个 transaction。
-   - 调 `persist(db, unit, provider.parse(...))`。
-   - 单文件失败可 skip，数据库 busy 可 stop。
-
-8. finalize transaction：
-   - `refreshSessionProjectPaths(db)`
-   - rebuild `messages_fts`
-   - rebuild memory FTS
-   - 写 `__last_build__`
-   - 写 provider version markers。
-
-### 8.2 Provider indexing
-
-文件：`packages/core/src/provider-indexing.ts`
-
-这一层是 app 和 CLI 共享的 provider 编排。
-
-- `storedProviderCursor(db, key)`
-  - 从 `index_state` 读 cursor。
-
-- `sourceAlreadyIndexed(db, source)`
-  - 判断某 provider 是否已有 session。
-
-- `createProviderIndexPlan(...)`
-  - 遍历 registry provider。
-  - 如果 provider 的 `indexVersionMarker` 缺失，说明解析语义升级过。
-  - 如果 marker 缺失且该 source 已有数据，则 full reindex 该 source。
-  - discover 时把 `lastCursor` 注入给 provider。
-
-- `indexProviderPlan(...)`
-  - 顺序执行每个 item。
-  - 每个 item 调用传入的 `runTransaction`。
-  - 成功记录 committed。
-  - 失败按 `onError` 返回 skip 或 stop。
-
-- `writeProviderIndexMarkers(...)`
-  - provider 无失败且未中止时写入 index version marker。
-
-## 9. Query runtime 与 CLI
-
-### 9.1 core runtime
-
-文件：`packages/core/src/core.ts`
-
-对外暴露四个核心能力：
-
-- `buildIndex`
-- `searchText`
-- `executeQuery`
-- `executeAttune`
-
-其中 `runInSandbox(api, scriptContent)` 是 Agent 查询的 CodeAct 核心：
-
-```ts
-runInNewContext(`(async()=>{${scriptContent}})()`, ctx, { timeout: 30000 })
-```
-
-它把 JS 脚本包成 async IIFE，在 VM sandbox 中运行，返回 JSON 可序列化结果。
-
-sandbox 注入：
-
-- query API 或 attune API。
-- JSON/Math/Array/Object/Set/Map/Date/RegExp 等基础对象。
-- console/setTimeout。
-
-### 9.2 query helpers
+### query helpers
 
 文件：`packages/core/src/query.ts`
 
@@ -3512,30 +3061,7 @@ sandbox 注入：
 
 `createAttuneApi(db)` 负责 memory mutation，主要是 remember/forget。它和 query 分开，是为了让普通查询保持只读。
 
-### 9.3 CLI 入口
-
-文件：`packages/cli/src/trajex.ts`
-
-CLI 非常薄：
-
-- `--version`
-  - 输出版本。
-
-- `--build`
-  - `buildIndex({ force: true })`。
-
-- `--search "text"`
-  - 调 `searchText`。
-
-- `--query <file.js>`
-  - 读取 JS 文件，调 `executeQuery`。
-
-- `--attune <file.js>`
-  - 读取 JS 文件，调 `executeAttune`。
-
-设计上 CLI 是 transport，不拥有 retrieval semantics。
-
-## 10. Session detail assembly：app 展示用投影
+## Session detail assembly：app 展示用投影
 
 文件：
 
@@ -3617,7 +3143,73 @@ message
 
 这也是为什么 provider 层只需要产出规范 records，最终 UI 可读结构放在 assembly 层做。
 
-## 11. app：Electron 桌面端实现
+## 六、Electron App 架构
+
+Electron app 可以理解成两部分：
+
+```
+Electron app = UI 浏览器 + 本地索引 daemon
+```
+
+UI 部分负责展示：
+
+- Sessions
+- Session Detail
+- Memory
+- Activity
+- Recap
+- Settings
+
+daemon 部分负责实时维护 SQLite：
+
+```
+写 heartbeat
+用 chokidar 监听 provider roots
+文件变化时 scheduleBuild
+debounce + 等文件写稳定
+调用 worker buildIndex
+写 SQLite
+通知 renderer 更新
+定时继续写 heartbeat
+```
+
+### Worker 与 daemon
+
+索引任务可能很重：扫描文件、解析 JSONL、写 SQLite、重建 FTS。为了不阻塞 Electron main process，app 把索引任务放到 worker thread。
+
+`indexer-worker-client.ts` 是主进程和 worker 的通信桥：
+
+```
+main process -> postMessage({ id, args })
+worker -> buildIndex(args)
+worker -> postMessage({ id, result })
+```
+
+它用自增 id 和 pending map 把每次 build 请求包装成 Promise。
+
+### Heartbeat 与 chokidar
+
+heartbeat 是 app daemon 写进 `index_state` 的特殊 marker：
+
+```
+jsonl_path = __app_heartbeat__
+mtime = Date.now()
+```
+
+作用是告诉 CLI：app 还活着，正在负责写索引。CLI 看到最近 60 秒内有 heartbeat，就不主动写 SQLite，避免和 app 抢写。
+
+chokidar 用来监听 provider roots：
+
+```
+~/.codex/sessions
+~/.codex/session_index.jsonl
+~/.claude/projects
+~/.claude/history.jsonl
+```
+
+文件新增、修改、删除会触发 `scheduleBuild`。Trajex 不会立刻 build，而是 debounce 并等待文件写稳定，避免读到半截 JSONL 或频繁写库。
+
+## app：Electron 桌面端实现
 
 app 的主线是：
 
@@ -3984,71 +3576,6 @@ summaries -> id
 
 这个页面体现了 app 的核心工程取舍：数据库和 provider 层提供证据，assembly 层提供可读结构，renderer 层负责长文阅读和实时更新的人机体验。
 
-## 12. 数据流总览
-
-### 12.1 CLI 查询数据流
-
-```text
-用户/Agent 运行 trajex --query query.js
-  -> packages/cli/src/trajex.ts
-  -> executeQuery(scriptContent)
-  -> buildIndex()
-      -> inspect heartbeat/recent build
-      -> acquire writer lease
-      -> provider registry
-      -> discover changed IndexUnits
-      -> provider.parse(unit, cursor)
-      -> persist(...)
-      -> finalize FTS/project paths/markers
-  -> openReadDb()
-  -> createQueryApi(db)
-  -> run JS sandbox
-  -> stdout JSON
-  -> Agent 根据 JSON 回答自然语言
-```
-
-### 12.2 app daemon 数据流
-
-```text
-Electron ready
-  -> startBackgroundResources
-  -> createWorkerBuildIndex
-  -> startIndexerService
-  -> chokidar watch providerRegistry.watchRoots(...)
-  -> scheduleBuild debounce/stability
-  -> worker buildIndex({ changedPaths })
-  -> createProviderIndexPlan
-  -> provider.parse + persist
-  -> finalize markers
-  -> notifyIndexUpdated / notifySessionUpdated
-  -> renderer fetch patch
-  -> apply patch
-  -> timeline update
-```
-
-### 12.3 Codex 单文件解析数据流
-
-```text
-~/.codex/sessions/.../<thread>.jsonl
-  -> discoverCodexJsonlFiles
-  -> discoverAt 补 session_index title/update
-  -> parse 读完整文件
-  -> 找 session_meta
-  -> 判断 guardian/delete-session
-  -> 判断 parent thread
-  -> 第一遍收集 event_msg visible keys
-  -> 第二遍逐行转换
-      event_msg user/agent/reasoning -> message
-      collab_agent_spawn_end -> tool_call + subagent
-      task_complete -> turn duration
-      token_count -> token usage
-      response_item message -> dedup 后 message
-      response_item *_call -> tool_call
-      response_item *_output -> tool_result
-  -> root 生成 session，child 生成 subagent
-  -> persist 写 SQLite
-```
-
 ## 13. 如何二开
 
 ### 13.1 新增一个 provider
@@ -4168,56 +3695,3 @@ Electron ready
   - `app/src/renderer/src/session-live-reload.mjs`
 
 如果新增字段只是展示层需要，优先在 assembly 里挂到 assembled message/tool call 上，而不是让 renderer 自己 join 多张表。
-
-## 14. 读代码顺序建议
-
-第一次读：
-
-1. `CONTEXT.md`
-2. `docs/adr/0001-parse-core-and-persist-layers.md`
-3. `packages/core/src/providers/types.ts`
-4. `packages/core/src/providers/codex.ts`
-5. `packages/core/src/parsing.ts` 的 Codex helper
-6. `packages/core/src/persist.ts`
-7. `packages/core/src/provider-indexing.ts`
-8. `packages/core/src/indexer.ts`
-9. `packages/core/src/query.ts`
-10. `packages/cli/src/trajex.ts`
-11. `app/src/main/indexer.ts`
-12. `app/src/main/indexer-service.ts`
-13. `app/src/main/index.ts`
-14. `app/src/renderer/src/data.js`
-15. `app/src/renderer/src/views/SessionDetail.vue`
-
-第二次读可以从测试反推行为：
-
-- `tests/codex-parse.test.mjs`
-- `tests/codex-index.test.mjs`
-- `tests/codex-replay-tool-identity.test.mjs`
-- `tests/provider-registry.test.mjs`
-- `tests/indexer.test.mjs`
-- `tests/persist.test.mjs`
-- `tests/session-detail-assembly.test.mjs`
-- `tests/app-indexer-service.test.mjs`
-- `tests/session-live*.test.mjs`
-
-## 15. 项目主线总结
-
-Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有三条稳定边界：
-
-1. provider adapter 边界
-   - 每个 provider 自己理解原始日志。
-   - 输出统一 `TranscriptRecord`。
-   - Codex 的去重、guardian 删除、child thread 映射都在这里完成。
-
-2. persist/query 边界
-   - persist 是唯一写库语义。
-   - SQLite 是证据层，不是 provider 语义源头。
-   - query sandbox 给 Agent 一个可编程、只读、证据优先的检索面。
-
-3. app presentation 边界
-   - app 不直接理解 Codex wire format。
-   - app 从 DB rows 或 canonical records assembly 出可读 timeline。
-   - 实时刷新通过 daemon、worker、patch、虚拟列表保证体验。
-
-二开时最重要的是守住这三条边界：provider 差异留在 provider，写库语义留在 persist，阅读体验留在 assembly/renderer。这样新增 provider 或扩展 Codex 时，改动面会很小，也不会让 app、CLI、query API 被 provider-specific 逻辑污染。

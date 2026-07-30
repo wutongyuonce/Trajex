@@ -11,11 +11,16 @@
 
 <a href="https://github.com/wutongyuonce/Trajex/stargazers"><img src="https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square" alt="stars"></a>
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
 数万行散落的 Claude Code、Codex、Kimi Code 与 Pi JSONL 会话，索引至同一个 SQLite 中：<br>
 Agent 可通过 CLI /Skill 实现毫秒级查询，用户可通过 App 直观浏览。
 
 </div>
+
+## Acknowledgements
+
+Trajex 是 [tommy0103/obelisk](https://github.com/tommy0103/obelisk) 的一个衍生作品分支。它大幅重写了桌面应用，包括类似 Codex 的纵向进度条和本地文件链接预览，并增加了 Pi 会话支持。
 
 ## 同一个索引的两面
 
@@ -251,13 +256,3 @@ docs/adr/                     # Architecture decision records（0001–0006）
 - `packages/core/dist/` 由 `npm run build:core` 生成。它是编译后的内部 `@trajex/core` workspace：JavaScript、type declarations 和 `schema.sql`。
 - `packages/cli/dist/` 由 `npm run build:cli` 生成。它是可发布的 `@trajex-apps/cli` payload：薄命令 shell、可读的 compiled Core，以及 `schema.sql`。
 - `packages/cli/dist/` 是生成产物，不应该手动编辑。Electron app 会直接 import `packages/core/src/`，以便 electron-vite 可以 bundle Core。
-
----
-
-## Acknowledgements
-
-Trajex is a fork of [tommy0103/obelisk](https://github.com/tommy0103/obelisk). It substantially reworks the desktop app, including a Codex-like vertical progress rail and local-file link previews, and adds Pi session support.
-
-## License
-
-AGPL-3.0 @wutongyuonce

@@ -23,3 +23,7 @@ execFileSync(process.execPath, [tsc, '-p', resolve(cliRoot, 'tsconfig.build.json
 const schemaTarget = resolve(outDir, 'core/src/schema.sql');
 mkdirSync(dirname(schemaTarget), { recursive: true });
 copyFileSync(resolve(repoRoot, 'packages/core/src/schema.sql'), schemaTarget);
+
+/* 将仓库根 LICENSE 复制到 dist，确保 npm 发布的包内含 AGPL-3.0 许可证 */
+const licenseTarget = resolve(outDir, 'LICENSE');
+copyFileSync(resolve(repoRoot, 'LICENSE'), licenseTarget);

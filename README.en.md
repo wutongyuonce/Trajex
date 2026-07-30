@@ -11,11 +11,16 @@
 
 <a href="https://github.com/wutongyuonce/Trajex/stargazers"><img src="https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square" alt="stars"></a>
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
 Index scattered Claude Code, Codex, Kimi Code, and Pi JSONL sessions into a single SQLite database:<br>
 Agents query it in milliseconds via CLI/Skill; humans browse it through the desktop app.
 
 </div>
+
+## Acknowledgements
+
+Trajex is a fork product of [tommy0103/obelisk](https://github.com/tommy0103/obelisk). It substantially reworks the desktop app, including a Codex-like vertical progress rail and local-file link previews, and adds Pi session support.
 
 ## Two Sides of One Index
 
@@ -249,13 +254,3 @@ The optional `/trajex recap` flow is only loaded on explicit `/trajex recap` int
 - `packages/core/dist/` is produced by `npm run build:core`. It is the compiled internal `@trajex/core` workspace: JavaScript, type declarations, and `schema.sql`.
 - `packages/cli/dist/` is produced by `npm run build:cli`. It is the publishable `@trajex-apps/cli` payload: a thin command shell, readable compiled Core, and `schema.sql`.
 - `packages/cli/dist/` is generated — do not edit manually. The Electron app imports `packages/core/src/` directly so that electron-vite can bundle Core.
-
----
-
-## Acknowledgements
-
-Trajex is a fork of [tommy0103/obelisk](https://github.com/tommy0103/obelisk). It substantially reworks the desktop app, including a Codex-like vertical progress rail and local-file link previews, and adds Pi session support.
-
-## License
-
-AGPL-3.0 @wutongyuonce

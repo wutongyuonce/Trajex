@@ -1,0 +1,245 @@
+<p align="right">
+  <a href="README.md">中文</a> &nbsp;|&nbsp; <a href="README.en.md">English</a>
+</p>
+
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trajex-wordmark-d.svg">
+  <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="540">
+</picture>
+
+<a href="https://github.com/wutongyuonce/Trajex/stargazers"><img src="https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square" alt="stars"></a>
+<a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
+
+Index scattered Claude Code, Codex, Kimi Code, and Pi JSONL sessions into a single SQLite database:<br>
+Agents query it in milliseconds via CLI/Skill; humans browse it through the desktop app.
+
+</div>
+
+## Two Sides of One Index
+
+Trajex has two sides sharing the same SQLite index:
+
+**Agent side** — The `trajex` CLI provides the local runtime; a separate agent skill teaches coding agents how to search and query their own session history. Agents write JS queries, run them locally, and answer in natural language.
+
+**App side** — An Electron desktop app for humans to browse sessions, manage memories, view usage statistics, and read weekly recap cards.
+
+Both read the same `~/.trajex/trajex.sqlite` database. The indexer consumes Claude Code transcripts from `~/.claude/projects`, Codex transcripts from `~/.codex/sessions`, Kimi Code sessions from `~/.kimi-code/sessions` or `$KIMI_CODE_HOME/sessions`, and Pi sessions from `~/.pi/agent/sessions`.
+
+## Multi-Provider Support
+
+Trajex indexes every provider into the same SQLite schema rather than maintaining separate databases. Rows carry a `source` value; non-Claude IDs are provider-prefixed to avoid collisions.
+
+Codex root threads become regular Trajex sessions. When parent-thread metadata is available, Codex child threads attach through the same `subagents` table. Codex does not emit Claude-style workflow metadata, so workflow-related tables may be empty when only Codex history is present.
+
+Kimi session directories each become a Trajex session. The main-session and child-agent `wire.jsonl` streams are projected into the same messages, tools, summaries, and subagents tables. Undo/clear operations are handled via full session replay, so retracted wire records do not linger in the index.
+
+Each Pi session JSONL file becomes a Trajex session. Pi session entries form a tree, so Trajex preserves all branches and marks messages not on the latest leaf path as sidechains; the detail view collapses these other branches by default.
+
+To support live app refresh, Trajex watches each registered provider's declared roots, including `~/.claude/projects`, `~/.codex/sessions`, `~/.kimi-code/sessions`, and `~/.pi/agent/sessions`. When changing the Pi path in Settings, provide the Pi agent root; Trajex reads its `sessions` subdirectory. Codex's `session_index.jsonl` is used only as lightweight title/update metadata during indexing, not as a message transcript source.
+
+## App and CLI Relationship
+
+The desktop app and CLI install independently: installing the app does not require the CLI, and installing the CLI does not require a separate Core installation. Each carries the Core it needs at runtime, and both share the same local index database when used simultaneously.
+
+* The CLI has no runtime npm dependencies and uses Node 22's built-in `node:sqlite` with FTS5.
+
+* The App has runtime npm dependencies: `better-sqlite3` (SQLite driver) and `chokidar` (file watching). This is because Electron does not use Node's `node:sqlite` and instead uses a native SQLite driver.
+
+The first time you open the app or run a CLI query with `/trajex --build`, the index is built. Once either side has built it, the other reuses the same index, typically only doing incremental checks/updates. 100 sessions usually takes about 5 seconds. Subsequent runs use incremental rebuilds.
+
+Only new or modified JSONL files are re-parsed. When the optional app is running, it acts as the active indexer: it watches project files and builds the index in a worker thread. The presence of a fresh `__app_heartbeat__` means the daemon holds write responsibility, so CLI calls remain read-only; a separate SQLite writer lease prevents cross-process write overlap. The `__app_last_successful_build__` marker does not participate in write arbitration — it records app index freshness for observability only.
+
+## App: A Human Interface
+
+A companion desktop app for browsing the same index maintained by the CLI or the app daemon.
+
+<div align="center">
+  <img src=".github/assets/PixPin_2026-07-30_06-11-01.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/PixPin_2026-07-30_06-11-30.png" alt="Trajex App" width="720">
+</div>
+
+- **Sessions** — Browse all sessions with search, project filtering, readable tool calls including diffs, terminal output, file viewers
+- **Memory** — List and detail view for registered memory files
+- **Activity** — GitHub-style heatmap, weekly/cumulative token charts
+- **Recap** — Shareable weekly/monthly recap cards with archetype theming
+- **Settings** — Data source configuration, auto-refresh, index rebuild
+
+Prebuilt macOS binaries are available on [Releases](https://github.com/wutongyuonce/trajex/releases). The source app runs locally on macOS, Windows, and Linux.
+
+## Installing the CLI and Skill
+
+### Recommended: Let an Agent Install
+
+Pass the root-level [`SKILL.md`](SKILL.md) as a prompt to a coding agent with shell access, or have it read the installation guide below:
+
+```text
+Please read and follow this installation guide to set up Trajex:
+https://raw.githubusercontent.com/wutongyuonce/trajex/main/SKILL.md
+```
+
+`trajex-installer` first installs and verifies the CLI, then asks whether to install the `/trajex` skill for the current project or globally; it never changes the installation scope without asking.
+
+### Manual Install/Update
+
+Trajex requires Node.js 22.13 or later. Install the platform-independent CLI:
+
+```bash
+npm install --global @trajex-apps/cli
+trajex --version
+```
+
+On macOS, Linux, or WSL, the CLI-only installer is equivalent to:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wutongyuonce/trajex/main/install.sh | sh
+```
+
+Then install the `/trajex` skill. Defaults to the current project; add `--global` for system-wide availability:
+
+```bash
+npx --yes skills add wutongyuonce/trajex-skill
+# or: npx --yes skills add wutongyuonce/trajex-skill --global
+```
+
+## Using the trajex-skill
+
+Here are some example queries:
+
+```
+/trajex what files did we end up changing for that auth bug, and why
+/trajex which recent sessions have been modifying this file repeatedly
+/trajex find the most recent failed tool calls and what tasks they belong to
+/trajex what did each subagent conclude in that review workflow
+/trajex recap this week
+/trajex recap this month
+```
+
+### How It Works
+
+```
+You ask a question
+  ↓
+Agent writes a JS query against the SQLite index
+  ↓
+Runs it via trajex --query <script>
+  ↓
+Reads JSON results, answers in natural language
+```
+
+Core API: `search()`, `context()`, `sql()`, and structured helpers: `sessions`, `memories`, `summaries`, `workflows`, `failures`, `fileHistory`, and more.
+
+### Memory Layer
+
+When a retrieval produces a conclusion worth keeping, the agent proposes a markdown memory file. After user approval, it registers the file via `trajex --attune <script>`. Future sessions can recall these memories through `memories()`. It is a synthesis cache, not a replacement for raw evidence.
+
+## Running the App Locally
+
+Install [Node.js 22](https://nodejs.org/) and npm, then run from the app's own package directory:
+
+```bash
+git clone https://github.com/wutongyuonce/trajex.git
+cd trajex/app
+npm ci
+npm run dev
+```
+
+`electron-vite` starts the renderer dev server and opens Electron. On first run, Trajex creates `~/.trajex/trajex.sqlite`, indexes available Claude Code, Codex, Kimi Code, and Pi transcripts, then watches them for changes. Default sources can be changed to other directories in **Settings**. On Windows, Trajex also checks common WSL distributions for Claude Code directories.
+
+## Debugging the App
+
+- Renderer changes use Vite hot module replacement. Open Electron DevTools with `Cmd+Option+I` on macOS or `Ctrl+Shift+I` on Windows/Linux.
+- Main-process and preload logs appear in the terminal running `npm run dev`; their source changes are rebuilt by electron-vite.
+- To attach a Node debugger to the Electron main process, start with `npm run dev -- --inspect=5858` and attach your debugger to port 5858.
+- The development app reads and updates the real `~/.trajex` index. Back it up before testing destructive rebuilds. To run in isolation, use a disposable home directory — for example, `HOME=/tmp/trajex-dev npm run dev` on macOS/Linux, or temporarily set `USERPROFILE` on Windows, then select fixture source directories in **Settings**.
+
+`better-sqlite3` ships prebuilt binaries for common platforms. If `npm ci` falls back to a local build, install the C/C++ build tools for your platform and re-run `npm ci`.
+
+## What Gets Indexed
+
+| Layer | Source | Capture Content |
+|-------|--------|----------------|
+| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi `sessions/<project>/*.jsonl` | Title, project, timestamps, git branch, source |
+| **Messages** | user + assistant turns | Full text, model, token usage, parent chain |
+| **Tool calls** | every tool invocation | Tool name, input, file paths |
+| **Subagents** | Claude `subagents/agent-<id>.jsonl`; Codex child threads | Agent type, description, full conversation |
+| **Workflows** | Claude `workflows/wf_<runId>.json` | Script, result, agent count |
+| **Workflow agents** | Claude `subagents/workflows/wf_<runId>/` | Per-agent transcripts |
+| **Memories** | registered markdown files | Conclusions linked to source sessions |
+
+Full-text search via FTS5 covers all layers.
+
+## Structure
+
+```
+packages/core/                # @trajex/core npm workspace (TypeScript + ESM)
+├── src/
+│   ├── providers/
+│   │   ├── types.ts          # Provider + TranscriptRecord contract
+│   │   ├── claude.ts         # Claude Code adapter (line-incremental)
+│   │   ├── codex.ts          # Codex adapter (full reparse)
+│   │   ├── kimi.ts           # Kimi Code adapter (session projection)
+│   │   └── pi.ts             # Pi adapter (tree + sidechain projection)
+│   ├── session-detail.ts     # Provider-independent transcript projection
+│   ├── persist.ts            # Binding-agnostic record writer (upsert/merge)
+│   ├── tx.ts                 # Write transaction + connection config
+│   ├── write-coordinator.ts  # Bounded retry policy
+│   ├── writer-lease.ts       # Cross-process single-writer lease (SQLite lock DB)
+│   ├── core.ts               # buildIndex / searchText / executeQuery / executeAttune
+│   ├── indexer.ts            # Skill orchestration (discover → persist → finalize)
+│   ├── parsing.ts            # Pure helpers (node:sqlite-free, app-consumable)
+│   ├── db.ts                 # node:sqlite lifecycle + migrations
+│   ├── query.ts              # Query/attune sandbox API (helpers)
+│   └── schema.sql            # SQLite schema (single source of truth)
+├── package.json
+└── dist/                     # Generated package JS, declarations, and schema
+
+packages/cli/                 # @trajex-apps/cli npm workspace
+├── src/trajex.ts            # CLI shell
+├── scripts/build.mjs         # Compiles CLI + readable Core into one package
+├── package.json
+└── dist/                     # Generated platform-neutral npm payload
+
+trajex-skill/                    # Source for the docs-only trajex agent skill
+├── SKILL.md                  # Query and memory workflow
+└── references/               # Progressive-disclosure API/schema/pattern docs
+    └── recap/                # Per-card recap retrieval + writing references
+
+app/                          # Electron desktop app (electron-vite + Vue)
+├── src/main/                 # TypeScript main process (consumes shared core)
+├── src/preload/              # CJS preload (sandbox)
+├── src/renderer/             # Vue renderer
+└── electron.vite.config.ts
+
+install.sh                    # POSIX CLI-only installer
+CONTEXT.md                    # Project glossary
+docs/adr/                     # Architecture decision records (0001–0006)
+```
+
+The optional `/trajex recap` flow is only loaded on explicit `/trajex recap` intent. It starts at `trajex-skill/references/recap/overview.md` and proceeds card by card:
+
+- `skill-doc/references/recap/pattern1-cover.md` + `skill-doc/references/recap/writing1-cover.md`
+- `skill-doc/references/recap/pattern2-thinking.md` + `skill-doc/references/recap/writing2-thinking.md`
+- `skill-doc/references/recap/pattern3-vibe.md` + `skill-doc/references/recap/writing3-vibe.md`
+- `skill-doc/references/recap/pattern4-workflow.md` + `skill-doc/references/recap/writing4-workflow.md`
+- `skill-doc/references/recap/pattern5-closing.md` + `skill-doc/references/recap/writing5-closing.md`
+
+### Build Artifacts
+
+- `packages/core/dist/` is produced by `npm run build:core`. It is the compiled internal `@trajex/core` workspace: JavaScript, type declarations, and `schema.sql`.
+- `packages/cli/dist/` is produced by `npm run build:cli`. It is the publishable `@trajex-apps/cli` payload: a thin command shell, readable compiled Core, and `schema.sql`.
+- `packages/cli/dist/` is generated — do not edit manually. The Electron app imports `packages/core/src/` directly so that electron-vite can bundle Core.
+
+---
+
+## Acknowledgements
+
+Trajex is a fork of [tommy0103/obelisk](https://github.com/tommy0103/obelisk). It substantially reworks the desktop app, including a Codex-like vertical progress rail and local-file link previews, and adds Pi session support.
+
+## License
+
+AGPL-3.0 @wutongyuonce

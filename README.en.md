@@ -56,11 +56,27 @@ Only new or modified JSONL files are re-parsed. When the optional app is running
 A companion desktop app for browsing the same index maintained by the CLI or the app daemon.
 
 <div align="center">
-  <img src=".github/assets/PixPin_2026-07-30_06-11-01.png" alt="Trajex App" width="720">
+  <img src=".github/assets/session_light.png" alt="Trajex App" width="720">
 </div>
 
 <div align="center">
-  <img src=".github/assets/PixPin_2026-07-30_06-11-30.png" alt="Trajex App" width="720">
+  <img src=".github/assets/session_dark.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/activity_light.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/activity_dark.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/settings_light.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/settings_dark.png" alt="Trajex App" width="720">
 </div>
 
 - **Sessions** — Browse all sessions with search, project filtering, readable tool calls including diffs, terminal output, file viewers

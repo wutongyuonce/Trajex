@@ -56,12 +56,27 @@ Kimi session directories 会各自成为一个 Trajex session。主会话和 chi
 一个配套桌面 app，用于浏览由 CLI 或 app daemon 维护的同一个索引。
 
 <div align="center">
-  <img src=".github/assets/PixPin_2026-07-30_06-11-01.png" alt="Trajex App" width="720">
+  <img src=".github/assets/session_light.png" alt="Trajex App" width="720">
 </div>
 
+<div align="center">
+  <img src=".github/assets/session_dark.png" alt="Trajex App" width="720">
+</div>
 
 <div align="center">
-  <img src=".github/assets/PixPin_2026-07-30_06-11-30.png" alt="Trajex App" width="720">
+  <img src=".github/assets/activity_light.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/activity_dark.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/settings_light.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/settings_dark.png" alt="Trajex App" width="720">
 </div>
 
 - **Sessions** — 浏览所有 sessions，支持搜索、项目过滤、可读 tool calls，包括 diffs、terminal output、file viewers

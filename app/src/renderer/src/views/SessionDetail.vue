@@ -706,6 +706,10 @@ function navigateToSubagent(agentId) {
 .detail {
   position: relative;
 }
+[data-theme='dark'] .detail {
+  --asst-bubble-border: rgba(255,255,255,0.16);
+  --hairline: rgba(255,255,255,0.18);
+}
 .detail-wrap {
   flex: 1;
   overflow-y: auto;

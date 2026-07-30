@@ -9,7 +9,7 @@ const recapPath = ref('');
 const autoRefresh = ref(true);
 const memoryCount = ref(0);
 const rebuilding = ref(false);
-const version = ref('0.1.0');
+const version = ref('0.2.0');
 
 onMounted(async () => {
   await loadSettings();

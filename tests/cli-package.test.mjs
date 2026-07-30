@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 
 import { repoRoot, runCli } from './cli-test-helpers.mjs';
 
@@ -46,45 +46,6 @@ test('CLI test process suppresses only Node ExperimentalWarning output', () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.doesNotMatch(result.stderr, /simulated SQLite warning/);
   assert.match(result.stderr, /ordinary warning stays visible/);
-});
-
-test('trajex install delegates official skill installation to the skills CLI', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-cli-install-'));
-  const fakeBin = join(home, 'bin');
-  const capture = join(home, 'args.json');
-  const captureScript = join(home, 'capture.mjs');
-  mkdirSync(fakeBin, { recursive: true });
-  writeFileSync(captureScript, `import { writeFileSync } from 'node:fs';\nwriteFileSync(process.env.TRAJEX_TEST_CAPTURE, JSON.stringify(process.argv.slice(2)));\n`);
-
-  if (process.platform === 'win32') {
-    writeFileSync(
-      join(fakeBin, 'npx.cmd'),
-      `@echo off\r\n"${process.execPath}" "${captureScript}" %*\r\n`,
-    );
-  } else {
-    const fakeNpx = join(fakeBin, 'npx');
-    writeFileSync(fakeNpx, `#!/bin/sh\nexec "${process.execPath}" "${captureScript}" "$@"\n`);
-    chmodSync(fakeNpx, 0o755);
-  }
-
-  const result = runCli(['install', '--global', '--agent', 'codex'], {
-    home,
-    env: {
-      PATH: `${fakeBin}${delimiter}${process.env.PATH || ''}`,
-      TRAJEX_TEST_CAPTURE: capture,
-    },
-  });
-
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.deepEqual(JSON.parse(readFileSync(capture, 'utf8')), [
-    '--yes',
-    'skills',
-    'add',
-    'tommy0103/trajex-skill',
-    '--global',
-    '--agent',
-    'codex',
-  ]);
 });
 
 test('npm pack installs one platform-neutral CLI with its schema resource', () => {

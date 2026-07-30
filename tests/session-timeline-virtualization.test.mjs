@@ -54,6 +54,9 @@ test('timeline viewport owns measurement and anchoring while SessionDetail alone
   assert.match(viewportModule, /useAnimationFrameWithResizeObserver:\s*true/);
   assert.match(viewportModule, /scrollPaddingEnd/);
   assert.match(viewportModule, /scrollToIndex/);
+  assert.match(viewportModule, /function indexAtViewportStart/);
+  assert.match(sessionDetail, /timelineViewport\.indexAtViewportStart\(\)/);
+  assert.match(sessionDetail, /timelineViewport\.indexAtViewportEnd\(NAV_HEIGHT\)/);
   assert.match(viewportModule, /if \(!element\) return/);
   assert.match(sessionDetail, /isScrolling:\s*\(\) => userScroll\.isActive\(\)/);
   assert.doesNotMatch(sessionDetail, /timelineViewport\.isScrolling/);
@@ -83,8 +86,9 @@ test('timeline viewport buffers by rendered pixels instead of a fixed row count'
   assert.equal(indexes.length, 127);
 });
 
-test('timeline count and disclosure classes come from renderer state rather than DOM state', () => {
-  assert.match(sessionDetail, /const totalMsgs = computed\(\(\) => timelineItems\.value\.length\)/);
+test('timeline navigation and disclosure classes come from renderer state rather than DOM state', () => {
+  assert.match(sessionDetail, /const roundIndexes = computed\(\(\) =>/);
+  assert.match(sessionDetail, /const sessionSegments = computed/);
   assert.match(timelineRow, /disclosures\.isOpen/);
   assert.match(timelineRow, /disclosures\.isRaw/);
   assert.doesNotMatch(timelineRow, /function toggleDisclosure[\s\S]{0,200}classList/);
@@ -97,7 +101,6 @@ test('timeline row memoizes derived HTML behind stable content dependencies', ()
   assert.match(timelineRow, /query: props\.query/);
   assert.match(timelineRow, /expandedText: expandedText\.value/);
   assert.match(timelinePresentation, /toolPrettyHtml/);
-  assert.match(timelinePresentation, /toolResultHtml/);
   assert.match(timelinePresentation, /renderMarkdown/);
 });
 

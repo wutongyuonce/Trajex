@@ -43,7 +43,7 @@ import type {
 } from './types.ts';
 
 export const name = 'codex';
-const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v2__';
+const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v3__';
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
 
@@ -256,7 +256,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
           description, subagent_type: payload.new_agent_role || 'Agent', prompt: payload.prompt || '',
           new_thread_id: payload.new_thread_id, model: payload.model || null, reasoning_effort: payload.reasoning_effort || null,
         };
-        out.push({ kind: 'tool_call', id: toolId, message_uuid: uuid, session_id: sessionId, name: 'Agent', presentation: 'default', input_json: truncJson(input) as string, file_path: null });
+        out.push({ kind: 'tool_call', id: toolId, message_uuid: uuid, session_id: sessionId, name: 'Agent', input_json: truncJson(input) as string, file_path: null });
         callMessageUuids.set(toolId, uuid);
         out.push({ kind: 'subagent', agent_id: codexDbId(payload.new_thread_id) as string, session_id: sessionId, parent_tool_use_id: toolId, agent_type: payload.new_agent_role || null, description });
         continue;
@@ -295,7 +295,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       const uuid = insertMessage({ uuid: lineUuid(currentLine), type: 'assistant', role: 'assistant', text: null, contentType: 'tool_use', timestamp: ts });
       const name = payload.name || payload.tool || payload.type.replace(/_call$/, '');
       const toolId = codexCallId(threadRawId, payload.call_id) as string;
-      out.push({ kind: 'tool_call', id: toolId, message_uuid: uuid, session_id: sessionId, name, presentation: name === 'Skill' ? 'skill' : 'default', input_json: truncJson(codexToolInput(payload)) as string, file_path: null });
+      out.push({ kind: 'tool_call', id: toolId, message_uuid: uuid, session_id: sessionId, name, input_json: truncJson(codexToolInput(payload)) as string, file_path: null });
       callMessageUuids.set(toolId, uuid);
       continue;
     }

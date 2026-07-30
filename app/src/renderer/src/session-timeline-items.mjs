@@ -27,15 +27,6 @@ function messageItems(message, index) {
     return items;
   }
 
-  if (
-    message?.type === 'assistant'
-    && (message.tool_calls || []).length === 1
-    && message.tool_calls[0].name === 'Skill'
-    && !message.text
-  ) {
-    return [timelineItem('skill', message, messageUuid)];
-  }
-
   if (message?.type === 'assistant' && message.content_type === 'thinking') {
     return [timelineItem('thinking', message, messageUuid)];
   }

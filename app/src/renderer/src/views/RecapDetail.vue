@@ -193,20 +193,11 @@ function onKeydown(e) {
 
 <style scoped>
 .recap-app {
-  --bg: #0a0b14;
-  --bg-2: #11131f;
-  --surface: rgba(255,255,255,0.03);
-  --surface-strong: rgba(255,255,255,0.06);
-  --surface-hi: rgba(255,255,255,0.09);
-  --fg: rgba(255,255,255,0.94);
-  --fg-2: rgba(255,255,255,0.74);
-  --fg-3: rgba(255,255,255,0.55);
-  --muted: rgba(255,255,255,0.48);
-  --muted-2: rgba(255,255,255,0.28);
-  --muted-3: rgba(255,255,255,0.16);
-  --hairline: rgba(255,255,255,0.05);
-  --hairline-strong: rgba(255,255,255,0.10);
-  --hairline-vivid: rgba(255,255,255,0.16);
+  --bg: var(--theme-bg); --bg-2: var(--theme-bg-2);
+  --surface: var(--theme-surface); --surface-strong: var(--theme-surface-strong); --surface-hi: var(--theme-surface-hi);
+  --fg: var(--theme-fg); --fg-2: var(--theme-fg-2); --fg-3: var(--theme-fg-3);
+  --muted: var(--theme-muted); --muted-2: var(--theme-muted-2); --muted-3: var(--theme-muted-3);
+  --hairline: var(--theme-hairline); --hairline-strong: var(--theme-hairline-strong); --hairline-vivid: var(--theme-hairline-vivid);
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
   --font-mono: ui-monospace, 'JetBrains Mono', 'IBM Plex Mono', 'SF Mono', Menlo, monospace;
   --font-serif: 'Iowan Old Style', 'Charter', 'Source Serif Pro', Georgia, serif;
@@ -221,11 +212,7 @@ function onKeydown(e) {
   font: 13px/1.45 var(--font-sans);
   -webkit-font-smoothing: antialiased;
   background-color: var(--bg);
-  background-image:
-    radial-gradient(80% 60% at 100% 0%, rgba(236, 72, 153, 0.10), transparent 55%),
-    radial-gradient(60% 50% at 50% 40%, rgba(167, 139, 250, 0.08), transparent 60%),
-    radial-gradient(70% 60% at 0% 100%, rgba(99, 102, 241, 0.10), transparent 60%),
-    linear-gradient(to bottom, var(--bg) 0%, var(--bg-2) 100%);
+  background-image: none;
   position: relative;
   outline: none;
 }
@@ -315,4 +302,6 @@ function onKeydown(e) {
 }
 .nav-action:hover { background: var(--surface-strong); color: var(--fg); border-color: var(--hairline-vivid); }
 .nav-action svg { width: 14px; height: 14px; }
+
+[data-theme='light'] .nav { background: rgba(255,255,255,0.92); }
 </style>

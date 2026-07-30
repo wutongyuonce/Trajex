@@ -138,34 +138,6 @@ function navigateToSubagent(agentId, description = '') {
     </div>
   </template>
 
-  <template v-else-if="item.kind === 'skill'">
-    <div
-      class="skill-card"
-      :class="{ 'skill-md-open': disclosures.isOpen(`skill:${msg.uuid}`), 'is-focused': focused }"
-      :data-uuid="item.anchorUuid"
-      :data-message-uuid="item.messageUuid"
-      :data-view-key="`skill:${msg.uuid}`"
-    >
-      <div class="skill-card-icon">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 6.5h6M5 9h4"/></svg>
-      </div>
-      <div class="skill-card-body">
-        <div class="skill-card-header">
-          <span class="skill-card-badge">Skill</span>
-          <span class="skill-card-name">{{ presentation.toolInputs.get(msg.tool_calls[0].id)?.skill || '?' }}</span>
-        </div>
-        <div class="skill-card-args">{{ presentation.toolInputs.get(msg.tool_calls[0].id)?.args || '' }}</div>
-        <div v-if="msg._skillMd" class="skill-card-md">
-          <button class="skill-md-toggle" @click="toggleDisclosure(`skill:${msg.uuid}`, msg.uuid)">
-            <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-            <span>SKILL.md</span>
-          </button>
-          <div class="skill-md-body" v-html="presentation.skillHtml"></div>
-        </div>
-      </div>
-    </div>
-  </template>
-
   <template v-else-if="item.kind === 'thinking'">
     <div class="msg assistant" :class="{ 'is-focused': focused }" :data-uuid="item.anchorUuid" :data-message-uuid="item.messageUuid">
       <div class="msg-thinking" :class="{ open: disclosures.isOpen(`thinking:${msg.uuid}`) }" :data-view-key="`thinking:${msg.uuid}`">
@@ -213,41 +185,8 @@ function navigateToSubagent(agentId, description = '') {
 
       <div v-if="msg.tool_calls && msg.tool_calls.length" class="msg-tools">
         <template v-for="tc in msg.tool_calls" :key="tc.id">
-          <template v-if="tc.name === 'Skill'">
-            <div class="skill-badge">
-              <span class="skill-label">skill</span>
-              <span class="skill-name">{{ presentation.toolInputs.get(tc.id)?.skill || '?' }}</span>
-            </div>
-          </template>
-
-          <template v-else-if="tc.name === 'Agent' || tc.name === 'Task'">
-            <div class="msg-tool agent-call" :class="{ open: disclosures.isOpen(`tool:${tc.id}`) }" :data-view-key="`tool:${tc.id}`">
-              <button class="toolcall-toggle" @click="toggleDisclosure(`tool:${tc.id}`, msg.uuid)">
-                <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-                <span class="tool-name">{{ presentation.toolInputs.get(tc.id)?.subagent_type || presentation.toolInputs.get(tc.id)?.agentType || 'Agent' }}</span>
-                <span class="tool-arg">{{ presentation.toolInputs.get(tc.id)?.description || (presentation.toolInputs.get(tc.id)?.prompt || '').slice(0, 80) }}</span>
-                <span v-if="tc.result && tc.result.is_error" class="tool-error">error</span>
-                <button
-                  v-if="tc.subagent?.agent_id"
-                  class="agent-nav-btn"
-                  @click.stop="navigateToSubagent(tc.subagent.agent_id, presentation.toolInputs.get(tc.id)?.description || '')"
-                >View conversation &rarr;</button>
-              </button>
-              <div class="toolcall-body" style="padding:10px 12px;">
-                <template v-if="presentation.toolInputs.get(tc.id)?.prompt">
-                  <div class="tc-section">Prompt</div>
-                  <div class="agent-prompt">{{ (presentation.toolInputs.get(tc.id)?.prompt || '').slice(0, 500) }}{{ (presentation.toolInputs.get(tc.id)?.prompt || '').length > 500 ? '...' : '' }}</div>
-                </template>
-                <template v-if="tc.result?.content">
-                  <div class="tc-section">Result</div>
-                  <div class="agent-result" v-html="presentation.toolResultHtml.get(tc.id)"></div>
-                </template>
-              </div>
-            </div>
-          </template>
-
-          <template v-else-if="tc.name === 'Workflow'">
-            <div class="msg-tool agent-call" :class="{ open: disclosures.isOpen(`tool:${tc.id}`) }" :data-view-key="`tool:${tc.id}`">
+          <template v-if="tc.name === 'Workflow'">
+            <div class="msg-tool workflow-call" :class="{ open: disclosures.isOpen(`tool:${tc.id}`) }" :data-view-key="`tool:${tc.id}`">
               <button class="toolcall-toggle" @click="toggleDisclosure(`tool:${tc.id}`, msg.uuid)">
                 <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
                 <span class="tool-name">Workflow</span>
@@ -311,14 +250,6 @@ function navigateToSubagent(agentId, description = '') {
         </template>
       </div>
 
-      <div v-if="msg.summary" class="msg-summary" :class="{ open: disclosures.isOpen(`summary:${msg.uuid}`) }" :data-view-key="`summary:${msg.uuid}`">
-        <button class="summary-toggle" @click="toggleDisclosure(`summary:${msg.uuid}`, msg.uuid)">
-          <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-          <span class="label">Session summary</span>
-          <span class="source">{{ msg.summary.source || '' }}</span>
-        </button>
-        <div class="summary-body" v-html="presentation.summaryHtml"></div>
-      </div>
     </div>
   </template>
 </template>

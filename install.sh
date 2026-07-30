@@ -28,4 +28,4 @@ if ! command -v trajex >/dev/null 2>&1; then
 fi
 
 trajex --version
-echo 'Trajex CLI installed. Run `trajex install` to install the agent skill.'
+echo 'Trajex CLI installed.'

@@ -8,7 +8,7 @@ allowed-tools:
 # Install Trajex
 
 This is a one-time bootstrap guide. It installs the local Trajex runtime, then
-uses that runtime to install the official agent skill from
+uses the standard skills installer to install the official agent skill from
 `github.com/tommy0103/trajex-skill`.
 
 ## 1. Check for the CLI
@@ -64,13 +64,13 @@ Run the command that matches the user's answer:
 Current project:
 
 ```bash
-trajex install
+npx --yes skills add tommy0103/trajex-skill
 ```
 
 Global:
 
 ```bash
-trajex install --global
+npx --yes skills add tommy0103/trajex-skill --global
 ```
 
 Pass through any additional target options the user requested. The command

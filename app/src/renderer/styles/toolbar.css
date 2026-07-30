@@ -4,9 +4,7 @@
     display: flex; align-items: center; gap: 10px;
     padding: 0 14px;
     border-bottom: 1px solid var(--hairline-strong);
-    background: rgba(0,0,0,0.15);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    background: var(--theme-titlebar-bg);
     position: relative; z-index: 50;
   }
   .breadcrumb { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -115,7 +113,7 @@
 
   .filter-dropdown {
     position: absolute; top: calc(100% + 6px); right: 0;
-    width: 220px; background: rgba(20, 22, 38, 0.98);
+    width: 220px; background: var(--surface);
     backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
     border: 1px solid var(--hairline-strong); border-radius: 8px;
     box-shadow: 0 12px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
@@ -142,6 +140,20 @@
   .fd-row .fd-name { font-size: 12.5px; color: var(--fg-2); flex: 1; }
   .fd-row.checked .fd-name { color: var(--fg); }
   .fd-divider { height: 1px; background: var(--hairline); margin: 4px 6px; }
+
+  [data-theme='light'] .filter-dropdown {
+    background: rgba(255,255,255,0.86);
+    border-color: rgba(202,204,208,0.82);
+    box-shadow: 0 14px 32px rgba(28,28,30,0.14), inset 0 1px rgba(255,255,255,0.8);
+  }
+  [data-theme='light'] .fd-row:hover { background: #f1efff; }
+  [data-theme='light'] .fd-row .fd-check { border-color: #b9bac0; }
+  [data-theme='light'] .fd-row.checked .fd-check {
+    background: #6d5ce7;
+    border-color: #6d5ce7;
+    box-shadow: 0 0 8px rgba(109,92,231,0.24);
+  }
+  [data-theme='light'] .fd-divider { background: #e5e5e8; }
 
   .toolbar-action-primary {
     display: inline-flex; align-items: center; gap: 5px;

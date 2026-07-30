@@ -46,6 +46,11 @@ defineProps({
     linear-gradient(180deg, rgba(10,11,20,0.6) 0%, rgba(10,11,20,0.95) 100%);
   transition: background var(--theme-ease);
 }
+[data-theme='light'] .card-closing {
+  background:
+    radial-gradient(80% 70% at 50% 30%, var(--tg-soft) 0%, transparent 60%),
+    linear-gradient(180deg, #fff 0%, #f2fbfd 100%);
+}
 .closing-body {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center;

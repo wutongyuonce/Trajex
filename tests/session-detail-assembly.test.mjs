@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assembleSessionDetail } from '../app/src/shared/session-detail-assembly.mjs';
 
-test('session assembly preserves thinking and attaches tool result and subagent evidence', () => {
+test('session assembly preserves thinking and keeps subagent records out of generic tool calls', () => {
   const messages = [
     {
       uuid: 'thinking-1', timestamp: '2026-06-10T10:00:00Z',
@@ -33,10 +33,10 @@ test('session assembly preserves thinking and attaches tool result and subagent 
   assert.equal(assembled[0].uuid, 'answer-1');
   assert.equal(assembled[0]._thinking, 'reasoning');
   assert.deepEqual(assembled[0].tool_calls[0].result.content, 'done');
-  assert.equal(assembled[0].tool_calls[0].subagent.agent_id, 'agent-1');
+  assert.equal(assembled[0].tool_calls[0].subagent, undefined);
 });
 
-test('session assembly keeps Skill evidence standalone and embeds matching workflow agents', () => {
+test('session assembly keeps Skill instructions as standalone meta evidence and embeds matching workflow agents', () => {
   const assembled = assembleSessionDetail({
     messages: [
       { uuid: 'skill-1', type: 'assistant', content_type: 'tool_use', text: '' },
@@ -44,8 +44,8 @@ test('session assembly keeps Skill evidence standalone and embeds matching workf
       { uuid: 'workflow-1', type: 'assistant', content_type: 'tool_use', text: '' },
     ],
     toolCalls: [
-      { id: 'call-skill', message_uuid: 'skill-1', name: 'Skill', presentation: 'skill', input_json: '{"skill":"trajex"}' },
-      { id: 'call-workflow', message_uuid: 'workflow-1', name: 'Workflow', presentation: 'default', input_json: '{}' },
+      { id: 'call-skill', message_uuid: 'skill-1', name: 'Skill', input_json: '{"skill":"trajex"}' },
+      { id: 'call-workflow', message_uuid: 'workflow-1', name: 'Workflow', input_json: '{}' },
     ],
     toolResults: [{ tool_use_id: 'call-workflow', content: 'complete', is_error: 0 }],
     subagents: [],
@@ -58,9 +58,10 @@ test('session assembly keeps Skill evidence standalone and embeds matching workf
     }],
   }).messages;
 
-  assert.equal(assembled[0]._skillMd, '# Skill instructions');
-  assert.equal(assembled[1].tool_calls[0].workflow.run_id, 'run-1');
-  assert.deepEqual(assembled[1].tool_calls[0].workflow.agents, [{
+  assert.equal(assembled[1].content_type, 'skill_instructions');
+  assert.equal(assembled[1].text, '# Skill instructions');
+  assert.equal(assembled[2].tool_calls[0].workflow.run_id, 'run-1');
+  assert.deepEqual(assembled[2].tool_calls[0].workflow.agents, [{
     agent_id: 'agent-1',
     phase: 'review',
     label: 'Reviewer',

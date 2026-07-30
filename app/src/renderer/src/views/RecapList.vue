@@ -231,18 +231,11 @@ onUnmounted(() => { unsub?.(); });
 .recap-list {
   --font-mono: ui-monospace, 'JetBrains Mono', 'IBM Plex Mono', 'SF Mono', Menlo, monospace;
   --font-serif: 'Iowan Old Style', 'Charter', 'Source Serif Pro', Georgia, serif;
-  --bg: #0a0b14;
-  --hairline: rgba(255,255,255,0.05);
-  --hairline-strong: rgba(255,255,255,0.10);
-  --hairline-vivid: rgba(255,255,255,0.16);
-  --surface: rgba(255,255,255,0.03);
-  --surface-strong: rgba(255,255,255,0.06);
-  --fg: rgba(255,255,255,0.94);
-  --fg-2: rgba(255,255,255,0.74);
-  --fg-3: rgba(255,255,255,0.55);
-  --muted: rgba(255,255,255,0.48);
-  --muted-2: rgba(255,255,255,0.28);
-  --muted-3: rgba(255,255,255,0.16);
+  --bg: var(--theme-bg);
+  --hairline: var(--theme-hairline); --hairline-strong: var(--theme-hairline-strong); --hairline-vivid: var(--theme-hairline-vivid);
+  --surface: var(--theme-surface); --surface-strong: var(--theme-surface-strong);
+  --fg: var(--theme-fg); --fg-2: var(--theme-fg-2); --fg-3: var(--theme-fg-3);
+  --muted: var(--theme-muted); --muted-2: var(--theme-muted-2); --muted-3: var(--theme-muted-3);
   flex: 1; display: flex; flex-direction: column; min-height: 0;
 }
 
@@ -354,9 +347,9 @@ onUnmounted(() => { unsub?.(); });
   left: 15px; top: 24px; bottom: 24px;
   width: 1px; margin-left: -0.5px;
   background: repeating-linear-gradient(
-    to bottom, var(--muted-3) 0px, var(--muted-3) 3px,
+    to bottom, var(--hairline-vivid) 0px, var(--hairline-vivid) 3px,
     transparent 3px, transparent 7px);
-  opacity: 0.55;
+  opacity: 1;
 }
 .empty-row {
   display: grid; grid-template-columns: 30px 1fr;
@@ -377,12 +370,12 @@ onUnmounted(() => { unsub?.(); });
 }
 .empty-row.placeholder .empty-card {
   height: 12px; background: transparent;
-  border: 1px dashed var(--muted-3); border-radius: 6px; opacity: 0.4;
+  border: 1px dashed var(--hairline-vivid); border-radius: 6px; opacity: 1;
 }
 
 .empty-cta {
   padding: 28px 22px;
-  border: 1px dashed var(--hairline-strong); border-radius: 10px;
+  border: 1.5px dashed var(--hairline-vivid); border-radius: 10px;
   background: rgba(255,255,255,0.015);
   display: flex; flex-direction: column; gap: 16px;
 }
@@ -416,14 +409,14 @@ onUnmounted(() => { unsub?.(); });
 /* Modal */
 .modal-backdrop {
   position: fixed; inset: 0;
-  background: rgba(5, 6, 12, 0.65);
+  background: rgba(0,0,0,0.65);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   z-index: 500;
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .modal {
   width: 100%; max-width: 480px;
-  background: linear-gradient(165deg, rgba(20,22,38,0.95) 0%, rgba(13,15,28,0.95) 100%);
+  background: var(--bg);
   border: 1px solid var(--hairline-strong); border-radius: 12px;
   box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 12px 32px rgba(0,0,0,0.4),
     inset 0 1px 0 rgba(255,255,255,0.08);
@@ -463,12 +456,12 @@ onUnmounted(() => { unsub?.(); });
   border-radius: 6px; overflow: hidden; margin-bottom: 14px;
 }
 .modal-option {
-  padding: 10px 14px; background: rgba(0,0,0,0.2);
+  padding: 10px 14px; background: var(--surface);
   display: flex; align-items: center; gap: 10px;
   cursor: pointer; border: none; color: inherit; width: 100%; text-align: left;
   transition: background 0.08s;
 }
-.modal-option:hover { background: rgba(255,255,255,0.025); }
+.modal-option:hover { background: var(--surface-strong); }
 .modal-option.active { background: rgba(167,139,250,0.12); }
 .modal-option-label {
   font-family: var(--font-mono); font-size: 12px;
@@ -489,7 +482,7 @@ onUnmounted(() => { unsub?.(); });
 
 .cmd-block {
   position: relative;
-  background: rgba(0,0,0,0.4); border: 1px solid var(--hairline-strong);
+  background: var(--bg); border: 1px solid var(--hairline-strong);
   border-radius: 6px; padding: 14px 50px 14px 16px; margin-bottom: 14px;
 }
 .cmd-block code {
@@ -511,4 +504,9 @@ onUnmounted(() => { unsub?.(); });
   font-family: var(--font-mono); font-size: 10.5px;
   color: var(--muted-2); letter-spacing: 0.02em; line-height: 1.5;
 }
+
+[data-theme='light'] .modal-backdrop { background: rgba(28,28,30,0.22); }
+[data-theme='light'] .modal { background: var(--surface); }
+[data-theme='light'] .modal-option.active { background: var(--accent-soft); }
+[data-theme='light'] .cmd-block { background: var(--theme-code-bg); }
 </style>

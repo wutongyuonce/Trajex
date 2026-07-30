@@ -62,6 +62,12 @@ const sealSvg = computed(() => CORNER_SEALS[props.archKey] || '');
     linear-gradient(180deg, rgba(10,11,20,0.4) 0%, rgba(10,11,20,0.85) 70%);
   transition: background var(--theme-ease);
 }
+[data-theme='light'] .card-cover {
+  background:
+    radial-gradient(100% 65% at 50% 100%, var(--tg-soft) 0%, transparent 62%),
+    linear-gradient(180deg, #fff 0%, #f2fbfd 100%);
+}
+[data-theme='light'] .cover-archetype { text-shadow: none; }
 .cover-stars {
   position: absolute; inset: 0; pointer-events: none;
 }

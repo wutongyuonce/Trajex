@@ -41,7 +41,7 @@ function statements(db: SqliteDb) {
         is_sidechain=excluded.is_sidechain, agent_id=excluded.agent_id,
         input_tokens=excluded.input_tokens, output_tokens=excluded.output_tokens,
         cwd=excluded.cwd, skill=excluded.skill, source=excluded.source`),
-    tc: db.prepare('INSERT OR REPLACE INTO tool_calls (id,message_uuid,session_id,name,presentation,input_json,file_path) VALUES (?,?,?,?,?,?,?)'),
+    tc: db.prepare('INSERT OR REPLACE INTO tool_calls (id,message_uuid,session_id,name,input_json,file_path) VALUES (?,?,?,?,?,?)'),
     tr: db.prepare('INSERT OR REPLACE INTO tool_results (tool_use_id,message_uuid,session_id,content,file_path,is_error) VALUES (?,?,?,?,?,?)'),
     sum: db.prepare('INSERT OR REPLACE INTO summaries (id,session_id,timestamp,source,content) VALUES (?,?,?,?,?)'),
     ses: db.prepare('INSERT OR REPLACE INTO sessions (id,title,project,project_path,started_at,ended_at,git_branch,version,message_count,jsonl_path,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)'),
@@ -114,7 +114,7 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
         st.msg.run(r.uuid, r.session_id, r.type, r.parent_uuid, r.timestamp, r.role, r.text, r.content_type, r.is_meta, r.visibility, r.model, r.is_sidechain, r.agent_id, r.input_tokens, r.output_tokens, r.cwd, r.skill, r.source);
         break;
       case 'tool_call':
-        st.tc.run(r.id, r.message_uuid, r.session_id, r.name, r.presentation, r.input_json, r.file_path);
+        st.tc.run(r.id, r.message_uuid, r.session_id, r.name, r.input_json, r.file_path);
         break;
       case 'tool_result':
         st.tr.run(r.tool_use_id, r.message_uuid, r.session_id, r.content, r.file_path, r.is_error);

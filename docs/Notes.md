@@ -633,7 +633,7 @@ buildIndex({force})
 
 ### 10.8 CLI 与发布：`packages/cli/src/trajex.ts`、`scripts/build.mjs`
 
-CLI 的 `main()` 是薄 transport，所有成功结构化输出写 stdout JSON，失败也编码为 `{error,stack}` 且 exitCode=1。`--version/-v` 从 package.json 读版本；`--build` 调 `buildIndex({force:true})` 并返回 DB path；`--search` 拼接余下词为 FTS 文本；`--query`/`--attune` 使用绝对化后的脚本文件内容分别交给 Core；`install` 调用 `npx --yes skills add tommy0103/trajex-skill` 并透传 stdio/status，Windows 特判 `npx.cmd` 与 shell。无匹配参数则打印 usage。
+CLI 的 `main()` 是薄 transport，所有成功结构化输出写 stdout JSON，失败也编码为 `{error,stack}` 且 exitCode=1。`--version/-v` 从 package.json 读版本；`--build` 调 `buildIndex({force:true})` 并返回 DB path；`--search` 拼接余下词为 FTS 文本；`--query`/`--attune` 使用绝对化后的脚本文件内容分别交给 Core；无匹配参数则打印 usage。
 
 `scripts/build.mjs` 是发布边界而非运行时逻辑：先可恢复地删除 CLI `dist`，用 workspace 的 TypeScript 编译 CLI build tsconfig；因为 TypeScript 不会复制 SQL，最后确保 `dist/core/src/schema.sql` 存在并复制源 schema。于是发布包中的 CLI 可直接 import 同包可读的编译 Core，避免把数据库 DDL 遗漏在 npm payload 外。
 
@@ -691,4 +691,3 @@ renderer 由 `App.vue`、`router.js`、`store.js` 组成壳层。`data.js` 只�
 - `claudeProvider`、`codexProvider`、`kimiProvider` 以及 Claude/Codex 的独立 `discover/parse` export 在仓库内引用少，但它们属于 `@trajex/core` 的公开子模块 API 或兼容入口，不能仅凭内部引用数判定为死代码。
 - `app/trajex-ui-mini.html` 与 `app/trajex-session-share.html` 没有被 package scripts、Electron 入口或文档链接引用。它们看起来是独立演示/分享产物，不进入 `electron-builder` 的 `out/**` payload；若不再需要人工打开或分享，应先确认用途后再移除。
 - 2026-07-28 审计后，TypeScript typecheck、ESLint 与全量 Node tests 均通过（273 passed / 0 failed）。旧 `~/.claude/trajex.sqlite` memory 自动迁移已被明确移除，因此对应测试也应删除；schema 变更同步更新 hash 基线；rebuild 测试夹具必须创建当前正式库 `~/.trajex/trajex.sqlite`，而不是已弃用的 Claude 根目录数据库。
-

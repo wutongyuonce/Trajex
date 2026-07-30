@@ -1,22 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 96" width="540" height="96">
   <defs>
-    <radialGradient id="aurora" cx="0.5" cy="0.4" r="0.5">
-      <stop offset="0" stop-color="#f9a8d4" stop-opacity="0.9"/>
-      <stop offset="0.5" stop-color="#c084fc" stop-opacity="0.7"/>
-      <stop offset="1" stop-color="#818cf8" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="stone" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#94a3b8"/>
-      <stop offset="1" stop-color="#475569"/>
+    <linearGradient id="trail" x1="80" y1="400" x2="397" y2="115" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366f1" stop-opacity="0"/><stop offset=".45" stop-color="#a855f7"/><stop offset="1" stop-color="#e9d5ff"/>
     </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop stop-color="#c4b5fd" stop-opacity=".65"/><stop offset="1" stop-color="#a855f7" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <g transform="translate(92 8) scale(0.333)">
-    <ellipse cx="120" cy="50" rx="76" ry="48" fill="url(#aurora)"/>
-    <polygon points="120,40 106,64 134,64" fill="url(#stone)"/>
-    <polygon points="106,64 120,64 122,212 100,212" fill="url(#stone)"/>
-    <polygon points="120,64 134,64 140,212 122,212" fill="#334155"/>
-    <circle cx="70" cy="30" r="1.5" fill="#f9a8d4"/>
-    <circle cx="155" cy="18" r="1.8" fill="#ffffff"/>
+  <g transform="translate(92 8) scale(.15625)">
+    <rect width="512" height="512" rx="112" fill="#0a0b14"/><circle cx="346" cy="166" r="140" fill="url(#glow)"/>
+    <path d="M84 389C177 379 263 317 346 166" fill="none" stroke="url(#trail)" stroke-width="34" stroke-linecap="round"/>
+    <path d="M346 72 374 138 440 166 374 194 346 260 318 194 252 166 318 138Z" fill="#f5f3ff"/>
   </g>
   <text x="184" y="46" font-family="Iowan Old Style, Charter, Georgia, serif" font-size="38" font-weight="500" fill="#f0f6fc" letter-spacing="-0.4">Trajex</text>
   <text x="184" y="72" font-family="Iowan Old Style, Charter, Georgia, serif" font-size="15" font-style="italic" fill="#8b949e">Let Claude Code search its own memory.</text>

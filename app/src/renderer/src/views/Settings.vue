@@ -106,9 +106,6 @@ function fmtRelative(iso) {
           :class="{ error: src.status === 'error', warn: src.status === 'warn' }"
         >
           <div class="source-card-head">
-            <div class="source-card-mark">
-              <span class="mark-dot" :style="{ background: src.color, boxShadow: `0 0 6px ${src.color}80` }"></span>
-            </div>
             <div class="source-card-info">
               <div class="source-card-name">
                 {{ src.name }}
@@ -234,7 +231,7 @@ function fmtRelative(iso) {
 .settings-section.last { margin-bottom: 0; }
 .settings-section-head {
   margin-bottom: 16px; padding-bottom: 10px;
-  border-bottom: 1px solid var(--hairline);
+  border-bottom: 1px solid rgba(255,255,255,0.18);
 }
 .settings-section-head h2 {
   font-size: 18px; font-weight: 600;
@@ -246,20 +243,17 @@ function fmtRelative(iso) {
 
 /* Source cards */
 .source-card {
-  padding: 18px; border: 1px solid var(--hairline); border-radius: 8px;
+  padding: 18px; border: 1px solid rgba(255,255,255,0.18); border-radius: 8px;
   background: rgba(0,0,0,0.18); margin-bottom: 12px;
   transition: border-color 0.15s;
 }
-.source-card:hover { border-color: var(--hairline-strong); }
+[data-theme='light'] .settings-section-head { border-color: var(--hairline); }
+[data-theme='light'] .source-card { background: #fff; border-color: var(--hairline); }
+.source-card:hover { border-color: rgba(255,255,255,0.28); }
+[data-theme='light'] .source-card:hover { border-color: var(--hairline-strong); }
 .source-card.error { border-color: rgba(248,113,113,0.25); }
 .source-card.warn { border-color: rgba(251,191,36,0.20); }
-.source-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.source-card-mark {
-  width: 28px; height: 28px; border-radius: 6px;
-  background: rgba(0,0,0,0.4); border: 1px solid var(--hairline-strong);
-  display: grid; place-items: center; flex-shrink: 0;
-}
-.source-card-mark .mark-dot { width: 8px; height: 8px; border-radius: 50%; }
+.source-card-head { margin-bottom: 14px; }
 .source-card-info { flex: 1; min-width: 0; }
 .source-card-name {
   font-size: 14px; color: var(--fg); font-weight: 600; letter-spacing: -0.005em;
@@ -291,25 +285,27 @@ function fmtRelative(iso) {
   display: grid; grid-template-columns: 180px 1fr;
   gap: 24px; padding: 14px 0; align-items: start;
 }
-.form-row + .form-row { border-top: 1px solid var(--hairline); }
+.form-row + .form-row { border-top: 1px solid rgba(255,255,255,0.14); }
+[data-theme='light'] .form-row + .form-row { border-color: var(--hairline); }
 .form-label { font-size: 13px; color: var(--fg-2); font-weight: 500; padding-top: 6px; }
 .form-label-hint {
   font-size: 11.5px; color: var(--muted); margin-top: 4px; font-weight: 400;
 }
 .form-label-hint code {
   font-family: var(--font-mono); font-style: normal; font-size: 10.5px;
-  padding: 1px 4px; background: rgba(0,0,0,0.3); border-radius: 3px; color: var(--muted);
+  padding: 1px 4px; background: var(--theme-code-bg); border-radius: 3px; color: var(--muted);
 }
 .form-control { display: flex; flex-direction: column; gap: 8px; }
 
 .path-input { display: flex; gap: 6px; }
 .path-field {
   flex: 1; height: 28px; padding: 0 10px;
-  background: rgba(0,0,0,0.3); border: 1px solid var(--hairline-strong);
+  background: var(--theme-code-bg); border: 1px solid rgba(255,255,255,0.24);
   border-radius: 5px; font-family: var(--font-mono); font-size: 12px;
   color: var(--fg); min-width: 0; transition: all 0.12s;
 }
-.path-field:focus { outline: 0; border-color: var(--accent); background: rgba(0,0,0,0.4); box-shadow: 0 0 0 2px rgba(167,139,250,0.12); }
+.path-field:focus { outline: 0; border-color: var(--accent); background: var(--theme-code-bg); box-shadow: 0 0 0 2px var(--accent-soft); }
+[data-theme='light'] .path-field { border-color: var(--hairline-strong); }
 .path-field.error { border-color: rgba(248,113,113,0.4); }
 .path-field.error:focus { border-color: #f87171; box-shadow: 0 0 0 2px rgba(248,113,113,0.12); }
 .tz-field { max-width: 240px; }
@@ -317,12 +313,13 @@ function fmtRelative(iso) {
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   height: 28px; padding: 0 12px;
-  border: 1px solid var(--hairline-strong); border-radius: 5px;
+  border: 1px solid rgba(255,255,255,0.24); border-radius: 5px;
   background: var(--surface); color: var(--fg-2);
   font-size: 12px; font-weight: 500; cursor: pointer;
   transition: all 0.12s; white-space: nowrap;
 }
 .btn:hover { background: var(--surface-strong); color: var(--fg); border-color: var(--hairline-vivid); }
+[data-theme='light'] .btn { border-color: var(--hairline-strong); }
 .btn:disabled { opacity: 0.4; cursor: default; }
 .btn.subtle { background: transparent; border-color: transparent; color: var(--muted); }
 .btn.subtle:hover { background: var(--surface); color: var(--fg-2); }

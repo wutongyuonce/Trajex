@@ -15,7 +15,6 @@ export function estimateTimelineItemSize(item) {
   if (!item) return 96;
   if (item.kind === 'meta') return 34;
   if (item.kind === 'thinking') return 38;
-  if (item.kind === 'skill') return 84;
   if (item.kind === 'workflow') {
     const agents = item.workflowCall?.workflow?.agents?.length || 0;
     return 72 + Math.min(360, agents * 34);
@@ -27,7 +26,6 @@ export function estimateTimelineItemSize(item) {
   return 72
     + estimatedTextHeight(message.text)
     + (message.tool_calls?.length || 0) * 38
-    + (message.summary ? 34 : 0)
     + (message._thinking ? 34 : 0);
 }
 
@@ -273,6 +271,12 @@ export function useSessionTimelineViewport({
     return instance.getVirtualItemForOffset(offset)?.index ?? 0;
   }
 
+  function indexAtViewportStart(inset = 0) {
+    const instance = virtualizer.value;
+    const offset = (instance.scrollOffset || scrollElement.value?.scrollTop || 0) + inset;
+    return instance.getVirtualItemForOffset(offset)?.index ?? 0;
+  }
+
   function runWithMeasurementRetry(scroll) {
     scroll();
     const targetWindow = scrollElement.value?.ownerDocument?.defaultView;
@@ -397,6 +401,7 @@ export function useSessionTimelineViewport({
     measureElement,
     settleAfterUserScroll,
     indexAtViewportEnd,
+    indexAtViewportStart,
     scrollToIndex,
     scrollToEnd,
     captureReaderPosition,

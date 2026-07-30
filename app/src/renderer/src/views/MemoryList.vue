@@ -743,7 +743,7 @@ onUnmounted(() => {
   border: 1px dashed var(--hairline); border-radius: 6px;
 }
 .markdown-source {
-  background: rgba(0,0,0,0.3); border: 1px solid var(--hairline);
+  background: var(--theme-code-bg); border: 1px solid var(--hairline);
   border-radius: 6px; padding: 14px 16px;
   font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
   color: var(--fg-2); white-space: pre-wrap; word-wrap: break-word;

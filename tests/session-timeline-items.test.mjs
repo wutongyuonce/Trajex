@@ -42,7 +42,7 @@ test('timeline items preserve the rendered order and identity of every navigable
     { key: 'meta:meta', kind: 'meta', anchorUuid: 'meta', messageUuid: 'meta' },
     { key: 'workflow:workflow', kind: 'workflow', anchorUuid: 'workflow', messageUuid: 'workflow' },
     { key: 'workflow-tools:workflow', kind: 'workflow-tools', anchorUuid: 'workflow-tools', messageUuid: 'workflow' },
-    { key: 'skill:skill', kind: 'skill', anchorUuid: 'skill', messageUuid: 'skill' },
+    { key: 'message:skill', kind: 'message', anchorUuid: 'skill', messageUuid: 'skill' },
     { key: 'thinking:thinking', kind: 'thinking', anchorUuid: 'thinking', messageUuid: 'thinking' },
     { key: 'message:normal', kind: 'message', anchorUuid: 'normal', messageUuid: 'normal' },
   ]);

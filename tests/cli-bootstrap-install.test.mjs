@@ -14,38 +14,6 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-test('root SKILL.md bootstraps the CLI before installing the official skill', () => {
-  const source = readFileSync(join(repoRoot, 'SKILL.md'), 'utf8');
-
-  assert.match(source, /@trajex-apps\/cli/);
-  assert.match(source, /install\.sh/);
-  assert.match(source, /trajex --version/);
-  assert.match(source, /trajex install/);
-  assert.match(source, /defaults to the current project/i);
-  assert.match(source, /ask whether .*should be\s+installed/is);
-  assert.match(source, /trajex install --global/);
-  assert.match(source, /Do not silently choose the current-project default/);
-  assert.doesNotMatch(source, /trajex --query/);
-});
-
-test('README presents agent-led installation before manual npm setup', () => {
-  const source = readFileSync(join(repoRoot, 'README.md'), 'utf8');
-  const publishedSkillReadme = readFileSync(
-    join(repoRoot, 'packaging', 'skill-README.md'),
-    'utf8',
-  );
-  const agentInstall = source.indexOf('Let your agent install it (recommended)');
-  const manualInstall = source.indexOf('Install manually');
-
-  assert.ok(agentInstall >= 0);
-  assert.ok(manualInstall > agentInstall);
-  assert.match(source, /curl -fsSL .*\/SKILL\.md/);
-  assert.ok(
-    publishedSkillReadme.indexOf('Install with your agent (recommended)')
-      < publishedSkillReadme.indexOf('Install manually'),
-  );
-});
-
 test('install.sh installs and verifies only the CLI', () => {
   const home = mkdtempSync(join(tmpdir(), 'trajex-install-script-'));
   const fakeBin = join(home, 'bin');

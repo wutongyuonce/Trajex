@@ -10,7 +10,7 @@ were a hand-rolled tsc/esbuild step, `vite-plugin-electron`, or `electron-vite`.
 
 **Decision.** Adopt **electron-vite** to build all three processes (main, preload,
 renderer) as TypeScript + ESM, and keep **electron-builder** for packaging
-(dmg/nsis/AppImage). electron-vite is purpose-built for the Electron three-process
+(DMG/ZIP). electron-vite is purpose-built for the Electron three-process
 model and handles the parts a DIY build would force us to hand-maintain forever
 (per-process module format, native-module externalization, dev reload). Specific
 decisions within this:

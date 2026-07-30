@@ -210,3 +210,35 @@ test('provider normalization classifies Skill instructions before assembly', () 
   assert.equal(message.is_meta, 1);
   assert.equal(message.visibility, 'visible');
 });
+
+test('provider normalization classifies Codex-injected SKILL.md context without hiding the skill request', () => {
+  const threadId = '019e8951-3e7d-7343-a3e3-05bff48a3182';
+  const path = writeCodexFixture([
+    {
+      type: 'session_meta',
+      timestamp: '2026-06-10T10:00:00Z',
+      payload: { id: threadId, cwd: '/proj', timestamp: '2026-06-10T10:00:00Z' },
+    },
+    {
+      type: 'event_msg',
+      timestamp: '2026-06-10T10:00:01Z',
+      payload: { type: 'user_message', message: '$skill-viz' },
+    },
+    {
+      type: 'event_msg',
+      timestamp: '2026-06-10T10:00:02Z',
+      payload: {
+        type: 'user_message',
+        message: '<skill>\n<name>skill-viz</name>\n<path>/Users/a/.pi/agent/skills/skill-viz/SKILL.md</path>\n---\nname: skill-viz\ndescription: Visualize installed skills\n---\n</skill>',
+      },
+    },
+  ]);
+
+  const messages = [...parseCodex({ key: path, sessionId: '' }, null)]
+    .filter(record => record.kind === 'message');
+
+  assert.equal(messages[0].content_type, 'text');
+  assert.equal(messages[0].is_meta, 0);
+  assert.equal(messages[1].content_type, 'skill_instructions');
+  assert.equal(messages[1].is_meta, 1);
+});

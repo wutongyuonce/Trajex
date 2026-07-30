@@ -17,6 +17,10 @@ import { createSessionLiveReloadCoordinator } from '../session-live-reload.mjs';
 import { createSessionUserScroll } from '../session-user-scroll.mjs';
 import { useSessionTimelineViewport } from '../session-timeline-viewport.mjs';
 import { sessionReaderStateCache } from '../session-reader-state.mjs';
+import {
+  createSessionSegments,
+  findCurrentSessionSegment,
+} from '../session-segment-navigation.mjs';
 import FlapNumber from '../components/FlapNumber.vue';
 import SessionTimelineRow from '../components/SessionTimelineRow.vue';
 import {
@@ -40,7 +44,6 @@ const messages = shallowRef([]);
 const timelineItems = shallowRef([]);
 const loading = ref(false);
 const timelineReady = ref(false);
-const progressPct = ref(0);
 const active = ref(false);
 const focusedItemKey = ref(null);
 const pendingFocusUuid = ref(
@@ -62,6 +65,7 @@ const headerRef = ref(null);
 const timelineScrollMargin = ref(0);
 const disclosures = createSessionDisclosureState();
 let headerResizeObserver = null;
+let segmentNavResizeObserver = null;
 const NAV_HEIGHT = 52;
 const userScroll = createSessionUserScroll({ onEnd: handleUserScrollEnd });
 
@@ -200,6 +204,7 @@ onMounted(async () => {
   await nextTick();
   syncTimelineScrollMargin();
   observeSessionHeader();
+  observeSegmentNav();
 });
 
 onBeforeUnmount(() => {
@@ -214,8 +219,12 @@ onUnmounted(() => {
   scrollFrame = null;
   if (focusTimer !== null) clearTimeout(focusTimer);
   focusTimer = null;
+  if (segmentScrollTimer !== null) clearTimeout(segmentScrollTimer);
+  segmentScrollTimer = null;
   headerResizeObserver?.disconnect();
   headerResizeObserver = null;
+  segmentNavResizeObserver?.disconnect();
+  segmentNavResizeObserver = null;
   userScroll.detach();
   liveReloadCoordinator.stop();
   removeSessionUpdated?.();
@@ -397,12 +406,98 @@ async function focusPendingMessage() {
 
 // --- Scroll / progress tracking ---
 const currentMsgIdx = ref(0);
+const currentTimelineIdx = ref(0);
 const totalMsgs = computed(() => timelineItems.value.length);
+const sessionNavigationList = computed(() => {
+  const query = state.query.trim().toLowerCase();
+  return state.sessions
+    .filter(item => state.projectFilter === 'all' || item.project === state.projectFilter)
+    .filter(item => state.sourceFilter === 'all' || (item.source || 'claude') === state.sourceFilter)
+    .filter(item => !query || [item.title, item.project, item.git_branch]
+      .some(value => String(value || '').toLowerCase().includes(query)))
+    .sort((left, right) => {
+      const leftTime = new Date(left.ended_at || left.started_at || 0).getTime();
+      const rightTime = new Date(right.ended_at || right.started_at || 0).getTime();
+      return state.sortDesc ? rightTime - leftTime : leftTime - rightTime;
+    });
+});
+const currentSessionIndex = computed(() => sessionNavigationList.value
+  .findIndex(item => item.id === props.id));
+const hasPreviousSession = computed(() => currentSessionIndex.value > 0);
+const hasNextSession = computed(() => (
+  currentSessionIndex.value >= 0
+  && currentSessionIndex.value < sessionNavigationList.value.length - 1
+));
+const segmentCapacity = ref(0);
+const previewedSegment = ref(-1);
+const segmentNavScrolling = ref(false);
+const conversationRounds = computed(() => {
+  const itemIndexByUuid = new Map();
+  timelineItems.value.forEach((item, index) => {
+    if (!itemIndexByUuid.has(item.anchorUuid)) itemIndexByUuid.set(item.anchorUuid, index);
+  });
+  const userRounds = [];
+  messages.value.forEach((message, messageIndex) => {
+    if (message.type !== 'user') return;
+    const targetIndex = itemIndexByUuid.get(message.uuid);
+    if (!Number.isInteger(targetIndex)) return;
+    const nextReply = messages.value
+      .slice(messageIndex + 1)
+      .find(next => next.type === 'user' || next.type === 'assistant');
+    userRounds.push({
+      targetIndex,
+      userText: message.text || '',
+      assistantText: nextReply?.type === 'assistant' ? nextReply.text || '' : '',
+    });
+  });
+  return userRounds.length ? userRounds : timelineItems.value.map((item, index) => ({
+    targetIndex: index,
+    userText: item.message?.text || '',
+    assistantText: '',
+  }));
+});
+const roundIndexes = computed(() => conversationRounds.value.map(round => round.targetIndex));
+const sessionSegments = computed(() => createSessionSegments(
+  roundIndexes.value,
+  segmentCapacity.value,
+));
+const currentSegment = computed(() => findCurrentSessionSegment(
+  sessionSegments.value,
+  currentTimelineIdx.value,
+));
+const highlightedSegment = computed(() => (
+  previewedSegment.value >= 0 ? previewedSegment.value : currentSegment.value
+));
 let navLock = false;
 let scrollFrame = null;
+let segmentScrollTimer = null;
+
+function observeSegmentNav() {
+  segmentNavResizeObserver?.disconnect();
+  segmentNavResizeObserver = null;
+  if (!wrapRef.value || typeof ResizeObserver === 'undefined') return;
+  segmentNavResizeObserver = new ResizeObserver(([entry]) => {
+    segmentCapacity.value = Math.max(1, Math.floor(entry.contentRect.height * 2 / 3 / 16));
+  });
+  segmentNavResizeObserver.observe(wrapRef.value);
+}
+
+function setSegmentNavScrolling() {
+  segmentNavScrolling.value = true;
+  if (segmentScrollTimer !== null) clearTimeout(segmentScrollTimer);
+  segmentScrollTimer = setTimeout(() => {
+    segmentNavScrolling.value = false;
+    segmentScrollTimer = null;
+  }, 160);
+}
+
+function getSegmentPreview(segment) {
+  return conversationRounds.value[segment.startRound - 1] || {};
+}
 
 function onScroll(event) {
   if (navLock) return;
+  setSegmentNavScrolling();
   if (scrollFrame !== null) return;
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = null;
@@ -410,39 +505,52 @@ function onScroll(event) {
   });
 }
 
-function setMessagePosition(index, total) {
+function setMessagePosition(index) {
   currentMsgIdx.value = index;
-  progressPct.value = total <= 1 ? 100 : Math.round((index / (total - 1)) * 100);
 }
 
 function updateScrollProgress() {
   if (!wrapRef.value || !timelineItems.value.length) {
     currentMsgIdx.value = 0;
-    progressPct.value = 0;
+    currentTimelineIdx.value = 0;
     return;
   }
-  const bottomMsgIdx = timelineViewport.indexAtViewportEnd(NAV_HEIGHT);
-  setMessagePosition(bottomMsgIdx, timelineItems.value.length);
+  currentTimelineIdx.value = timelineViewport.indexAtViewportStart();
+  setMessagePosition(timelineViewport.indexAtViewportEnd(NAV_HEIGHT));
 }
 
-function navTo(target) {
+function navToSegment(segment) {
   if (!wrapRef.value) return;
-  const count = timelineItems.value.length;
-  if (!count) return;
-  let idx;
-  if (target === 'first') idx = 0;
-  else if (target === 'last') idx = count - 1;
-  else if (target === 'prev') idx = Math.max(0, currentMsgIdx.value - 1);
-  else if (target === 'next') idx = Math.min(count - 1, currentMsgIdx.value + 1);
-  else return;
-  if (target === 'last') userScroll.clearUpwardIntent();
-  setMessagePosition(idx, count);
+  setSegmentNavScrolling();
+  userScroll.clearUpwardIntent();
+  currentTimelineIdx.value = segment.targetIndex;
   navLock = true;
-  timelineViewport.scrollToIndex(idx, { align: 'end' });
+  timelineViewport.scrollToIndex(segment.targetIndex, { align: 'start' });
   setTimeout(() => {
     navLock = false;
     onScroll();
   }, 50);
+}
+
+function navToMessage(target) {
+  if (!wrapRef.value || !timelineItems.value.length) return;
+  let index = currentMsgIdx.value;
+  if (target === 'prev') index = Math.max(0, index - 1);
+  else if (target === 'next') index = Math.min(timelineItems.value.length - 1, index + 1);
+  else return;
+  setMessagePosition(index);
+  navLock = true;
+  timelineViewport.scrollToIndex(index, { align: 'end' });
+  setTimeout(() => {
+    navLock = false;
+    onScroll();
+  }, 50);
+}
+
+function navToSession(direction) {
+  const target = sessionNavigationList.value[currentSessionIndex.value + direction];
+  if (!target) return;
+  router.push({ name: 'SessionDetail', params: { id: target.id } });
 }
 
 // --- Full text loading ---
@@ -472,11 +580,6 @@ function navigateToSubagent(agentId) {
 <template>
   <div class="detail-wrap" ref="wrapRef" @scroll="onScroll" :style="{ '--text-base': fontSize, '--text-md': fontSize }">
     <div class="detail">
-      <!-- Progress bar -->
-      <div class="session-progress">
-        <div class="session-progress-fill" :style="{ width: progressPct + '%' }"></div>
-      </div>
-
       <!-- Loading state -->
       <div v-if="loading || !timelineReady" class="empty first-open-loading">
         Loading session...
@@ -539,20 +642,54 @@ function navigateToSubagent(agentId) {
       </template>
     </div>
 
-    <!-- Pagination nav -->
-    <div class="msg-nav" v-if="totalMsgs > 0">
-      <button class="msg-nav-btn" @click="navTo('first')" :disabled="currentMsgIdx === 0" title="First">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v8M7 8l4-4v8z"/></svg>
+    <nav
+      v-if="roundIndexes.length > 1"
+      class="session-segment-nav"
+      :class="{ 'is-scrolling': segmentNavScrolling }"
+      :style="{ '--segment-height': `${sessionSegments.length * 16}px` }"
+      aria-label="会话轮次导航"
+    >
+      <button
+        v-for="(segment, index) in sessionSegments"
+        :key="`${segment.startRound}-${segment.endRound}`"
+        class="session-segment-nav-marker"
+        :class="{
+          active: index === highlightedSegment,
+          adjacent: Math.abs(index - highlightedSegment) === 1,
+          nearby: Math.abs(index - highlightedSegment) === 2,
+        }"
+        :aria-current="index === currentSegment ? 'true' : undefined"
+        :aria-label="segment.startRound === segment.endRound ? `跳转至第 ${segment.startRound} 轮` : `跳转至第 ${segment.startRound} 至 ${segment.endRound} 轮`"
+        :title="segment.startRound === segment.endRound ? `第 ${segment.startRound} 轮` : `第 ${segment.startRound}–${segment.endRound} 轮`"
+        @click="navToSegment(segment)"
+        @mouseenter="previewedSegment = index"
+        @mouseleave="previewedSegment = -1"
+        @focus="previewedSegment = index"
+        @blur="previewedSegment = -1"
+      >
+        <span class="session-segment-nav-dash"></span>
+        <span v-if="previewedSegment === index" class="session-segment-preview">
+          <span class="session-segment-preview-label">YOU</span>
+          <span class="session-segment-preview-user">{{ getSegmentPreview(segment).userText || '（无内容）' }}</span>
+          <span class="session-segment-preview-label assistant">ASSISTANT</span>
+          <span class="session-segment-preview-assistant">{{ getSegmentPreview(segment).assistantText || '（暂无回复）' }}</span>
+        </span>
       </button>
-      <button class="msg-nav-btn" @click="navTo('prev')" :disabled="currentMsgIdx === 0" title="Previous">
+    </nav>
+
+    <div class="msg-nav" v-if="totalMsgs > 0">
+      <button class="msg-nav-btn msg-nav-session-btn" @click="navToSession(-1)" :disabled="!hasPreviousSession" title="Previous session">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v8M11 4L7 8l4 4"/></svg>
+      </button>
+      <button class="msg-nav-btn" @click="navToMessage('prev')" :disabled="currentMsgIdx === 0" title="Previous">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4l-4 4 4 4"/></svg>
       </button>
       <span class="msg-nav-pos"><span class="msg-nav-current">{{ currentMsgIdx + 1 }}</span> / <FlapNumber :value="totalMsgs" /></span>
-      <button class="msg-nav-btn" @click="navTo('next')" :disabled="currentMsgIdx >= totalMsgs - 1" title="Next">
+      <button class="msg-nav-btn" @click="navToMessage('next')" :disabled="currentMsgIdx >= totalMsgs - 1" title="Next">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l4 4-4 4"/></svg>
       </button>
-      <button class="msg-nav-btn" @click="navTo('last')" :disabled="currentMsgIdx >= totalMsgs - 1" title="Last">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8M9 8l-4-4v8z"/></svg>
+      <button class="msg-nav-btn msg-nav-session-btn" @click="navToSession(1)" :disabled="!hasNextSession" title="Next session">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v8M5 4l4 4-4 4"/></svg>
       </button>
     </div>
 
@@ -573,7 +710,9 @@ function navigateToSubagent(agentId) {
   overflow-y: auto;
   min-height: 0;
   position: relative;
+  scrollbar-width: none;
 }
+.detail-wrap::-webkit-scrollbar { display: none; }
 .first-open-loading {
   position: absolute;
   inset: 0;
@@ -597,6 +736,96 @@ function navigateToSubagent(agentId) {
   left: 0;
   width: 100%;
 }
+.session-segment-nav {
+  position: fixed;
+  top: 50%;
+  right: 14px;
+  height: var(--segment-height);
+  transform: translateY(-50%);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  width: 18px;
+}
+.session-segment-nav-marker {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.session-segment-nav-dash {
+  width: 11px;
+  height: 3px;
+  background: var(--muted-2);
+  opacity: 0.68;
+  transition: width 0.16s ease, transform 0.16s ease, background 0.16s ease, opacity 0.16s ease;
+}
+.session-segment-nav-marker.nearby .session-segment-nav-dash { width: 14px; opacity: 0.78; }
+.session-segment-nav-marker.adjacent .session-segment-nav-dash {
+  width: 19px;
+  background: var(--fg-2);
+  opacity: 0.88;
+  transform: translateX(-3px);
+}
+.session-segment-nav-marker.active .session-segment-nav-dash {
+  width: 28px;
+  background: var(--fg);
+  opacity: 1;
+  transform: translateX(-8px);
+}
+.session-segment-nav-marker:hover .session-segment-nav-dash { background: var(--fg); opacity: 1; }
+.session-segment-nav-marker:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+@keyframes segment-nav-wave {
+  0% { transform: translateX(-14px) scaleX(0.8); }
+  100% { transform: translateX(-8px) scaleX(1); }
+}
+.session-segment-nav.is-scrolling .session-segment-nav-marker.active .session-segment-nav-dash {
+  animation: segment-nav-wave 0.24s ease-out;
+}
+.session-segment-preview {
+  position: absolute;
+  right: calc(100% + 14px);
+  top: 50%;
+  width: min(300px, calc(100vw - 72px));
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--fg);
+  text-align: left;
+  pointer-events: none;
+}
+.session-segment-preview-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--fg-2);
+}
+.session-segment-preview-label.assistant { margin-top: 5px; color: var(--muted); }
+.session-segment-preview-user,
+.session-segment-preview-assistant {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.session-segment-preview-assistant { color: var(--muted); }
 .font-toast {
   position: fixed;
   bottom: 48px;

@@ -18,10 +18,23 @@ import { formatProjectLabel } from './utils.js';
 import { buildSidebarProjects } from './sidebar-projects.mjs';
 import { resolveGlobalShortcut } from './keyboard-shortcuts.mjs';
 import { sourceLabel } from './source-catalog.mjs';
+import trajexIcon from './assets/trajex-icon.svg';
 
 const router = useRouter();
 const route = useRoute();
 let searchTimer = null;
+const THEME_KEY = 'trajex:theme';
+const theme = ref('dark');
+
+function applyTheme(nextTheme) {
+  theme.value = nextTheme;
+  document.documentElement.dataset.theme = nextTheme;
+  localStorage.setItem(THEME_KEY, nextTheme);
+}
+
+function toggleTheme() {
+  applyTheme(theme.value === 'dark' ? 'light' : 'dark');
+}
 
 const routeSession = computed(() => {
   return getSessionSummary(route.params.id);
@@ -193,7 +206,10 @@ function handleGlobalKeydown(event) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', handleGlobalKeydown));
+onMounted(() => {
+  applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
+  window.addEventListener('keydown', handleGlobalKeydown);
+});
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
   clearTimeout(searchTimer);
@@ -204,7 +220,6 @@ const isExportRoute = computed(() => route.name === 'RecapExport');
 // --- Source health dots ---
 const sourceDots = ref([]);
 const sourceDetails = ref([]);
-const showSourcePopover = ref(false);
 async function loadSourceDots() {
   if (!window.trajex?.getSettings) return;
   const s = await window.trajex.getSettings();
@@ -249,47 +264,12 @@ provide('recapGenerateOpen', recapGenerateOpen);
     <div class="columns">
       <aside class="sidebar">
         <div class="sidebar-brand">
-          <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <defs>
-              <radialGradient id="icon-aurora" cx="50%" cy="62%" r="55%">
-                <stop offset="0%"  stop-color="#ec4899" stop-opacity="0.8"/>
-                <stop offset="45%" stop-color="#a855f7" stop-opacity="0.7"/>
-                <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
-              </radialGradient>
-              <linearGradient id="icon-stone-lit" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%"  stop-color="#cbd5e1"/>
-                <stop offset="100%" stop-color="#475569"/>
-              </linearGradient>
-            </defs>
-            <ellipse cx="20" cy="22" rx="15" ry="11" fill="url(#icon-aurora)"/>
-            <ellipse cx="20" cy="21" rx="9"  ry="7"  fill="url(#icon-aurora)" opacity="0.7"/>
-            <circle cx="8"  cy="13" r="0.7" fill="#fff" opacity="0.9"/>
-            <circle cx="32" cy="11" r="0.9" fill="#fff" opacity="0.95"/>
-            <circle cx="34" cy="22" r="0.5" fill="#fff" opacity="0.7"/>
-            <polygon points="20,7 16.5,12 23.5,12" fill="url(#icon-stone-lit)"/>
-            <polygon points="20,12 16.5,12 17.5,33 20,33" fill="url(#icon-stone-lit)"/>
-            <polygon points="20,12 23.5,12 22.5,33 20,33" fill="#1e293b"/>
-            <rect x="15.5" y="33" width="9" height="1.6" rx="0.3" fill="#0f172a"/>
-          </svg>
+          <img :src="trajexIcon" alt="" />
           <span class="name">Trajex</span>
-          <button class="source-health" title="Connected sources" @click="showSourcePopover = !showSourcePopover">
-            <span v-for="src in sourceDots" :key="src.id" class="h-dot" :class="src.status" :style="{ '--source-color': src.color }"></span>
+          <button class="theme-toggle" type="button" :aria-label="theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'" :title="theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'" @click="toggleTheme">
+            <svg v-if="theme === 'dark'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke-linecap="round"/></svg>
+            <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.8 10.1A5.8 5.8 0 0 1 5.9 2.2a5.8 5.8 0 1 0 7.9 7.9Z" stroke-linejoin="round"/></svg>
           </button>
-          <div class="sources-popover" :class="{ show: showSourcePopover }">
-            <div class="sp-head">Connected sources</div>
-            <div class="sp-list">
-              <button v-for="src in sourceDetails" :key="src.id" class="sp-row" @click="router.push('/settings')">
-                <span class="sp-dot" :style="{ '--source-color': src.color }"></span>
-                <div class="sp-body">
-                  <div class="sp-name">{{ src.name }} <span class="sp-count" v-if="src.sessionCount">{{ src.sessionCount }} sessions</span></div>
-                  <div class="sp-meta" :class="src.status">{{ src.statusText }}</div>
-                </div>
-              </button>
-            </div>
-            <div class="sp-foot">
-              <button @click="router.push('/settings'); showSourcePopover = false">Manage in Settings →</button>
-            </div>
-          </div>
         </div>
 
         <div class="sidebar-section">

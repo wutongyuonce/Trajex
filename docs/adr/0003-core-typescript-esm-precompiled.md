@@ -14,8 +14,7 @@ ESM JS, so installing the CLI never runs a build. Rather than have Core
 dual-publish CJS+ESM, the Electron main process migrates to ESM at Phase 5 so it
 can `import` the same compiled Core. TypeScript source is the single source of
 truth; the package build lives in the main repo (`build:cli`), never on the
-user's machine. `build:skill` copies only `skill-doc/SKILL.md`, references, and
-skill metadata.
+user's machine.
 
 **Consequences.** A one-time ESM migration of the Electron main process (Phase 5),
 in exchange for no dual-build maintenance and a single module format across the

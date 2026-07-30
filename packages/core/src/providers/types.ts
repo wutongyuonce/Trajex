@@ -139,7 +139,6 @@ export interface ToolCallRecord {
   message_uuid: string;
   session_id: string;
   name: string;
-  presentation: 'default' | 'skill';
   input_json: string;
   file_path: string | null;
 }

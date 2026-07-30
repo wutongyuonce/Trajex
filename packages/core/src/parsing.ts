@@ -91,7 +91,7 @@ function extractContentType(content: JsonValue): string {
 }
 
 const COMMAND_ENVELOPE_RE = /^\s*(<command-name>[^<]+<\/command-name>|<(?:task-notification|system-reminder)\b|<local-command(?:\b|-))/;
-const SKILL_INSTRUCTIONS_RE = /^\s*Base directory for this skill(?:\s*:|\s*\r?\n)/;
+const SKILL_INSTRUCTIONS_RE = /^(?:\s*Base directory for this skill(?:\s*:|\s*\r?\n)|\s*<skill>\s*<name>[^<]+<\/name>\s*<path>\/[^<]*\/SKILL\.md<\/path>|\s*(?:[\w.-]+\s+)?\/[\s\S]*?\/SKILL\.md\s+---\s+name:\s*[\w.-]+\s+description:)/i;
 
 function extractMessageIsMeta(record: JsonRecord, text: string | null = extractText(record?.message?.content)): 0 | 1 {
   const msg = record?.message || {};

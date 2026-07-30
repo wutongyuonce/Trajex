@@ -248,7 +248,6 @@ export function buildSessionTimelinePresentation(item, { query = '', expandedTex
   const toolInputs = new Map();
   const toolInputText = new Map();
   const toolPrettyHtml = new Map();
-  const toolResultHtml = new Map();
   const toolArgPreviews = new Map();
   const toolIcons = new Map();
   const workflowAgentGroups = new Map();
@@ -259,11 +258,8 @@ export function buildSessionTimelinePresentation(item, { query = '', expandedTex
     toolInputText.set(toolCall.id, formatToolInput(toolCall));
     toolArgPreviews.set(toolCall.id, getArgPreview(toolCall));
     toolIcons.set(toolCall.id, getToolIcon(toolCall.name));
-    if (item?.kind === 'workflow-tools' || !['Skill', 'Agent', 'Task', 'Workflow'].includes(toolCall.name)) {
+    if (item?.kind === 'workflow-tools' || toolCall.name !== 'Workflow') {
       toolPrettyHtml.set(toolCall.id, renderPrettyTool(toolCall));
-    }
-    if ((toolCall.name === 'Agent' || toolCall.name === 'Task') && toolCall.result?.content) {
-      toolResultHtml.set(toolCall.id, renderMarkdown(toolCall.result.content, { variant: 'compact' }));
     }
     if (toolCall.name === 'Workflow') workflowAgentGroups.set(toolCall.id, groupWorkflowAgents(toolCall.workflow));
   }
@@ -276,14 +272,9 @@ export function buildSessionTimelinePresentation(item, { query = '', expandedTex
     thinkingHtml: message._thinking
       ? renderMarkdown(message._thinking, { variant: 'msg', query })
       : (item?.kind === 'thinking' ? renderMarkdown(message.text, { variant: 'msg', query }) : ''),
-    skillHtml: message._skillMd ? renderMarkdown(message._skillMd, { variant: 'compact' }) : '',
-    summaryHtml: message.summary?.content
-      ? renderMarkdown(message.summary.content, { variant: 'compact' })
-      : '',
     toolInputs,
     toolInputText,
     toolPrettyHtml,
-    toolResultHtml,
     toolArgPreviews,
     toolIcons,
     workflowAgentGroups,

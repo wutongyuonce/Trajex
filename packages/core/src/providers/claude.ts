@@ -341,7 +341,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     if (obj.type === 'assistant' && Array.isArray(msg.content)) {
       for (const b of msg.content) {
         if (b.type === 'tool_use' && b.id)
-          records.push({ kind: 'tool_call', id: b.id, message_uuid: obj.uuid, session_id: sid, name: b.name, presentation: b.name === 'Skill' ? 'skill' : 'default', input_json: truncJson(b.input || {}) as string, file_path: filePath(b.name, b.input) });
+          records.push({ kind: 'tool_call', id: b.id, message_uuid: obj.uuid, session_id: sid, name: b.name, input_json: truncJson(b.input || {}) as string, file_path: filePath(b.name, b.input) });
       }
     }
 

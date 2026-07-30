@@ -13,15 +13,14 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build && electron-builder",
     "pack": "electron-vite build && electron-builder --dir",
-    "dist": "electron-vite build && electron-builder --mac --win --linux",
+    "dist": "electron-vite build && electron-builder --mac",
     "dist:mac": "electron-vite build && electron-builder --mac",
-    "dist:win": "electron-vite build && electron-builder --win",
-    "dist:linux": "electron-vite build && electron-builder --linux",
     "generate:session-share": "node scripts/generate-session-share.mjs",
     "verify:icons": "node scripts/verify-icons.mjs",
     "test:electron": "electron-vite build && electron --no-sandbox tests/electron-concurrency.mjs",
     "test:electron:timeline": "electron-vite build && electron --no-sandbox tests/electron-session-virtualization.mjs",
-    "test:electron:reader-state": "electron-vite build && electron --no-sandbox tests/electron-session-reader-state.mjs"
+    "test:electron:reader-state": "electron-vite build && electron --no-sandbox tests/electron-session-reader-state.mjs",
+    "test:local-links": "node --test tests/local-markdown-link.test.mjs"
   },
   "build": {
     "appId": "com.trajex.app",
@@ -31,30 +30,12 @@
       "output": "release"
     },
     "mac": {
-      "icon": "build/icon.icns",
+      "icon": "resources/icon.png",
       "target": [
         "dmg",
         "zip"
       ],
       "category": "public.app-category.developer-tools"
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "linux": {
-      "icon": "build/icon.png",
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Development",
-      "maintainer": "Trajex contributors <tommy0103@users.noreply.github.com>"
-    },
-    "deb": {
-      "compression": "bzip2"
     },
     "files": [
       "out/**"

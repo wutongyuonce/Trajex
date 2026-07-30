@@ -102,19 +102,11 @@ watch(exportFilename, (filename) => loadExportRecap(filename));
 
 <style scoped>
 .export-wrap {
-  --bg: #0a0b14;
-  --bg-2: #11131f;
-  --surface: rgba(255,255,255,0.03);
-  --surface-strong: rgba(255,255,255,0.06);
-  --fg: rgba(255,255,255,0.94);
-  --fg-2: rgba(255,255,255,0.74);
-  --fg-3: rgba(255,255,255,0.55);
-  --muted: rgba(255,255,255,0.48);
-  --muted-2: rgba(255,255,255,0.28);
-  --muted-3: rgba(255,255,255,0.16);
-  --hairline: rgba(255,255,255,0.05);
-  --hairline-strong: rgba(255,255,255,0.10);
-  --hairline-vivid: rgba(255,255,255,0.16);
+  --bg: var(--theme-bg); --bg-2: var(--theme-bg-2);
+  --surface: var(--theme-surface); --surface-strong: var(--theme-surface-strong); --surface-hi: var(--theme-surface-hi);
+  --fg: var(--theme-fg); --fg-2: var(--theme-fg-2); --fg-3: var(--theme-fg-3);
+  --muted: var(--theme-muted); --muted-2: var(--theme-muted-2); --muted-3: var(--theme-muted-3);
+  --hairline: var(--theme-hairline); --hairline-strong: var(--theme-hairline-strong); --hairline-vivid: var(--theme-hairline-vivid);
   --font-sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
   --font-mono: ui-monospace, 'JetBrains Mono', 'IBM Plex Mono', 'SF Mono', Menlo, monospace;
   --font-serif: 'Iowan Old Style', 'Charter', 'Source Serif Pro', Georgia, serif;

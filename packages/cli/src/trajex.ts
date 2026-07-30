@@ -12,7 +12,6 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 import {
   DB_PATH,
@@ -66,23 +65,7 @@ async function main() {
     try { emit(await executeAttune(readFileSync(resolve(args[1]), 'utf8'))); } catch (error) { fail(error); }
     return;
   }
-  // install 不安装数据库或 daemon，只转交官方 Skill 安装器。
-  if (args[0] === 'install') {
-    const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-    const child = spawnSync(
-      npx,
-      ['--yes', 'skills', 'add', 'tommy0103/trajex-skill', ...args.slice(1)],
-      { stdio: 'inherit', shell: process.platform === 'win32' },
-    );
-    if (child.error) {
-      process.stderr.write(`Unable to run the skills installer: ${child.error.message}\n`);
-      process.exitCode = 1;
-    } else {
-      process.exitCode = child.status ?? 1;
-    }
-    return;
-  }
-  process.stderr.write('Usage:\n  trajex install [skills options]\n  trajex --build\n  trajex --search "text"\n  trajex --query <file.js>\n  trajex --attune <file.js>\n');
+  process.stderr.write('Usage:\n  trajex --build\n  trajex --search "text"\n  trajex --query <file.js>\n  trajex --attune <file.js>\n');
   process.exitCode = 1;
 }
 

@@ -412,7 +412,6 @@ function projectSession(meta: KimiSessionUnitMeta, sessionId: string, state: Jso
               message_uuid: messageUuid,
               session_id: sessionId,
               name,
-              presentation: name === 'Skill' ? 'skill' : 'default',
               input_json: truncJson(args) ?? '{}',
               file_path: filePath(name, args as JsonRecord | undefined),
             });
@@ -504,7 +503,6 @@ function projectSession(meta: KimiSessionUnitMeta, sessionId: string, state: Jso
           message_uuid: uuid,
           session_id: sessionId,
           name: String(event.name ?? 'tool'),
-          presentation: event.name === 'Skill' ? 'skill' : 'default',
           input_json: truncJson(event.args ?? {}) ?? '{}',
           file_path: filePath(String(event.name ?? 'tool'), event.args as JsonRecord | undefined),
         });

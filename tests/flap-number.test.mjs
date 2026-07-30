@@ -120,11 +120,17 @@ test('queued empty string remains a valid latest value for the generic component
   assert.equal(state.animating, true);
 });
 
-test('SessionDetail applies flap motion only to the total message count', () => {
+test('SessionDetail keeps bottom pagination alongside the segment navigator', () => {
   const source = readFileSync(new URL('../app/src/renderer/src/views/SessionDetail.vue', import.meta.url), 'utf8');
 
+  assert.match(source, /class="session-segment-nav"/);
+  assert.match(source, /@click="navToSegment\(segment\)"/);
   assert.match(source, /<FlapNumber\s+:value="totalMsgs"/);
-  assert.match(source, /msg-nav-current[^>]*>\{\{ currentMsgIdx \+ 1 \}\}/);
+  assert.match(source, /@click="navToMessage\('prev'\)"/);
+  assert.match(source, /@click="navToMessage\('next'\)"/);
+  assert.match(source, /@click="navToSession\(-1\)"/);
+  assert.match(source, /@click="navToSession\(1\)"/);
+  assert.doesNotMatch(source, /navToMessage\('first'\)|navToMessage\('last'\)/);
 });
 
 test('FlapNumber shares one relative geometry and finishes from animationend', () => {

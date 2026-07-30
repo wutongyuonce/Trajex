@@ -51,8 +51,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   id TEXT PRIMARY KEY,             -- 工具调用 ID（provider 原生或 namespaced）
   message_uuid TEXT,               -- 所属消息（FK -> messages.uuid）
   session_id TEXT,                 -- 所属会话
-  name TEXT,                       -- 工具名：Read / Edit / Bash / Skill / Write 等
-  presentation TEXT DEFAULT 'default', -- default / skill（用于 UI 展示区别）
+  name TEXT,                       -- 工具名：Read / Edit / Bash / Write 等
   input_json TEXT,                 -- 调用参数 JSON 字符串
   file_path TEXT);                 -- 操作的目标文件路径（部分工具适用）
 

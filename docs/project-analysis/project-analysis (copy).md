@@ -285,7 +285,6 @@ CLI 只做参数路由、脚本文件读取和 JSON 输出。它不拥有数据�
 | `trajex --search "text"`  | core.ts `searchText(text)`             | 刷新可用时的索引，再输出 FTS 命中  |
 | `trajex --query file.js`  | core.ts `executeQuery(scriptContent)`  | 在只读 JS 沙箱执行，输出 return 值 |
 | `trajex --attune file.js` | core.ts `executeAttune(scriptContent)` | 在 writer lease 内执行 memory 变更 |
-| `trajex install`          | `npx --yes skills add ...`             | 安装独立 skill，不进入 Core        |
 
 ### 构建索引流程 (`trajex --build`)
 
@@ -478,7 +477,7 @@ providers/{claude,codex,kimi}.ts 的 ProviderAdapter
 
 `TranscriptRecord` 是可辨识联合（discriminated union）：每个成员都有字面量 `kind`。`persist.ts` 只需对 `record.kind` 做 `switch`，TypeScript 就能收窄到正确字段集合；Provider 不能把 Claude 私有字段偷偷交给持久化层，持久化层也不需要导入 Claude/Codex 的原始类型。
 
-### 13.2 索引调度契约：`Cursor`、`IndexUnit`、`DiscoverContext`
+### 索引调度契约：`Cursor`、`IndexUnit`、`DiscoverContext`
 
 #### `Cursor`
 
@@ -1282,7 +1281,7 @@ memory 不是自动总结替代原始证据，而是：
 
 它仍然应该能通过 session/message anchors 回到原始证据。
 
-## Trajex 统一 SQLite 数据模型 `schema.sql`
+## 统一 SQLite 数据模型 `schema.sql`
 
 此文件保存可再生 transcript 索引与人工确认的 memories。Provider 先输出 TranscriptRecord，persist 再按本 schema 写表；FTS 虚表与 trigger 由 SQLite 从 messages/memories 自动维护，查询层使用 MATCH 而不是扫描原表，即搜索时用：`SELECT ... FROM messages_fts WHERE text MATCH 'keywords'` 而不是：`SELECT ... FROM messages WHERE text LIKE '%keywords%'`，前者走 FTS 索引（快），后者全表扫描（慢）。
 
@@ -1290,20 +1289,35 @@ memory 不是自动总结替代原始证据，而是：
 
 Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系表：
 
-| 表名              | 用途                               | 属于       | 备注            |
-| ----------------- | ---------------------------------- | ---------- | --------------- |
-| `sessions`        | 会话元信息                         | Transcript | Provider 产出   |
-| `messages`        | 用户 / assistant 消息              | Transcript | 核心表          |
-| `tool_calls`      | 工具调用                           | Transcript |                 |
-| `tool_results`    | 工具执行结果                       | Transcript |                 |
-| `subagents`       | 子 Agent / Codex child thread      | Transcript |                 |
-| `workflows`       | Claude workflow 工作流             | Transcript |                 |
-| `workflow_agents` | 工作流中的子代理                   | Transcript |                 |
-| `summaries`       | 会话摘要                           | Transcript |                 |
-| `index_state`     | 存索引进度、heartbeat、版本 marker | **系统**   | Provider 不产出 |
-| `memories`        | 存用户批准沉淀的长期记忆           | **人工**   | 用户手动创建    |
+`schema.sql` 只声明了各表的**PK 主键**，没有写 SQLite `FOREIGN KEY ... REFERENCES` 约束。下表及字段解析中的“逻辑 FK”表示代码、`persist()` 和查询层按该字段关联，而不是数据库会拒绝不合法值；因此 Provider 必须保证 ID 一致。
+
+| 表名 | 用途 | 主键（PK） | persist 持久化来源 |
+| --- | --- | --- | --- |
+| `sessions` | 会话元信息 | `id` | **provider 产出，TranscriptRecord** |
+| `messages`（核心表） | 用户 / assistant 消息 | `uuid` | TranscriptRecord |
+| `tool_calls` | 工具调用 | `id` | TranscriptRecord |
+| `tool_results` | 工具执行结果，每个 tool call 最多一条结果 | `tool_use_id` | TranscriptRecord |
+| `subagents` | 子 Agent / Codex child thread | `agent_id` | TranscriptRecord |
+| `workflows` | Claude workflow 工作流 | `run_id` | TranscriptRecord |
+| `workflow_agents` | 工作流中的子代理，同一 Agent 的零散元数据最终汇总成 `workflow_agents` 中一条完整记录 | `agent_id` | TranscriptRecord |
+| `summaries` | 会话摘要 | `id` | TranscriptRecord |
+| `index_state` | 索引进度、heartbeat、版本 marker | `jsonl_path` | **provider 不产出**该 Record，而是 `parse()` 在 generator 结束时返回 `newCursor` |
+| `memories` | 用户批准沉淀的长期记忆 | `id` | **用户手动创建** |
+| `messages_fts` | 消息全文倒排索引（FTS5 虚表） | `rowid` 映射 | **派生，trigger 自动维护** |
+| `memories_fts` | 记忆全文倒排索引（FTS5 虚表） | `rowid` 映射 | 派生，trigger 自动维护 |
+
+```
+provider.parse(unit, oldCursor)
+  → yield messages / tools / ... 等 TranscriptRecord
+  → return newCursor —— "mtime:lines"
+
+persist()
+  → INSERT OR REPLACE index_state(...)
+```
 
 #### `sessions` — 会话
+
+`id` 是 **PK**。`messages.session_id`、`tool_calls.session_id`、`tool_results.session_id`、`subagents.session_id`、`workflows.session_id`、`workflow_agents.session_id`、`summaries.session_id`、`memories.session_id` 都以它作为**逻辑 FK**；SQLite schema 没有声明物理 FOREIGN KEY 约束。
 
 | 字段            | 类型                  | 说明                                  |
 | --------------- | --------------------- | ------------------------------------- |
@@ -1320,6 +1334,8 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 | `source`        | TEXT DEFAULT 'claude' | 来源标识：`claude` / `codex` / `kimi` |
 
 #### `messages` — 消息
+
+`uuid` 是 **PK**；`session_id` 是 → `sessions.id` 的**逻辑 FK**，`parent_uuid` 是 → `messages.uuid` 的自关联键，`agent_id` 逻辑关联 `subagents.agent_id`。`session_id`、`agent_id`、`(session_id, timestamp)`、`source` 另有 B-Tree 查询索引，`text` 由 trigger 投影到 FTS。
 
 | 字段               | 类型                   | 说明                                                         |
 | ------------------ | ---------------------- | ------------------------------------------------------------ |
@@ -1345,6 +1361,8 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 
 #### `tool_calls` — 工具调用
 
+`id` 是 **PK**；`message_uuid` 逻辑关联 `messages.uuid`，`session_id` 逻辑关联 `sessions.id`。`message_uuid`、`(session_id, name)` 和 `file_path` 有查询索引。
+
 | 字段           | 类型                   | 说明                                         |
 | -------------- | ---------------------- | -------------------------------------------- |
 | `id`           | TEXT PK                | 工具调用 ID                                  |
@@ -1357,6 +1375,8 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 
 #### `tool_results` — 工具执行结果
 
+`tool_use_id` 是 **PK**，同时逻辑关联 `tool_calls.id`，所以一个 tool call 最多对应一条结果；`message_uuid` 与 `session_id` 分别逻辑关联消息和会话，且都建有查询索引。
+
 | 字段           | 类型    | 说明                 |
 | -------------- | ------- | -------------------- |
 | `tool_use_id`  | TEXT PK | 对应 `tool_calls.id` |
@@ -1367,6 +1387,8 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 | `is_error`     | INTEGER | 是否错误             |
 
 #### `subagents` — 子代理
+
+`agent_id` 是 **PK**；`session_id` 逻辑关联 `sessions.id`，`parent_tool_use_id` 逻辑关联 `tool_calls.id`。`session_id` 有查询索引；子 Agent 的正文不在本表，而以 `messages.agent_id` 回连。
 
 | 字段                 | 类型    | 说明                      |
 | -------------------- | ------- | ------------------------- |
@@ -1379,6 +1401,8 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 | `total_tokens`       | INTEGER | Token 总数                |
 
 #### `workflows` — 工作流
+
+`run_id` 是 **PK**；`session_id` 逻辑关联 `sessions.id`，`parent_tool_use_id` 逻辑关联 `tool_calls.id`。`session_id` 有查询索引。
 
 | 字段                 | 类型    | 说明                |
 | -------------------- | ------- | ------------------- |
@@ -1397,6 +1421,8 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 
 #### `workflow_agents` — 工作流中的子代理
 
+`agent_id` 是 **PK**；`run_id` 逻辑关联 `workflows.run_id`，`session_id` 逻辑关联 `sessions.id`。`run_id` 有查询索引，重复写入相同 `agent_id` 时由 `persist()` 用 `COALESCE` 合并字段。
+
 | 字段          | 类型    | 说明         |
 | ------------- | ------- | ------------ |
 | `agent_id`    | TEXT PK | 代理 ID      |
@@ -1412,22 +1438,9 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 | `tokens`      | INTEGER | Token 数     |
 | `tool_calls`  | INTEGER | 工具调用次数 |
 
-#### `index_state` — 索引进度
-
-| 字段              | 类型    | 说明                                                         |
-| ----------------- | ------- | ------------------------------------------------------------ |
-| `jsonl_path`      | TEXT PK | 文件路径 或 特殊标记（`__last_build__`、`__app_heartbeat__`） |
-| `mtime`           | REAL    | 文件修改时间或心跳时间                                       |
-| `lines_processed` | INTEGER | 已处理行数                                                   |
-
-特殊 key 值：
-- `__last_build__` — 上次构建时间戳，用于防抖
-- `__app_heartbeat__` — App 心跳，用于判断 daemon 是否存活
-- `__claude_canonical_transcript_v2__` — Claude 适配器版本标记
-- `__codex_canonical_transcript_v2__` — Codex 适配器版本标记
-- `__kimi_canonical_transcript_v3__` — Kimi 适配器版本标记
-
 #### `summaries` — 摘要
+
+**键：** `id` 是 **PK**；`session_id` 逻辑关联 `sessions.id`，并有查询索引。
 
 | 字段         | 类型    | 说明                                    |
 | ------------ | ------- | --------------------------------------- |
@@ -1437,7 +1450,37 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 | `source`     | TEXT    | 来源（如 `away_summary`, `compaction`） |
 | `content`    | TEXT    | 摘要内容                                |
 
+#### `index_state` — 索引进度
+
+`jsonl_path` 是 **PK**，这个列名虽然叫“JSONL 路径”，但实际被当作任意状态项的唯一 key 使用：
+
+```
+普通索引单元：
+jsonl_path = "/.../sessions/abc.jsonl"
+              ↑ 真的是 JSONL 路径 / unit key
+
+上次构建时间戳，用于防抖：
+jsonl_path = "__last_build__"
+              ↑ 不是路径，而是状态 key
+
+App 心跳，用于判断 daemon 是否存活：
+jsonl_path = "__app_heartbeat__"
+              ↑ 不是路径，而是状态 key
+
+Provider Adapter 版本标记：
+jsonl_path = "__codex_canonical_transcript_v2__" / "__claude_canonical_transcript_v2__" / "__kimi_canonical_transcript_v3__"
+              ↑ 不是路径，而是状态 key
+```
+
+| 字段              | 类型    | 说明                                                         |
+| ----------------- | ------- | ------------------------------------------------------------ |
+| `jsonl_path`      | TEXT PK | 文件路径 或 特殊标记（`__last_build__`、`__app_heartbeat__`） |
+| `mtime`           | REAL    | 文件修改时间或心跳时间                                       |
+| `lines_processed` | INTEGER | 已处理行数                                                   |
+
 #### `memories` — 人工记忆
+
+**键：** `id` 是 **PK**；`session_id` 逻辑关联 `sessions.id`，`message_start` / `message_end` 分别逻辑关联 `messages.uuid` 的证据范围。`project`、`session_id`、`created_at` 有查询索引；这些关联同样不是物理 FOREIGN KEY。
 
 | 字段             | 类型    | 说明                   |
 | ---------------- | ------- | ---------------------- |
@@ -3489,9 +3532,6 @@ CLI 非常薄：
 
 - `--attune <file.js>`
   - 读取 JS 文件，调 `executeAttune`。
-
-- `install`
-  - 调 `npx skills add tommy0103/trajex-skill` 安装 agent skill。
 
 设计上 CLI 是 transport，不拥有 retrieval semantics。
 

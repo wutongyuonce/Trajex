@@ -4,12 +4,10 @@
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trajex-wordmark-d.svg">
   <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="540">
 </picture>
+[![stars](https://img.shields.io/github/stars/wutongyuonce/trajex?style=flat-square)](https://github.com/wutongyuonce/trajex/stargazers)
+[![version](https://img.shields.io/github/v/tag/wutongyuonce/trajex?label=version&style=flat-square)](https://github.com/wutongyuonce/trajex/releases)
 
-[![stars](https://img.shields.io/github/stars/tommy0103/trajex?style=flat-square)](https://github.com/tommy0103/trajex/stargazers)
-[![version](https://img.shields.io/github/v/tag/tommy0103/trajex?label=version&style=flat-square)](https://github.com/tommy0103/trajex/releases)
-[![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square)](LICENSE)
-
-过往 Claude Code、Codex 与 Kimi Code 会话：Agent 可查询，你也可浏览。
+数万行散落的 Claude Code、Codex 与 Kimi Code JSONL 会话，索引至同一个 SQLite 中：Agent 可通过 CLI /Skill 实现毫秒级查询，用户可通过 App 直观浏览。
 
 </div>
 
@@ -35,36 +33,55 @@ Kimi session directories 会各自成为一个 Trajex session。主会话和 chi
 
 为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions` 和 `~/.kimi-code/sessions`。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
 
-## Skill：Agent 优先的检索
+## App 与 CLI 的关系
+
+桌面 App 和 CLI 可以独立安装：安装 App 不需要先安装 CLI，安装 CLI 也不需要单独安装 Core。两者各自携带运行所需的 Core，并在同时使用时共享同一个本地索引数据库。
+
+* CLI 没有运行时 npm dependencies，并使用 Node 22 内置的 `node:sqlite` 与 FTS5。
+
+* App 有运行时 npm dependencies：`better-sqlite3`（SQLite 驱动）和 `chokidar`（文件监听）。这是因为 Electron 侧没有使用 Node 的 `node:sqlite`，而是使用原生 SQLite 驱动。
+
+第一次打开 App 或者第一次运行 CLI 查询 `/trajex --build` 会构建索引，其中一方已完成后，另一方复用同一份索引，通常只做增量检查/更新。100 个 sessions 通常需要约 5 秒。之后会进行增量重建。
+
+只有新增或修改过的 JSONL 文件会被重新解析。当可选 app 正在运行时，它就是 active indexer：它监听 project files，并在 worker thread 中构建索引。仅凭新鲜的 `__app_heartbeat__` 就意味着 daemon 拥有写入职责，因此 CLI 调用会保持只读；另有一个独立的 SQLite writer lease 防止跨进程写入重叠。`__app_last_successful_build__` marker 不参与写入判断，记录的是 App 索引新鲜度，仅用于观测记录。
+
+## App：给人使用的界面
+
+一个配套桌面 app，用于浏览由 CLI 或 app daemon 维护的同一个索引。
 
 <div align="center">
-  <img src=".github/assets/demo.png" alt="Trajex App" width="720">
+  <img src=".github/assets/PixPin_2026-07-30_06-11-01.png" alt="Trajex App" width="720">
 </div>
 
-你可以这样使用 Trajex：
 
-```
-/trajex 上次 auth bug 最后到底改了哪些文件，为什么这么改
-/trajex 这个文件最近在哪些 sessions 里被反复修改
-/trajex 找出最近失败的 tool calls，它们分别发生在哪些任务里
-/trajex 那个 review workflow 的 subagents 各自结论是什么
-/trajex recap this week
-```
+<div align="center">
+  <img src=".github/assets/PixPin_2026-07-30_06-11-30.png" alt="Trajex App" width="720">
+</div>
 
-### 安装
+- **Sessions** — 浏览所有 sessions，支持搜索、项目过滤、可读 tool calls，包括 diffs、terminal output、file viewers
+- **Memory** — 已注册 memory files 的列表和详情视图
+- **Activity** — GitHub 风格热力图、每周/累计 token 图表
+- **Recap** — 可分享的周/月 recap cards，带 archetype theming
+- **Settings** — 数据源配置、自动刷新、重建索引
 
-#### 让你的 Agent 安装它（推荐）
+目前 macOS 预构建版本可在 [Releases](https://github.com/wutongyuonce/trajex/releases) 获取。源码 app 可在 macOS、Windows 和 Linux 上本地运行。
 
-最短路径是把 bootstrap guide 直接交给一个有 shell 权限的 coding agent。把下面这段作为 prompt 粘贴到 Claude Code、Codex 或其他 Agent 中，不要粘贴到你的终端里：
+## 安装 CLI 和 Skill
+
+### 推荐：交给 Agent 安装
+
+将根目录的 [`SKILL.md`](SKILL.md) 作为 prompt 交给有 shell 权限的
+coding Agent，或让它读取下面的安装指南：
 
 ```text
-Install Trajex by fetching and following this guide:
-curl -fsSL https://raw.githubusercontent.com/tommy0103/trajex/main/SKILL.md
+请读取并按此安装指南完成 Trajex 安装：
+https://raw.githubusercontent.com/wutongyuonce/trajex/main/SKILL.md
 ```
 
-Agent 会在改动你的机器前先询问你，安装并验证 CLI，然后询问是否要把正式的 `/trajex` skill 安装到当前项目或全局。这个 bootstrap guide 只用于一次性设置；它不是查询 skill 本身。
+`trajex-installer` 会先安装并验证 CLI，再询问将 `/trajex` skill 安装到当前
+项目还是全局；不会擅自改变安装范围。
 
-#### 手动安装
+### 手动安装/更新
 
 Trajex 需要 Node.js 22.13 或更高版本。安装平台无关的 CLI：
 
@@ -76,24 +93,28 @@ trajex --version
 在 macOS、Linux 或 WSL 上，CLI-only installer 等价于：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tommy0103/trajex/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/wutongyuonce/trajex/main/install.sh | sh
 ```
 
-然后安装 Agent skill：
+然后安装 `/trajex` skill。默认安装到当前项目；如需全局可用，加上 `--global`：
 
 ```bash
-trajex install
+npx --yes skills add wutongyuonce/trajex-skill
+# 或：npx --yes skills add wutongyuonce/trajex-skill --global
 ```
 
-`trajex install` 会委托标准 skills installer 安装 `tommy0103/trajex-skill`。
+## 使用 trajex-skill
 
-然后在任何 Claude Code session 中：
+你可以这样使用 trajex-skill：
 
 ```
-/trajex <your question>
+/trajex 上次 auth bug 最后到底改了哪些文件，为什么这么改
+/trajex 这个文件最近在哪些 sessions 里被反复修改
+/trajex 找出最近失败的 tool calls，它们分别发生在哪些任务里
+/trajex 那个 review workflow 的 subagents 各自结论是什么
+/trajex recap this week
+/trajex recap this month
 ```
-
-首次运行会构建索引，约 100 个 sessions 通常需要约 5 秒。之后会进行增量重建。
 
 ### 工作原理
 
@@ -113,28 +134,12 @@ Agent 针对 SQLite 索引编写 JS 查询
 
 当一次检索产生了值得保留的结论时，Agent 会提出一个 markdown memory file。经过用户批准后，它会通过 `trajex --attune <script>` 注册该文件。未来 sessions 中可以通过 `memories()` 召回这些 memories。它是一个 synthesis cache，不是原始证据的替代品。
 
-## App：给人使用的界面
-
-一个配套桌面 app，用于浏览由 CLI 或 app daemon 维护的同一个索引。
-
-<div align="center">
-  <img src=".github/assets/app-screenshot.png" alt="Trajex App" width="720">
-</div>
-
-- **Sessions** — 浏览所有 sessions，支持搜索、项目过滤、可读 tool calls，包括 diffs、terminal output、file viewers
-- **Memory** — 已注册 memory files 的列表和详情视图
-- **Activity** — GitHub 风格热力图、每周/累计 token 图表
-- **Recap** — 可分享的周/月 recap cards，带 archetype theming
-- **Settings** — 数据源配置、自动刷新、重建索引
-
-目前 macOS 预构建版本可在 [Releases](https://github.com/tommy0103/trajex/releases) 获取。源码 app 可在 macOS、Windows 和 Linux 上本地运行。
-
-### 本地运行
+## 本地运行 App
 
 安装 [Node.js 22](https://nodejs.org/) 和 npm，然后从 app 自己的 package 目录运行：
 
 ```bash
-git clone https://github.com/tommy0103/trajex.git
+git clone https://github.com/wutongyuonce/trajex.git
 cd trajex/app
 npm ci
 npm run dev
@@ -142,7 +147,7 @@ npm run dev
 
 `electron-vite` 会启动 renderer dev server 并打开 Electron。首次运行时，Trajex 会创建 `~/.trajex/trajex.sqlite`，索引可用的 Claude Code 和 Codex transcripts，然后监听它们的变化。默认 sources 是 `~/.claude/projects` 和 `~/.codex/sessions`；你可以在 **Settings** 中指向不同目录。在 Windows 上，Trajex 还会检查常见 WSL distributions 中的 Claude Code 目录。
 
-### 调试 app
+## 调试 App
 
 - Renderer 改动使用 Vite hot module replacement。在 macOS 上用 `Cmd+Option+I`，在 Windows/Linux 上用 `Ctrl+Shift+I` 打开 Electron DevTools。
 - Main-process 和 preload logs 会出现在运行 `npm run dev` 的终端中；它们的源码改动由 electron-vite 重新构建。
@@ -190,12 +195,12 @@ packages/core/                # @trajex/core npm workspace（TypeScript + ESM）
 └── dist/                     # Generated package JS, declarations, and schema
 
 packages/cli/                 # @trajex-apps/cli npm workspace
-├── src/trajex.ts            # CLI shell + skill installer delegation
+├── src/trajex.ts            # CLI shell
 ├── scripts/build.mjs         # Compiles CLI + readable Core into one package
 ├── package.json
 └── dist/                     # Generated platform-neutral npm payload
 
-skill-doc/                    # docs-only trajex agent skill 的源码
+trajex-skill/                    # docs-only trajex agent skill 的源码
 ├── SKILL.md                  # Query and memory workflow
 └── references/               # Progressive-disclosure API/schema/pattern docs
     └── recap/                # Per-card recap retrieval + writing references
@@ -206,20 +211,12 @@ app/                          # Electron desktop app（electron-vite + Vue）
 ├── src/renderer/             # Vue renderer
 └── electron.vite.config.ts
 
-packaging/                    # Skill publish infrastructure
-├── build-skill.mjs           # Builds the docs-only skill artifact
-├── skill-package.json
-├── skill-README.md
-├── skill-LICENSE             # MIT（relicensed for the skill artifact）
-└── publish-skill.sh
-
-SKILL.md                      # Remote one-time CLI + skill bootstrap guide
 install.sh                    # POSIX CLI-only installer
 CONTEXT.md                    # Project glossary
 docs/adr/                     # Architecture decision records（0001–0006）
 ```
 
-可选的 `/trajex recap` 流程只会在显式 `/trajex recap` 意图下加载。它从 `skill-doc/references/recap/overview.md` 开始，并按卡片逐步推进：
+可选的 `/trajex recap` 流程只会在显式 `/trajex recap` 意图下加载。它从 `trajex-skill/references/recap/overview.md` 开始，并按卡片逐步推进：
 
 - `skill-doc/references/recap/pattern1-cover.md` + `skill-doc/references/recap/writing1-cover.md`
 - `skill-doc/references/recap/pattern2-thinking.md` + `skill-doc/references/recap/writing2-thinking.md`
@@ -231,21 +228,10 @@ docs/adr/                     # Architecture decision records（0001–0006）
 
 - `packages/core/dist/` 由 `npm run build:core` 生成。它是编译后的内部 `@trajex/core` workspace：JavaScript、type declarations 和 `schema.sql`。
 - `packages/cli/dist/` 由 `npm run build:cli` 生成。它是可发布的 `@trajex-apps/cli` payload：薄命令 shell、可读的 compiled Core，以及 `schema.sql`。
-- `dist/trajex-skill/` 由 `npm run build:skill` 生成。它是 docs-only skill artifact：`SKILL.md`、references 和 skill package metadata。
-- Skill publishing 会把该 artifact stage 到 `trajex-skill` repository 中的 `skills/trajex/`；repository root 只保留 `README.md` 和 `LICENSE`，用于 `npx skills` discovery。
-
-这些目录都是生成产物，不应该手动编辑。Electron app 会直接 import `packages/core/src/`，以便 electron-vite 可以 bundle Core。
-
-## 实现说明
-
-索引会增量重建：只有新增或修改过的 JSONL 文件会被重新解析。当可选 app 正在运行时，它就是 active indexer：它监听 Claude project files，并在 worker thread 中构建索引。仅凭新鲜的 `__app_heartbeat__` 就意味着 daemon 拥有写入职责，因此 CLI 调用会保持只读；另有一个独立的 SQLite writer lease 防止跨进程写入重叠。`__app_last_successful_build__` marker 记录的是索引新鲜度，而不是 ownership。
-
-CLI 没有运行时 npm dependencies，并使用 Node 22 内置的 `node:sqlite` 与 FTS5。正式 skill 只包含说明和 references，不包含第二套可执行 runtime。
-
-2 万行散落的 JSONL → 变成 Agent 可以在毫秒级用 `search()` 和 `sql()` 查询的东西。
+- `packages/cli/dist/` 是生成产物，不应该手动编辑。Electron app 会直接 import `packages/core/src/`，以便 electron-vite 可以 bundle Core。
 
 ---
 
 ## License
 
-AGPL-3.0 @tommy0103
+AGPL-3.0 @wutongyuonce

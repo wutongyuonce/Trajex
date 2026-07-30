@@ -54,14 +54,8 @@ export interface SessionDetailWorkflow {
 export interface AssembledToolCall {
   id: string;
   name: string;
-  presentation: 'default' | 'skill';
   input_json: string | null;
   result: SessionDetailToolResult | null;
-  subagent?: {
-    agent_id: string;
-    agent_type: string | null;
-    description: string | null;
-  };
   workflow?: SessionDetailWorkflow;
 }
 
@@ -69,7 +63,6 @@ export interface AssembledMessage extends SessionDetailMessage {
   [key: string]: unknown;
   tool_calls?: AssembledToolCall[];
   _thinking?: string;
-  _skillMd?: string;
 }
 
 export interface SessionDetailSnapshot {
@@ -125,7 +118,6 @@ export interface SessionToolCallRow {
   message_uuid: string;
   session_id?: string | null;
   name: string;
-  presentation?: string | null;
   input_json?: string | null;
 }
 
@@ -192,16 +184,10 @@ function assembleMessages(
   messages: SessionDetailMessage[],
   toolCalls: ToolCallRecord[],
   toolResults: ToolResultRecord[],
-  subagents: Extract<TranscriptRecord, { kind: 'subagent' }>[],
   workflows: SessionDetailWorkflow[],
 ): AssembledMessage[] {
   const resultsByCallId = new Map<string, SessionDetailToolResult>();
   for (const result of toolResults) resultsByCallId.set(result.tool_use_id, withoutKind(result));
-
-  const subagentsByCallId = new Map<string, Extract<TranscriptRecord, { kind: 'subagent' }>>();
-  for (const subagent of subagents) {
-    if (subagent.parent_tool_use_id) subagentsByCallId.set(subagent.parent_tool_use_id, subagent);
-  }
 
   const callsByMessageUuid = new Map<string, AssembledToolCall[]>();
   const workflowsByCallId = new Map(
@@ -213,18 +199,9 @@ function assembleMessages(
     const call: AssembledToolCall = {
       id: toolCall.id,
       name: toolCall.name,
-      presentation: toolCall.presentation,
       input_json: toolCall.input_json,
       result: resultsByCallId.get(toolCall.id) ?? null,
     };
-    const subagent = subagentsByCallId.get(toolCall.id);
-    if (subagent) {
-      call.subagent = {
-        agent_id: subagent.agent_id,
-        agent_type: subagent.agent_type ?? null,
-        description: subagent.description ?? null,
-      };
-    }
     const workflow = workflowsByCallId.get(toolCall.id);
     if (workflow) call.workflow = workflow;
     const calls = callsByMessageUuid.get(toolCall.message_uuid) ?? [];
@@ -276,7 +253,6 @@ function assembleMessages(
       };
       const mergedCalls = merged.tool_calls ?? [];
       if (message._thinking) merged._thinking = message._thinking;
-      const skillOnly = mergedCalls.length === 1 && mergedCalls[0].presentation === 'skill';
       let nextIndex = index + 1;
       while (nextIndex < raw.length) {
         const next = raw[nextIndex];
@@ -284,12 +260,7 @@ function assembleMessages(
           nextIndex++;
           continue;
         }
-        if (next.content_type === 'skill_instructions' && next.text) {
-          merged._skillMd = next.text;
-          nextIndex++;
-          continue;
-        }
-        if (!skillOnly && next.type === 'assistant' && next.content_type === 'tool_use') {
+        if (next.type === 'assistant' && next.content_type === 'tool_use') {
           if (next.tool_calls) mergedCalls.push(...next.tool_calls);
           if (next.text && !merged.text) merged.text = next.text;
           nextIndex++;
@@ -455,7 +426,7 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
 
   return {
     session,
-    messages: assembleMessages(detailMessages, toolCalls, toolResults, subagents, assembledWorkflows),
+    messages: assembleMessages(detailMessages, toolCalls, toolResults, assembledWorkflows),
     workflows: assembledWorkflows,
     summaries,
   };
@@ -517,7 +488,6 @@ function sessionDetailRecordsFromRows(input: SessionDetailRows): TranscriptRecor
       message_uuid: toolCall.message_uuid,
       session_id: typeof toolCall.session_id === 'string' ? toolCall.session_id : '',
       name: toolCall.name,
-      presentation: toolCall.presentation === 'skill' ? 'skill' : 'default',
       input_json: typeof toolCall.input_json === 'string' ? toolCall.input_json : '',
       file_path: typeof toolCall.file_path === 'string' ? toolCall.file_path : null,
     });

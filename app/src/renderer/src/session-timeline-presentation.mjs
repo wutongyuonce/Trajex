@@ -267,11 +267,11 @@ export function buildSessionTimelinePresentation(item, { query = '', expandedTex
   const effectiveText = expandedText ?? message.text;
   return {
     messageHtml: message.text
-      ? renderMarkdown(effectiveText, { variant: item?.kind === 'meta' ? 'compact' : 'msg', query })
+      ? renderMarkdown(effectiveText, { variant: item?.kind === 'meta' ? 'compact' : 'msg', query, cwd: message.cwd })
       : '',
     thinkingHtml: message._thinking
-      ? renderMarkdown(message._thinking, { variant: 'msg', query })
-      : (item?.kind === 'thinking' ? renderMarkdown(message.text, { variant: 'msg', query }) : ''),
+      ? renderMarkdown(message._thinking, { variant: 'msg', query, cwd: message.cwd })
+      : (item?.kind === 'thinking' ? renderMarkdown(message.text, { variant: 'msg', query, cwd: message.cwd }) : ''),
     toolInputs,
     toolInputText,
     toolPrettyHtml,

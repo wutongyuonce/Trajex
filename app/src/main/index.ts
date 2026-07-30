@@ -580,7 +580,7 @@ ipcMain.handle('local-link:open', async (event, href) => {
   const { response } = await dialog.showMessageBox(win, {
     type: 'question',
     buttons: ['Cancel', 'Open'],
-    defaultId: 1,
+    defaultId: 0,
     cancelId: 0,
     message: '是否用默认应用打开此文件？',
     detail: filePath,

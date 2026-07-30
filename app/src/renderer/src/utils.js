@@ -66,6 +66,17 @@ export function sanitizeMarkdown(html) {
     .replace(/\son\w+="[^"]*"/gi, '');
 }
 
+export function resolveRelativeMarkdownHref(href, cwd) {
+  if (typeof href !== 'string' || typeof cwd !== 'string' || !cwd.startsWith('/')) return href;
+  const rawHref = href.trim();
+  if (!rawHref || /^(?:[A-Za-z][A-Za-z\d+.-]*:|\/|\\|#|\?)/.test(rawHref)) return href;
+  try {
+    return new URL(rawHref.replaceAll(':', '%3A'), `file://${cwd.replace(/\/+$/, '')}/`).href;
+  } catch {
+    return href;
+  }
+}
+
 export function highlightTextNodes(rootEl, query) {
   if (!query) return;
   const q = query.toLowerCase();
@@ -102,6 +113,11 @@ export function renderMarkdown(text, opts = {}) {
   const container = document.createElement('div');
   container.className = cls;
   container.innerHTML = html;
+  if (opts.cwd) {
+    for (const link of container.querySelectorAll('a[href]')) {
+      link.setAttribute('href', resolveRelativeMarkdownHref(link.getAttribute('href'), opts.cwd));
+    }
+  }
   if (opts.query) highlightTextNodes(container, opts.query.trim());
   return container.outerHTML;
 }

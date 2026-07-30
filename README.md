@@ -235,6 +235,10 @@ docs/adr/                     # Architecture decision records（0001–0006）
 
 ---
 
+## Acknowledgements
+
+Trajex is a fork of [tommy0103/obelisk](https://github.com/tommy0103/obelisk). It substantially reworks the desktop app, including a Codex-like vertical progress rail and local-file link previews, and adds Pi session support.
+
 ## License
 
 AGPL-3.0 @wutongyuonce

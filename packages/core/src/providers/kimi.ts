@@ -62,7 +62,7 @@ interface ProjectedSession {
 }
 
 const SOURCE = 'kimi';
-export const KIMI_CANONICAL_TRANSCRIPT_MARKER = '__kimi_canonical_transcript_v3__';
+export const KIMI_CANONICAL_TRANSCRIPT_MARKER = '__kimi_canonical_transcript_v2__';
 
 function defaultKimiRoot(): string {
   return process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');

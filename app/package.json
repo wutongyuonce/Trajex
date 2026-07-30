@@ -1,6 +1,6 @@
 {
   "name": "trajex",
-  "version": "0.2.1",
+  "version": "0.2.0",
   "description": "Memory management for Trajex — let Claude Code search its own memory",
   "homepage": "https://github.com/tommy0103/trajex",
   "author": {

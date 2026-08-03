@@ -1,6 +1,6 @@
 {
   "name": "@trajex/core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "description": "Shared multi-provider transcript indexing and query core for Obelisk transports.",

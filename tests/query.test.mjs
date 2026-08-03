@@ -308,3 +308,45 @@ test('remember rejects missing memory files', () => {
 
   db.close();
 });
+
+test('empty session scopes never broaden list helpers to all rows', () => {
+  const db = memoryDb();
+  const api = createQueryApi(db);
+
+  assert.deepEqual(api.sessions({ sessions: [], limit: 10 }), []);
+  assert.deepEqual(api.summaries({ sessions: [], limit: 10 }), []);
+  assert.deepEqual(api.memories({ sessions: [], limit: 10 }), []);
+  assert.deepEqual(api.subagents({ sessions: [], limit: 10 }), []);
+  assert.deepEqual(api.workflows({ sessions: [], limit: 10 }), []);
+  assert.deepEqual(api.failures({ sessions: [], limit: 10 }), []);
+  db.close();
+});
+
+test('list and raw APIs reject negative or non-finite bounds', () => {
+  const db = memoryDb();
+  const api = createQueryApi(db);
+
+  for (const call of [
+    () => api.sessions({ limit: -1 }),
+    () => api.search('decision', { limit: -1 }),
+    () => api.memories({ limit: Number.POSITIVE_INFINITY }),
+    () => api.overview({ limit: -1 }),
+    () => api.raw('missing', { offset: -1 }),
+  ]) {
+    assert.throws(call, /limit|offset must be a non-negative finite number/);
+  }
+  db.close();
+});
+
+test('context and trace terminate on malformed cyclic parent links', () => {
+  const db = memoryDb();
+  db.prepare('INSERT INTO messages (uuid, session_id, parent_uuid, text, content_type) VALUES (?, ?, ?, ?, ?)')
+    .run('cycle-a', 'sid-1', 'cycle-b', 'a', 'text');
+  db.prepare('INSERT INTO messages (uuid, session_id, parent_uuid, text, content_type) VALUES (?, ?, ?, ?, ?)')
+    .run('cycle-b', 'sid-1', 'cycle-a', 'b', 'text');
+  const api = createQueryApi(db);
+
+  assert.deepEqual(api.context('cycle-a').parentChain.map(m => m.uuid), ['cycle-b']);
+  assert.deepEqual(api.trace('cycle-a').map(m => m.uuid), ['cycle-b', 'cycle-a']);
+  db.close();
+});

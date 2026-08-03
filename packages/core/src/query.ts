@@ -70,14 +70,31 @@ function normalizeOpts(optsOrScalar: QueryOptions | string | number | null | und
   return optsOrScalar;
 }
 
+function normalizeLimit(value: unknown, fallback: number): number {
+  if (value == null) return fallback;
+  const limit = Number(value);
+  if (!Number.isFinite(limit) || limit < 0) throw new Error('limit must be a non-negative finite number');
+  return Math.floor(limit);
+}
+
+function normalizeOffset(value: unknown): number {
+  if (value == null) return 0;
+  const offset = Number(value);
+  if (!Number.isFinite(offset) || offset < 0) throw new Error('offset must be a non-negative finite number');
+  return Math.floor(offset);
+}
+
 /** 把结构化过滤条件编译为 SQL WHERE 片段与绑定参数（列名一律走白名单别名）。 */
 function buildWhere(opts: QueryOptions, aliases: ColumnAliases) {
   const clauses: string[] = [];
   const params: any[] = [];
   if (opts.sessionId) { clauses.push(`${aliases.sessionId} = ?`); params.push(opts.sessionId); }
-  if (opts.sessions?.length) {
-    clauses.push(`${aliases.sessionId} IN (${opts.sessions.map(() => '?').join(',')})`);
-    params.push(...opts.sessions);
+  if (Array.isArray(opts.sessions)) {
+    if (!opts.sessions.length) clauses.push('0');
+    else {
+      clauses.push(`${aliases.sessionId} IN (${opts.sessions.map(() => '?').join(',')})`);
+      params.push(...opts.sessions);
+    }
   }
   if (opts.project) { clauses.push(`${aliases.project} LIKE ?`); params.push(opts.project); }
   if (opts.after) { clauses.push(`${aliases.timestamp} > ?`); params.push(opts.after); }
@@ -149,7 +166,8 @@ function createQueryApi(
 
   /** 以 FTS5 检索消息，并附带命中点附近的会话上下文。 */
   const search = (text: string, opts: QueryOptions = {}) => {
-    const { limit = 20, sessionId, project, after, before, cwd, source, includeMeta = false } = opts;
+    const { sessionId, project, after, before, cwd, source, includeMeta = false } = opts;
+    const limit = normalizeLimit(opts.limit, 20);
     let where = 'WHERE mf.text MATCH ?';
     const filterParams: any[] = [];
     if (sessionId) { where += ' AND mf.session_id=?'; filterParams.push(sessionId); }
@@ -198,7 +216,14 @@ function createQueryApi(
     const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(msg.session_id);
     const chain: DbRow[] = [];
     let cur: DbRow | undefined = msg;
-    while (cur?.parent_uuid) { cur = db.prepare('SELECT * FROM messages WHERE uuid=?').get(cur.parent_uuid); if (cur) chain.unshift(cur); }
+    const seen = new Set<string>([msg.uuid]);
+    while (cur?.parent_uuid) {
+      const parent = db.prepare('SELECT * FROM messages WHERE uuid=?').get(cur.parent_uuid);
+      if (!parent || seen.has(parent.uuid)) break;
+      seen.add(parent.uuid);
+      chain.unshift(parent);
+      cur = parent;
+    }
     const subagent = msg.agent_id ? db.prepare('SELECT * FROM subagents WHERE agent_id=?').get(msg.agent_id) : null;
     let workflow = null;
     if (msg.agent_id) {
@@ -212,7 +237,12 @@ function createQueryApi(
   const trace = (uuid: string) => {
     const chain: DbRow[] = [];
     let cur = db.prepare('SELECT * FROM messages WHERE uuid=?').get(uuid);
-    while (cur) { chain.unshift(cur); cur = cur.parent_uuid ? db.prepare('SELECT * FROM messages WHERE uuid=?').get(cur.parent_uuid) : undefined; }
+    const seen = new Set<string>();
+    while (cur && !seen.has(cur.uuid)) {
+      seen.add(cur.uuid);
+      chain.unshift(cur);
+      cur = cur.parent_uuid ? db.prepare('SELECT * FROM messages WHERE uuid=?').get(cur.parent_uuid) : undefined;
+    }
     return chain;
   };
 
@@ -226,7 +256,7 @@ function createQueryApi(
   /** 列出子代理，并附带各自的 messageCount。 */
   const subagents = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
-    const { limit = 100 } = opts;
+    const limit = normalizeLimit(opts.limit, 100);
     const needsJoin = opts.project || opts.branch || opts.source;
     const { where, params } = buildWhere(opts, { sessionId: 'sa.session_id', project: 's.project', timestamp: 'sa.session_id', branch: 's.git_branch', source: 's.source' });
     params.push(limit);
@@ -240,7 +270,7 @@ function createQueryApi(
   /** 列出 workflow 运行记录（可按 project/branch/source 过滤）。 */
   const workflows = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
-    const { limit = 100 } = opts;
+    const limit = normalizeLimit(opts.limit, 100);
     const needsJoin = opts.project || opts.branch || opts.source;
     const { where, params } = buildWhere(opts, { sessionId: 'w.session_id', project: 's.project', timestamp: 'w.timestamp', branch: 's.git_branch', source: 's.source' });
     params.push(limit);
@@ -263,7 +293,8 @@ function createQueryApi(
 
   /** 按文件路径回查相关工具调用历史（含所属 session 与时间戳）。 */
   const fileHistory = (fp: string, opts: QueryOptions = {}) => {
-    const { limit = 200, after, before, source } = opts;
+    const { after, before, source } = opts;
+    const limit = normalizeLimit(opts.limit, 200);
     let where = 'tc.file_path=?';
     const params: any[] = [fp];
     if (after)  { where += ' AND m.timestamp > ?'; params.push(after); }
@@ -282,7 +313,7 @@ function createQueryApi(
   /** 列出失败的工具结果（is_error=1 或内容以 'Exit code' 开头），附后续消息。 */
   const failures = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
-    const { limit = 50 } = opts;
+    const limit = normalizeLimit(opts.limit, 50);
     const needsJoin = opts.project || opts.branch || opts.source;
     const { where, params: filterParams } = buildWhere(opts, { sessionId: 'tr.session_id', project: 's.project', timestamp: 'rm.timestamp', branch: 's.git_branch', source: 's.source' });
     const join = needsJoin ? 'LEFT JOIN sessions s ON s.id=tr.session_id' : '';
@@ -301,7 +332,7 @@ function createQueryApi(
   /** 按过滤条件查 session 列表，默认按 ended_at 倒序取 50 条。 */
   const sessions = (optsOrN?: QueryOptions | number | string) => {
     const opts = normalizeOpts(optsOrN, 'sessionId');
-    const { limit = 50 } = opts;
+    const limit = normalizeLimit(opts.limit, 50);
     const { where, params } = buildWhere(opts, { sessionId: 's.id', project: 's.project', timestamp: 's.started_at', branch: 's.git_branch', source: 's.source' });
     params.push(limit);
     return db.prepare(`SELECT * FROM sessions s WHERE ${where} ORDER BY ended_at DESC LIMIT ?`).all(...params);
@@ -313,7 +344,7 @@ function createQueryApi(
   /** 会话摘要列表（可附带 session 标题与 project）。 */
   const summaries = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
-    const { limit = 100 } = opts;
+    const limit = normalizeLimit(opts.limit, 100);
     const { where, params } = buildWhere(opts, { sessionId: 'su.session_id', project: 's.project', timestamp: 'su.timestamp', branch: 's.git_branch', source: 's.source' });
     params.push(limit);
     return db.prepare(`SELECT su.*, s.title as session_title, s.project FROM summaries su LEFT JOIN sessions s ON s.id=su.session_id WHERE ${where} ORDER BY su.timestamp DESC LIMIT ?`).all(...params);
@@ -323,9 +354,9 @@ function createQueryApi(
   const overview = (optsOrScalar?: QueryOptions | string | number) => {
     const opts = normalizeOverviewOpts(optsOrScalar);
     const cwd = process.cwd();
-    const sessionLimit = opts.limit ?? 8;
-    const projectLimit = opts.projectLimit ?? 20;
-    const memoryLimit = opts.memoryLimit ?? 100;
+    const sessionLimit = normalizeLimit(opts.limit, 8);
+    const projectLimit = normalizeLimit(opts.projectLimit, 20);
+    const memoryLimit = normalizeLimit(opts.memoryLimit, 100);
 
     const projectDescriptor = (row: DbRow | null, source: string, confidence: string) => row ? ({
       project: row.project,
@@ -501,7 +532,8 @@ function createQueryApi(
 
   /** 调用对应 Provider 的 raw lookup，从 SQLite message 回到原始日志证据。 */
   const raw = (messageUuid: string, opts: { offset?: number; limit?: number } = {}) => {
-    const { offset = 0, limit = 10000 } = opts;
+    const offset = normalizeOffset(opts.offset);
+    const limit = normalizeLimit(opts.limit, 10000);
     const message = db.prepare('SELECT * FROM messages WHERE uuid=?').get(messageUuid);
     if (!message) return null;
     const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(message.session_id) ?? null;
@@ -534,7 +566,8 @@ function createQueryApi(
   /** 记忆检索：带 query 时走 memories_fts 相关度排序，否则按创建时间倒序。 */
   const memories = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
-    const { limit = 50, query } = opts;
+    const { query } = opts;
+    const limit = normalizeLimit(opts.limit, 50);
     assertEnglishMemoryText(query, 'memories() query');
     const needsJoin = opts.branch || opts.source;
     const { where: baseWhere, params } = buildWhere(opts, {

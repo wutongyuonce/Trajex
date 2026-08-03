@@ -24,7 +24,9 @@ overview, sessions, recent, summaries, memories,
 subagents, workflows, workflowTree, fileHistory, failures
 ```
 
-All list helpers accept bounded `limit` options. Many helpers also accept
+All list helpers accept bounded `limit` options. `limit` must be a finite
+non-negative number; invalid values throw instead of becoming an unbounded
+SQLite `LIMIT`. An explicit `sessions: []` filter matches no sessions. Many helpers also accept
 `project`, `sessionId`, `sessions`, `after`, `before`, `branch`, and `source`
 when the underlying table can express that scope. Passing a string to many list
 helpers is treated as `sessionId`; passing a number is treated as `limit`.
@@ -303,6 +305,9 @@ Returns:
 
 `raw()` resolves main-session, subagent, workflow-agent, and Codex JSONL paths
 from indexed metadata.
+
+`offset` and `limit` must be finite non-negative numbers; fractional values are
+normalized down to integers.
 
 ---
 

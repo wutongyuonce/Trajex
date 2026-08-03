@@ -185,7 +185,9 @@ These helpers are convenience accessors over the same SQLite structure. They do
 not replace `sql()`, but they are the default first-pass surface. Use `sql()`
 when you need an exact aggregation or a join the helper does not expose.
 
-All list helpers accept a bounded `limit`. Many also accept:
+All list helpers accept a bounded `limit`. `limit` must be a finite
+non-negative number; invalid values throw instead of becoming an unbounded
+SQLite query. An explicit `sessions: []` filter matches no sessions. Many also accept:
 `{ project, after, before, sessionId, sessions, branch, source }`. Check
 `references/api-reference.md` or a tiny sample before relying on less common
 filters or return fields.
@@ -201,7 +203,8 @@ filters or return fields.
 - `failures(opts?)` -- failed tool results with tool/session context, newest first.
 - `trace(uuid)` -- parent chain from root to message.
 - `thread(sessionId, opts?)` -- session messages ordered by timestamp, omitting meta messages by default. Pass `{ includeMeta: true }` when investigating injected context or command envelopes.
-- `raw(uuid, opts?)` -- windowed access to the original JSONL line.
+- `raw(uuid, opts?)` -- windowed access to the original JSONL line; `offset` and
+  `limit` must be finite non-negative numbers.
 - `memories(opts?)` -- recall memory layer. opts: `{ query, project, sessionId, sessions, after, before, branch, limit }`. Without `query`, returns active memory records newest first. With `query`, searches `summary`/`path` through safe FTS5 tokenization and returns `rank`; lower rank sorts earlier. Records may include nullable JSON `anchors` for explicit recall surfaces such as files. Read the file at `path` for full content.
 
 ## Retrieval Contract

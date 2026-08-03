@@ -205,6 +205,45 @@ npm run dist:mac
 `app/release/`；`npm run pack` 生成 `release/mac-arm64/Trajex.app`，
 `npm run dist:mac` 生成 DMG 和 ZIP。没有 Apple Developer ID 时，产物不会签名。
 
+## 发布 npm 包
+
+只有 `@trajex-apps/cli` 会发布到 npm；`@trajex/core` 是 private workspace，
+构建时被 CLI 直接编译进自身，不单独发布。
+
+### 前置条件
+
+- 已登录 npm，且账号是 `@trajex-apps` scope 所属组织的有发布权限成员（Owner/Admin）；
+- 账号已启用 2FA（npm 要求发布者启用）。发布时使用 `npm login` 生成的会话令牌，
+  或带 bypass-2FA 权限的 access token。
+
+### 发布步骤
+
+```bash
+# 1. 登录（一次性）
+npm login
+
+# 2. 升版本：每次发布前必须升号，npm 不允许覆盖已发布的版本
+npm version patch -w @trajex-apps/cli
+# 或指定具体版本（--no-git-tag-version：只改文件，不创建 git tag/commit）：
+npm version 0.2.1 -w @trajex-apps/cli --no-git-tag-version
+
+# 3. 发布（prepack 钩子会自动先执行 build:cli 再上传）
+npm publish --workspace @trajex-apps/cli
+
+# 4. 验证
+npm view @trajex-apps/cli version
+npm i -g @trajex-apps/cli   # 本地全局更新
+```
+
+### 说明
+
+- `packages/cli` 的 `prepack: "npm run build"` 保证发布的永远是新鲜构建产物；
+- `files: ["dist", "README.md"]` 决定 tarball 内容，`publishConfig.access: "public"`
+  允许组织 scope 以公共包发布；
+- 误升版本号后，在**尚未发布**前可随时用
+  `npm version <版本> -w @trajex-apps/cli --no-git-tag-version` 回退；
+- 发布刚完成后立刻 `npm view` 可能短暂 404（registry CDN 传播延迟），稍等重试即可。
+
 ## 会索引哪些内容
 
 | Layer | Source | 捕获内容 |

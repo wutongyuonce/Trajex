@@ -59,6 +59,14 @@ Only new or modified JSONL files are re-parsed. When the optional app is running
 A companion desktop app for browsing the same index maintained by the CLI or the app daemon.
 
 <div align="center">
+  <img src=".github/assets/sessionlist_light.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/sessionlist_dark.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
   <img src=".github/assets/session_light.png" alt="Trajex App" width="720">
 </div>
 

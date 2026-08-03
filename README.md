@@ -59,6 +59,14 @@ Codex root threads 会成为普通 Trajex sessions。当 parent-thread metadata 
 一个配套桌面 app，用于浏览由 CLI 或 app daemon 维护的同一个索引。
 
 <div align="center">
+  <img src=".github/assets/sessionlist_light.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
+  <img src=".github/assets/sessionlist_dark.png" alt="Trajex App" width="720">
+</div>
+
+<div align="center">
   <img src=".github/assets/session_light.png" alt="Trajex App" width="720">
 </div>
 

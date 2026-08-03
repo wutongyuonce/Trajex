@@ -36,6 +36,7 @@ test('codex parse() yields a deduped, tool-aware record stream with a total sess
     { type: 'response_item', timestamp: '2026-06-10T10:00:02Z', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi there' }] } },
     { type: 'response_item', timestamp: '2026-06-10T10:00:03Z', payload: { type: 'function_call', call_id: 'call_1', name: 'shell', arguments: '{"cmd":"ls"}' } },
     { type: 'response_item', timestamp: '2026-06-10T10:00:04Z', payload: { type: 'function_call_output', call_id: 'call_1', output: 'file listing' } },
+    { type: 'event_msg', timestamp: '2026-06-10T10:00:04.500Z', payload: { type: 'context_compacted' } },
     { type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 100, output_tokens: 50 } } } },
     { type: 'event_msg', timestamp: '2026-06-10T10:00:05Z', payload: { type: 'task_complete', duration_ms: 1500 } },
   ]);
@@ -59,6 +60,8 @@ test('codex parse() yields a deduped, tool-aware record stream with a total sess
   assert.deepEqual(byKind('tool_call').map(t => ({ id: t.id, name: t.name })), [{ id: `codex:${META.id}:call_1`, name: 'shell' }]);
   assert.equal(byKind('tool_result').length, 1);
   assert.equal(byKind('tool_result')[0].tool_use_id, `codex:${META.id}:call_1`);
+
+  assert.deepEqual(byKind('summary').map(s => ({ source: s.source, content: s.content })), [{ source: 'codex', content: '已 compact' }]);
 
   // task_complete → turn duration on the text-assistant message.
   assert.deepEqual(byKind('message-turn-duration').map(d => d.turn_duration_ms), [1500]);

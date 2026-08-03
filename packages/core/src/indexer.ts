@@ -19,17 +19,20 @@ import { runRetryableWriteTransaction, isBeginBusyFailure, hasUnusableTransactio
 import { createBuiltinProviderRegistry } from './providers/builtins.ts';
 import type { NodeSqliteDb, SqliteRow } from './sqlite-types.ts';
 
+/** 单个失败 unit 的摘要：路径 + 错误消息 + 可选 trajex 诊断。 */
 interface SkippedFile {
   path: string;
   error: string;
   diagnostics?: unknown;
 }
 
+/** buildIndex 检查阶段的配置：可注入时钟与是否忽略最近 build 防抖。 */
 interface BuildCheckOptions {
   now?: number;
   ignoreRecentBuild?: boolean;
 }
 
+/** 统一把任意错误转成可打印字符串（诊断信息保留在错误对象的 trajex 字段）。 */
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -76,6 +79,7 @@ function shouldSkipBuild(db: NodeSqliteDb, { now = Date.now(), ignoreRecentBuild
   return { skip: false };
 }
 
+/** 错误是否为缺少 index_state 表（首次初始化/旧库场景，允许写路径继续）。 */
 function isMissingIndexStateTable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /no such table:\s*(?:main\.)?index_state\b/i.test(message);
@@ -103,7 +107,7 @@ function inspectBuildOwnership({ force = false }: { force?: boolean } = {}) {
  */
 function buildIndex({ force = false }: { force?: boolean } = {}) {
   const ownership = inspectBuildOwnership({ force });
-  if (ownership.skip) return ownership;
+  if (ownership.skip) return ownership; // skip 为 false 有资格写，为 true 直接返回
   const lease = acquireWriterLease({
     lockPath: writerLockPathFor(DB_PATH),
     openDb: openWriterLeaseDb,

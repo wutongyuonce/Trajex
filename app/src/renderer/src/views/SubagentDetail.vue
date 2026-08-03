@@ -10,6 +10,8 @@ const props = defineProps({ id: String, agentId: String });
 const router = useRouter();
 
 const messages = ref([]);
+const summaries = ref([]);
+const openSummaries = ref(new Set());
 const loading = ref(false);
 
 const parentSession = computed(() => state.sessions.find(s => s.id === props.id));
@@ -21,8 +23,16 @@ async function load() {
   if (!props.agentId) return;
   loading.value = true;
   try {
-    messages.value = await loadSubagentDetail(props.agentId);
+    const detail = await loadSubagentDetail(props.agentId);
+    messages.value = detail.messages;
+    summaries.value = detail.summaries;
   } finally { loading.value = false; }
+}
+
+function toggleSummary(id) {
+  const next = new Set(openSummaries.value);
+  if (next.has(id)) next.delete(id); else next.add(id);
+  openSummaries.value = next;
 }
 
 function goBack() {
@@ -55,7 +65,15 @@ async function handleLoadFull(uuid, el) {
 
       <div v-if="loading" class="empty">Loading…</div>
 
-      <div v-else class="timeline">
+      <div v-if="summaries.length" class="timeline">
+        <div v-for="summary in summaries" :key="summary.id" class="msg meta summary">
+          <div class="msg-meta-collapsed" :class="{ open: openSummaries.has(summary.id) }">
+            <button class="meta-toggle" @click="toggleSummary(summary.id)"><span class="meta-label">Summary</span><span class="meta-preview">{{ summary.source || 'summary' }}</span></button>
+            <div v-if="openSummaries.has(summary.id)" class="meta-body" v-html="renderMarkdown(summary.content, { variant: 'compact' })"></div>
+          </div>
+        </div>
+      </div>
+      <div v-if="!loading" class="timeline">
         <div
           v-for="(msg, idx) in messages"
           :key="msg.uuid"

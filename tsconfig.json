@@ -22,7 +22,6 @@
     "app",
     "dist",
     "release",
-    "tests/app-*.test.mjs",
-    "tests/recap-capture-query.test.mjs"
+    "tests/app-*.test.mjs"
   ]
 }

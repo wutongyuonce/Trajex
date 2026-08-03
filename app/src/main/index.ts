@@ -1,14 +1,12 @@
-import { app, BrowserWindow, ipcMain, clipboard, dialog, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import chokidar from 'chokidar';
 import { writeHeartbeat } from './indexer.ts';
 import { createIndexerService } from './indexer-service.ts';
 import { createWorkerBuildIndex } from './indexer-worker-client.ts';
-import { buildRecapExportQuery } from './recap-capture-query.ts';
 import { previewLocalMarkdownLink, resolveExistingLocalMarkdownFile } from './local-markdown-link.mjs';
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
 import { migrateCoreSchemaColumns } from '../../../packages/core/src/schema-migrations.ts';
@@ -250,7 +248,6 @@ function startBackgroundResources({ runStartupBuild = false } = {}) {
     const service = startIndexerService({ buildOnStart: false });
     if (runStartupBuild) service.runBuildNow('startup');
   }
-  if (!trajexWatcher) startTrajexWatcher();
 }
 
 async function stopIndexerServiceAndWait({ waitForIdle = true } = {}) {
@@ -266,11 +263,6 @@ async function stopBackgroundResources({ stopWorker = false } = {}) {
   if (stopWorker && indexerWorker) {
     indexerWorker.stop();
     indexerWorker = null;
-  }
-  if (trajexWatcher) {
-    const watcher = trajexWatcher;
-    trajexWatcher = null;
-    if (typeof watcher.close === 'function') await Promise.resolve(watcher.close());
   }
   closeDb();
 }
@@ -317,36 +309,6 @@ function createWindow() {
 }
 
 const TRAJEX_DIR = path.join(os.homedir(), '.trajex');
-const RECAP_DIR = path.join(TRAJEX_DIR, 'recap');
-let trajexWatcher: import("chokidar").FSWatcher | null = null;
-
-function startTrajexWatcher() {
-  if (trajexWatcher) return trajexWatcher;
-  if (!fs.existsSync(TRAJEX_DIR)) {
-    fs.mkdirSync(TRAJEX_DIR, { recursive: true });
-  }
-  trajexWatcher = chokidar.watch(TRAJEX_DIR, {
-    ignoreInitial: true,
-    awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
-    ignored: (p, stats) => {
-      if (stats?.isDirectory()) return false;
-      if (!stats) return false;
-      return !p.endsWith('.md') && !p.endsWith('.json');
-    },
-  });
-  trajexWatcher.on('add', onTrajexChange);
-  trajexWatcher.on('change', onTrajexChange);
-  trajexWatcher.on('unlink', onTrajexChange);
-  return trajexWatcher;
-}
-
-function onTrajexChange(filePath) {
-  if (filePath.startsWith(RECAP_DIR)) {
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send('trajex:recap-updated', filePath);
-    }
-  }
-}
 
 app.whenReady().then(() => {
   startBackgroundResources({ runStartupBuild: true });
@@ -407,7 +369,7 @@ function querySessionWorkflows(sessionId: string): SessionWorkflowRow[] {
 
 function querySessionSummaries(sessionId: string): SessionSummaryRow[] {
   if (!db) return [];
-  return db.prepare(`SELECT * FROM summaries WHERE session_id = ?`).all(sessionId) as SessionSummaryRow[];
+  return db.prepare(`SELECT * FROM summaries WHERE session_id = ? AND agent_id IS NULL`).all(sessionId) as SessionSummaryRow[];
 }
 
 function querySessionSnapshot(sessionId: string): SessionDetailAssemblyInput {
@@ -526,6 +488,11 @@ ipcMain.handle('db:getSubagentToolResults', (_, agentId) => {
     JOIN messages m ON m.uuid = tr.message_uuid
     WHERE m.agent_id = ?
   `).all(agentId);
+});
+
+ipcMain.handle('db:getSubagentSummaries', (_, agentId) => {
+  if (!db) return [];
+  return db.prepare(`SELECT * FROM summaries WHERE agent_id = ? ORDER BY timestamp, id`).all(agentId);
 });
 
 ipcMain.handle('db:getSessionSummaries', (_, sessionId) => {
@@ -671,91 +638,6 @@ ipcMain.handle('db:getUsageStats', (_, opts = {}) => {
 
 // --- Capture ---
 
-const EXPORT_WIDTH = 540;
-const EXPORT_HEIGHT = 675;
-
-async function createExportCapture(parentWin, query) {
-  const exportWin = new BrowserWindow({
-    width: EXPORT_WIDTH,
-    height: EXPORT_HEIGHT,
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      offscreen: true,
-      deviceScaleFactor: 2,
-    } as Electron.WebPreferences,
-  });
-
-  const isDev = process.argv.includes('--dev') || !!process.env.ELECTRON_RENDERER_URL;
-  const url = isDev
-    ? `${process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173'}/#/recap-export?${query}`
-    : `file://${path.join(__dirname, '..', 'renderer', 'index.html')}#/recap-export?${query}`;
-
-  await exportWin.loadURL(url);
-  await waitForExportReady(exportWin.webContents);
-
-  const image = await exportWin.webContents.capturePage({
-    x: 0, y: 0, width: EXPORT_WIDTH, height: EXPORT_HEIGHT,
-  });
-  exportWin.close();
-  return image;
-}
-
-async function waitForExportReady(webContents, timeoutMs = 2500) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const ready = await webContents.executeJavaScript('window.__TRAJEX_RECAP_EXPORT_READY__ === true', true);
-      if (ready) return true;
-    } catch {}
-    await new Promise(r => setTimeout(r, 50));
-  }
-  return false;
-}
-
-ipcMain.handle('capture:export', async (event, { cardIdx, archetype, filename } = {}) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  if (!win) return null;
-  const query = buildRecapExportQuery({ cardIdx, archetype, filename });
-  const image = await createExportCapture(win, query);
-  const { filePath } = await dialog.showSaveDialog(win, {
-    defaultPath: `trajex-recap-${cardIdx + 1}.png`,
-    filters: [{ name: 'PNG', extensions: ['png'] }],
-  });
-  if (!filePath) return null;
-  fs.writeFileSync(filePath, image.toPNG());
-  return filePath;
-});
-
-ipcMain.handle('capture:copy', async (event, { cardIdx, archetype, filename } = {}) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  if (!win) return false;
-  const query = buildRecapExportQuery({ cardIdx, archetype, filename });
-  const image = await createExportCapture(win, query);
-  clipboard.writeImage(image);
-  return true;
-});
-
-// --- Recap files ---
-
-ipcMain.handle('recap:list', () => {
-  if (!fs.existsSync(RECAP_DIR)) return [];
-  return fs.readdirSync(RECAP_DIR)
-    .filter(f => f.endsWith('.json'))
-    .sort()
-    .reverse();
-});
-
-ipcMain.handle('recap:read', (_, filename) => {
-  const filePath = path.join(RECAP_DIR, path.basename(filename));
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-  } catch { return null; }
-});
-
 // --- Settings ---
 
 const SETTINGS_PATH = path.join(TRAJEX_DIR, 'settings.json');
@@ -776,7 +658,6 @@ ipcMain.handle('settings:get', () => {
   const persisted = loadPersistedSettings();
   const paths = getRuntimePaths(persisted);
   const { providerRoots, providerRegistry, claudeDir, codexDir, dbPath: dbFile } = paths;
-  const recapDir = persisted.recapDir || RECAP_DIR;
   let memoryCount = 0;
   const sourceStats = new Map<string, { sessionCount: number; lastIndexed: string }>();
 
@@ -809,11 +690,11 @@ ipcMain.handle('settings:get', () => {
   const connected = sources.some((source) => source.status !== 'error');
 
   return {
+    version: app.getVersion(),
     providerRoots,
     claudeDir,
     codexDir,
     dbPath: dbFile,
-    recapDir,
     autoRefresh: persisted.autoRefresh !== false,
     sources,
     memoryCount,

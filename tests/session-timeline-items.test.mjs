@@ -76,3 +76,27 @@ test('tail appends do not rebuild existing timeline items', () => {
   assert.equal(appended[999], initial[999]);
   assert.equal(appended[1000].key, 'message:message-1000');
 });
+
+test('summaries merge by time without reordering messages or equal-time items', () => {
+  const messages = [
+    message('message-1000', { timestamp: '2026-06-10T10:00:00Z' }),
+    message('message-999', { timestamp: '2026-06-10T10:00:02Z' }),
+    message('message-no-time'),
+  ];
+  const summaries = [
+    { id: 'summary-before', timestamp: '2026-06-10T09:59:59Z', content: 'before' },
+    { id: 'summary-equal', timestamp: '2026-06-10T10:00:00Z', content: 'equal' },
+    { id: 'summary-after', timestamp: '2026-06-10T10:00:01Z', content: 'after' },
+  ];
+
+  const items = reconcileTimelineItems([], messages, summaries);
+
+  assert.deepEqual(items.map(item => item.key), [
+    'summary:summary-before',
+    'message:message-1000',
+    'summary:summary-equal',
+    'summary:summary-after',
+    'message:message-999',
+    'message:message-no-time',
+  ]);
+});

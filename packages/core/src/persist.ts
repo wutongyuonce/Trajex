@@ -21,6 +21,7 @@
 import type { Cursor, TranscriptRecord, IndexUnit } from './providers/types.ts';
 import type { SqliteDb } from './sqlite-types.ts';
 
+// session 合并时时间字段取 MIN/MAX：started_at 取更早、ended_at 取更晚（单边为 null 时取对方）。
 const minStr = (a: string | null, b: string | null) => (a == null ? b : b == null ? a : a < b ? a : b);
 const maxStr = (a: string | null, b: string | null) => (a == null ? b : b == null ? a : a > b ? a : b);
 
@@ -43,7 +44,7 @@ function statements(db: SqliteDb) {
         cwd=excluded.cwd, skill=excluded.skill, source=excluded.source`),
     tc: db.prepare('INSERT OR REPLACE INTO tool_calls (id,message_uuid,session_id,name,input_json,file_path) VALUES (?,?,?,?,?,?)'),
     tr: db.prepare('INSERT OR REPLACE INTO tool_results (tool_use_id,message_uuid,session_id,content,file_path,is_error) VALUES (?,?,?,?,?,?)'),
-    sum: db.prepare('INSERT OR REPLACE INTO summaries (id,session_id,timestamp,source,content) VALUES (?,?,?,?,?)'),
+    sum: db.prepare('INSERT OR REPLACE INTO summaries (id,session_id,agent_id,timestamp,source,content) VALUES (?,?,?,?,?,?)'),
     ses: db.prepare('INSERT OR REPLACE INTO sessions (id,title,project,project_path,started_at,ended_at,git_branch,version,message_count,jsonl_path,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)'),
     sub: db.prepare(`
       INSERT INTO subagents (agent_id,session_id,parent_tool_use_id,agent_type,description,duration_ms,total_tokens)
@@ -93,6 +94,7 @@ function deleteSession(db: SqliteDb, sessionId: string) {
   db.prepare('DELETE FROM workflow_agents WHERE session_id=?').run(sessionId);
   db.prepare('DELETE FROM workflows WHERE session_id=?').run(sessionId);
   db.prepare('DELETE FROM summaries WHERE session_id=?').run(sessionId);
+  db.prepare('DELETE FROM memories WHERE session_id=?').run(sessionId);
   db.prepare('DELETE FROM sessions WHERE id=?').run(sessionId);
 }
 
@@ -120,7 +122,7 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
         st.tr.run(r.tool_use_id, r.message_uuid, r.session_id, r.content, r.file_path, r.is_error);
         break;
       case 'summary':
-        st.sum.run(r.id, r.session_id, r.timestamp, r.source, r.content);
+        st.sum.run(r.id, r.session_id, r.agent_id ?? null, r.timestamp, r.source, r.content);
         break;
       case 'subagent':
         st.sub.run(r.agent_id, r.session_id, r.parent_tool_use_id ?? null, r.agent_type ?? null, r.description ?? null, r.duration_ms ?? null, r.total_tokens ?? null);
@@ -161,10 +163,14 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
     }
   };
 
+  // 逐个拉取 generator 的产出并写入：adapter 的 parse() 是惰性生成器，
+  // 每调用一次 next() 才产出一条记录，写完后才取返回值（即新 cursor）。
   let step = gen.next();
   while (!step.done) { write(step.value); step = gen.next(); }
   const cursor = step.value;
 
+  // cursor 形状是 Provider 协议约定的 "mtime:lines"，拆开持久化到 index_state，
+  // 供下一轮发现阶段比较 mtime、解析阶段跳过已消费的行（增量恢复）。
   if (cursor != null) {
     const [mtime, lines] = cursor.split(':');
     st.idx.run(unit.key, Number(mtime), Number(lines));

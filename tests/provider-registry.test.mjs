@@ -60,23 +60,18 @@ test('built-in provider registry exposes every source without caller-side branch
   const registry = createBuiltinProviderRegistry({
     claude: '/sources/claude',
     codex: '/sources/codex',
-    kimi: '/sources/kimi',
     pi: '/sources/pi',
   });
 
   assert.deepEqual(registry.catalog().map(({ id, name }) => ({ id, name })), [
     { id: 'claude', name: 'Claude Code' },
     { id: 'codex', name: 'Codex' },
-    { id: 'kimi', name: 'Kimi Code' },
     { id: 'pi', name: 'Pi' },
   ]);
   assert.deepEqual(registry.watchRoots(), [
     '/sources/claude/projects',
-    '/sources/claude/history.jsonl',
     '/sources/codex/sessions',
     '/sources/codex/session_index.jsonl',
-    '/sources/kimi/sessions',
-    '/sources/kimi/session_index.jsonl',
     '/sources/pi/sessions',
   ]);
 });

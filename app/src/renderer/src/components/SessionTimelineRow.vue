@@ -16,6 +16,8 @@ const emit = defineEmits(['load-full-text', 'navigate-subagent']);
 
 const msg = computed(() => props.item.message);
 const expandedText = computed(() => props.expandedMessageText.get(msg.value.uuid));
+const summaryText = computed(() => String(props.item.summary?.content || ''));
+const summaryOpen = computed(() => props.disclosures.isOpen(`summary:${props.item.summary?.id}`));
 
 // The expensive HTML projection is memoized by the exact inputs that can
 // change its output. Focus, disclosure, nav progress, and parent scroll state
@@ -27,6 +29,10 @@ const presentation = computed(() => buildSessionTimelinePresentation(props.item,
 
 function toggleDisclosure(key, messageUuid) {
   props.disclosures.toggleOpen(key, messageUuid);
+}
+
+function toggleSummary(summaryId) {
+  props.disclosures.toggleOpen(`summary:${summaryId}`, summaryId);
 }
 
 function toggleRaw(key, messageUuid) {
@@ -47,7 +53,21 @@ function navigateToSubagent(agentId, description = '') {
 </script>
 
 <template>
-  <template v-if="item.kind === 'meta'">
+  <template v-if="item.kind === 'summary'">
+    <div class="msg meta summary" :class="{ 'is-focused': focused }" :data-uuid="item.anchorUuid">
+      <div class="msg-meta-collapsed" :class="{ open: summaryOpen }">
+        <button class="meta-toggle" @click="toggleSummary(item.summary.id)">
+          <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
+          <span class="meta-label">Summary</span>
+          <span class="meta-preview">{{ item.summary?.source || 'summary' }}</span>
+        </button>
+        <div v-if="summaryOpen" class="meta-body">
+          <div>{{ summaryText }}</div>
+        </div>
+      </div>
+    </div>
+  </template>
+  <template v-else-if="item.kind === 'meta'">
     <div class="msg meta" :class="{ 'is-focused': focused }" :data-uuid="item.anchorUuid" :data-message-uuid="item.messageUuid">
       <div class="msg-meta-collapsed" :class="{ open: disclosures.isOpen(`meta:${msg.uuid}`) }" :data-view-key="`meta:${msg.uuid}`">
         <button class="meta-toggle" @click="toggleDisclosure(`meta:${msg.uuid}`, msg.uuid)">
@@ -216,6 +236,36 @@ function navigateToSubagent(agentId, description = '') {
                     </template>
                   </div>
                 </template>
+              </div>
+            </div>
+          </template>
+
+          <template v-else-if="tc.name === 'Agent' && tc.subagent">
+            <div class="msg-tool agent-call" :class="{ open: disclosures.isOpen(`tool:${tc.id}`), 'is-error': tc.result && tc.result.is_error }" :data-view-key="`tool:${tc.id}`">
+              <button class="toolcall-toggle" @click="toggleDisclosure(`tool:${tc.id}`, msg.uuid)">
+                <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
+                <span class="tool-name">Agent</span>
+                <span class="tool-arg">{{ tc.subagent.description || presentation.toolArgPreviews.get(tc.id) }}</span>
+              </button>
+              <div class="toolcall-body agent-call-body">
+                <div class="toolcall-body-strip">
+                  <span class="strip-label">Agent</span>
+                  <span class="spacer"></span>
+                  <button class="raw-toggle" :class="{ active: disclosures.isRaw(`tool:${tc.id}`) }" @click.stop="toggleRaw(`tool:${tc.id}`, msg.uuid)">{ } Raw</button>
+                </div>
+                <div class="toolcall-pretty" :class="{ hidden: disclosures.isRaw(`tool:${tc.id}`) }" v-html="presentation.toolPrettyHtml.get(tc.id)"></div>
+                <div class="toolcall-raw" :class="{ show: disclosures.isRaw(`tool:${tc.id}`) }">
+                  <div class="tc-section">Input</div>
+                  <pre>{{ presentation.toolInputText.get(tc.id) }}</pre>
+                  <template v-if="tc.result">
+                    <div class="tc-section">{{ tc.result.is_error ? 'Error' : 'Output' }}</div>
+                    <pre>{{ tc.result.content || '(empty)' }}</pre>
+                  </template>
+                </div>
+                <button class="agent-detail-link" @click.stop="navigateToSubagent(tc.subagent.agent_id, tc.subagent.description || '' )">
+                  <span>View Agent details</span>
+                  <span aria-hidden="true">&rarr;</span>
+                </button>
               </div>
             </div>
           </template>

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { getArgPreview, getToolIcon, renderTerminalTool } from '../app/src/renderer/src/tool-renderer.js';
+import { renderPrettyTool } from '../app/src/renderer/src/session-timeline-presentation.mjs';
 
 test('Codex exec renders source and decoded result instead of a Bash terminal', () => {
   const output = JSON.stringify([
@@ -105,6 +106,16 @@ test('Codex exec syntax highlighting escapes source content', () => {
 
 test('Codex exec preview uses its string input', () => {
   assert.equal(getArgPreview({ input_json: JSON.stringify('echo hello') }), 'echo hello');
+});
+
+test('apply_patch uses a compact patch viewer instead of a character field grid', () => {
+  const patch = '*** Begin Patch\n*** Update File: docs/example.md\n@@\n-old\n+new\n*** End Patch';
+  const html = renderPrettyTool({ name: 'apply_patch', input_json: JSON.stringify(patch), result: { content: 'Done.' } });
+
+  assert.match(html, />Patch</);
+  assert.match(html, /docs\/example\.md/);
+  assert.doesNotMatch(html, /field-grid/);
+  assert.equal(getArgPreview({ name: 'apply_patch', input_json: JSON.stringify(patch) }), 'docs/example.md');
 });
 
 test('Codex exec uses the Claude Bash terminal icon', () => {

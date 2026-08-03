@@ -57,6 +57,7 @@ export interface AssembledToolCall {
   input_json: string | null;
   result: SessionDetailToolResult | null;
   workflow?: SessionDetailWorkflow;
+  subagent?: Pick<SessionSubagentRow, 'agent_id' | 'parent_tool_use_id' | 'agent_type' | 'description'>;
 }
 
 export interface AssembledMessage extends SessionDetailMessage {
@@ -65,6 +66,7 @@ export interface AssembledMessage extends SessionDetailMessage {
   _thinking?: string;
 }
 
+/** 详情展示的顶层输出：session 头 + 有序消息 + workflow 树 + 摘要。 */
 export interface SessionDetailSnapshot {
   session: SessionDetailSession | null;
   messages: AssembledMessage[];
@@ -161,6 +163,7 @@ export interface SessionSummaryRow {
   session_id?: string | null;
 }
 
+/** 输入形态之二：renderer/持久化层的多表行集合（由上层 SQL 查询拼装）。 */
 export interface SessionDetailRows {
   session?: SessionDetailSessionRow | null;
   messages?: SessionMessageRow[];
@@ -184,6 +187,7 @@ function assembleMessages(
   messages: SessionDetailMessage[],
   toolCalls: ToolCallRecord[],
   toolResults: ToolResultRecord[],
+  subagents: Array<Pick<SessionSubagentRow, 'agent_id' | 'parent_tool_use_id'>>,
   workflows: SessionDetailWorkflow[],
 ): AssembledMessage[] {
   const resultsByCallId = new Map<string, SessionDetailToolResult>();
@@ -195,6 +199,11 @@ function assembleMessages(
       .filter((workflow) => workflow.parent_tool_use_id)
       .map((workflow) => [workflow.parent_tool_use_id as string, workflow]),
   );
+  const subagentsByCallId = new Map(
+    subagents
+      .filter((subagent) => subagent.parent_tool_use_id)
+      .map((subagent) => [subagent.parent_tool_use_id as string, subagent]),
+  );
   for (const toolCall of toolCalls) {
     const call: AssembledToolCall = {
       id: toolCall.id,
@@ -204,6 +213,8 @@ function assembleMessages(
     };
     const workflow = workflowsByCallId.get(toolCall.id);
     if (workflow) call.workflow = workflow;
+    const subagent = subagentsByCallId.get(toolCall.id);
+    if (subagent) call.subagent = subagent;
     const calls = callsByMessageUuid.get(toolCall.message_uuid) ?? [];
     calls.push(call);
     callsByMessageUuid.set(toolCall.message_uuid, calls);
@@ -303,11 +314,8 @@ function assembleMessages(
 }
 
 /**
- * Project one canonical provider record stream into the app's session detail.
- * Provider-specific wire semantics must already be resolved before this seam.
- */
-/**
- * 直接从 Provider 的规范记录流组装详情快照，主要用于未持久化或测试场景。
+ * 直接从 Provider 的规范记录流组装详情快照。要求传入的是全新全量解析
+ * （cursor = null）；Provider 专属的线协议语义须在此 seam 之前已解析完成。
  */
 function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): SessionDetailSnapshot {
   let session: SessionDetailSession | null = null;
@@ -426,13 +434,12 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
 
   return {
     session,
-    messages: assembleMessages(detailMessages, toolCalls, toolResults, assembledWorkflows),
+    messages: assembleMessages(detailMessages, toolCalls, toolResults, subagents, assembledWorkflows),
     workflows: assembledWorkflows,
     summaries,
   };
 }
 
-/** Adapt persisted rows back into the same canonical record language providers emit. */
 /**
  * 将 SQLite 多表行逆投影回 TranscriptRecord，使持久化快照与实时解析共用同一
  * assembleTranscriptRecords() 展示逻辑。
@@ -570,12 +577,8 @@ function sessionDetailRecordsFromRows(input: SessionDetailRows): TranscriptRecor
 }
 
 /**
- * Assemble detail from either a provider's complete canonical transcript stream
- * (a fresh parse with cursor = null) or the same records after a persistence
- * round-trip. This is the only presentation seam.
- */
-/**
- * Session Detail 的公开入口：选择数据库行或规范记录作为输入，输出统一展示快照。
+ * Session Detail 的公开入口：接受规范记录流或持久化行两种输入，统一输出展示快照。
+ * 这是详情展示的唯一 seam；Provider 线协议差异必须在此之前解决。
  */
 export function assembleSessionDetail(
   input: Iterable<TranscriptRecord> | SessionDetailRows,

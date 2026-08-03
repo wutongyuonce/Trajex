@@ -28,7 +28,7 @@ import { createQueryApi, createAttuneApi } from '../packages/core/src/query.ts';
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 const SCHEMA = readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
-const API_REFERENCE = readFileSync(new URL('../skill-doc/references/api-reference.md', import.meta.url), 'utf8');
+const API_REFERENCE = readFileSync(new URL('../trajex-skill/references/api-reference.md', import.meta.url), 'utf8');
 
 // Every key asserted below is recorded here so the doc-sync guard can confirm
 // references/api-reference.md still documents it.

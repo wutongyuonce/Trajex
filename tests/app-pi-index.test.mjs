@@ -33,7 +33,7 @@ test('app indexes configured Pi sessions through the provider registry', () => {
   const options = {
     claudeDir: join(home, 'empty-claude'),
     codexDir: join(home, 'empty-codex'),
-    providerRoots: { kimi: join(home, 'empty-kimi'), pi: piDir },
+    providerRoots: { pi: piDir },
     dbPath,
     DatabaseImpl: TestDatabase,
   };

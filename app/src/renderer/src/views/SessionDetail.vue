@@ -42,6 +42,7 @@ const session = computed(() => (
   liveSessionMetadata.value || getSessionSummary(props.id)
 ));
 const messages = shallowRef([]);
+const summaries = shallowRef([]);
 const timelineItems = shallowRef([]);
 const showSidechain = ref(false);
 const loading = ref(false);
@@ -334,13 +335,16 @@ async function commitSessionSnapshot(latest) {
   if (!latest) return;
   liveSessionMetadata.value = latest;
   const incoming = latest?.messages || [];
+  const incomingSummaries = latest?.summaries || [];
+  const summariesChanged = JSON.stringify(summaries.value) !== JSON.stringify(incomingSummaries);
   const reconciliation = applySnapshot(messages.value, incoming);
   const restoreTail = reconciliation.tailOnly
     && !userScroll.hasUpwardIntent()
     && timelineViewport.isFollowingTail();
-  if (reconciliation.changed) {
+  if (reconciliation.changed || summariesChanged) {
     messages.value = reconciliation.messages;
-    timelineItems.value = reconcileTimelineItems(timelineItems.value, visibleMessages(reconciliation.messages));
+    summaries.value = incomingSummaries;
+    timelineItems.value = reconcileTimelineItems(timelineItems.value, visibleMessages(reconciliation.messages), summaries.value);
     const retainedMessageUuids = new Set(reconciliation.messages.map(message => message.uuid));
     disclosures.retainMessages(retainedMessageUuids);
     for (const uuid of reconciliation.updatedIds) expandedMessageText.delete(uuid);
@@ -375,7 +379,7 @@ const sidechainCount = computed(() => (
 ));
 
 watch(showSidechain, () => {
-  timelineItems.value = reconcileTimelineItems(timelineItems.value, visibleMessages());
+  timelineItems.value = reconcileTimelineItems(timelineItems.value, visibleMessages(), summaries.value);
   void nextTick().then(syncTimelineScrollMargin);
 });
 

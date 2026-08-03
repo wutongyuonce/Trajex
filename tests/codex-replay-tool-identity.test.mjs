@@ -29,7 +29,7 @@ function writeRollout(path, meta, source) {
   ].map(line => JSON.stringify(line)).join('\n') + '\n');
 }
 
-test('a replayed Codex call cannot steal the visible message tool association', () => {
+test('Codex replay rollouts remain independent sessions', () => {
   const dir = mkdtempSync(join(tmpdir(), 'trajex-codex-replay-'));
   const parentPath = join(dir, 'parent.jsonl');
   const replayPath = join(dir, 'replay.jsonl');
@@ -58,11 +58,18 @@ test('a replayed Codex call cannot steal the visible message tool association', 
   ).all(sessionId);
   const toolCalls = db.prepare('SELECT * FROM tool_calls WHERE session_id=?').all(sessionId);
   const toolResults = db.prepare('SELECT * FROM tool_results WHERE session_id=?').all(sessionId);
+  const replaySessionId = `codex:${REPLAY_ID}`;
+  const replayMessages = db.prepare('SELECT * FROM messages WHERE session_id=?').all(replaySessionId);
+  const replayToolCalls = db.prepare('SELECT * FROM tool_calls WHERE session_id=?').all(replaySessionId);
+  const replayToolResults = db.prepare('SELECT * FROM tool_results WHERE session_id=?').all(replaySessionId);
   const assembled = assembleSessionDetail({ messages, toolCalls, toolResults, subagents: [], workflows: [] }).messages;
 
   assert.equal(messages.length, 1, 'the replay remains outside the visible session timeline');
-  assert.equal(toolCalls.length, 2, 'each rollout owns an independently addressable tool call');
-  assert.equal(toolResults.length, 2, 'each rollout owns an independently addressable tool result');
+  assert.equal(toolCalls.length, 1);
+  assert.equal(toolResults.length, 1);
+  assert.equal(replayMessages.length, 1);
+  assert.equal(replayToolCalls.length, 1);
+  assert.equal(replayToolResults.length, 1);
   assert.deepEqual(assembled[0].tool_calls?.map(call => call.input_json), ['"text(\\"parent\\")"']);
   assert.equal(assembled[0].tool_calls?.[0].result?.content, 'done');
   db.close();

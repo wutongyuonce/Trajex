@@ -9,17 +9,20 @@ import type { ProviderRegistry } from './providers/registry.ts';
 import type { Cursor, IndexUnit, ProviderAdapter } from './providers/types.ts';
 import type { SqliteDb } from './sqlite-types.ts';
 
+/** 计划中的单个执行单元：哪个 Provider 解析哪个 unit，以及从哪个 cursor 续读（null 为全量）。 */
 export interface ProviderIndexItem {
   readonly provider: ProviderAdapter;
   readonly unit: IndexUnit;
   readonly cursor: Cursor;
 }
 
+/** 一次 build 的完整计划：有序执行项 + 待写回的版本完成标记（Provider 版本升级时置入）。 */
 export interface ProviderIndexPlan {
   readonly items: ProviderIndexItem[];
   readonly pendingMarkers: ReadonlyMap<string, string>;
 }
 
+/** 执行结果：已提交项、失败 Provider 集合；stopped 表示数据库忙等原因中途停止的位置。 */
 export interface ProviderIndexResult {
   readonly committed: ProviderIndexItem[];
   readonly failedProviders: ReadonlySet<string>;
@@ -32,17 +35,14 @@ export function storedProviderCursor(db: SqliteDb, key: string): Cursor {
   return row ? `${String(row.mtime)}:${String(row.lines_processed)}` : null;
 }
 
+/** 该来源是否已有历史 session（用于判定是否必须全量回放）。 */
 function sourceAlreadyIndexed(db: SqliteDb, source: string): boolean {
   return Boolean(db.prepare('SELECT 1 FROM sessions WHERE source = ? LIMIT 1').get(source));
 }
 
 /**
- * 为本次 build 创建 unit 计划。版本标记缺失且已有旧数据时，从空 cursor 全量
- * 回放该 Provider，防止旧解析语义与新 schema/逻辑混用。
- */
-/**
- * 创建本次 build 的 IndexUnit 计划。版本标记缺失且存在旧数据时，以 null cursor
- * 全量回放该 Provider，防止旧解析语义与新逻辑混用。
+ * 创建本次 build 的 IndexUnit 计划。版本标记缺失且已存在该 Provider 的旧数据时，
+ * 以 null cursor 全量回放，防止旧解析语义与新 schema/逻辑混用。
  */
 export function createProviderIndexPlan(
   db: SqliteDb,
@@ -109,8 +109,7 @@ export function indexProviderPlan({
   return { committed, failedProviders };
 }
 
-/** 只有该 Provider 全部 unit 成功提交，才写入新的解析版本标记。 */
-/** 仅当 Provider 的所有 unit 成功提交时，才写入新版解析语义的完成标记。 */
+/** 仅当 Provider 的所有 unit 全部成功提交且未整体停止时，才写入版本完成标记。 */
 export function writeProviderIndexMarkers(
   db: SqliteDb,
   plan: ProviderIndexPlan,

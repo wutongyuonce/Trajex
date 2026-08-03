@@ -168,7 +168,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     if (entry.type === 'session_info' && typeof entry.name === 'string') { title = entry.name; continue; }
     if (entry.type === 'model_change') continue;
     if (entry.type === 'compaction' || entry.type === 'branch_summary') {
-      if (typeof entry.summary === 'string') records.push({ kind: 'summary', id: piId(sessionRawId, entry.id), session_id: sessionId, timestamp: entry.timestamp ?? null, source: name, content: entry.summary });
+      if (typeof entry.summary === 'string') records.push({ kind: 'summary', id: piId(sessionRawId, entry.id), session_id: sessionId, timestamp: entry.timestamp ?? null, source: entry.type, content: entry.summary });
       continue;
     }
     if (entry.type === 'custom_message') {

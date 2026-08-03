@@ -25,17 +25,14 @@ import { acquireWriterLease, writerLockPathFor } from './writer-lease.ts';
 
 export { buildIndex, DB_PATH };
 
+/** 注入 sandbox 的 API 集合（键名即脚本可访问的全局名）。 */
 type SandboxApi = Record<string, unknown>;
 
 /**
  * 在受限 VM context 中运行用户的 CodeAct 脚本。
  *
  * 被谁调用：executeQuery()、executeAttune()。脚本包装成 async IIFE，因此可 await；
- * 30 秒 timeout 限制同步死循环。传入的 api 决定脚本可读还是可写记忆。
- */
-/**
- * 在受限 VM context 中运行用户的 CodeAct 脚本。传入的 API 决定脚本可查询历史
- * 或变更记忆；async IIFE 支持 await，30 秒 timeout 限制同步死循环。
+ * 30 秒 timeout 限制同步死循环。传入的 api 决定脚本可查询历史还是可写记忆。
  */
 function runInSandbox(api: SandboxApi, scriptContent: string): Promise<unknown> {
   const sandbox = {
@@ -46,7 +43,6 @@ function runInSandbox(api: SandboxApi, scriptContent: string): Promise<unknown> 
   return runInNewContext(`(async()=>{${scriptContent}})()`, ctx, { timeout: 30000 });
 }
 
-/** 先尝试增量索引，再以只读连接执行 messages FTS 搜索。 */
 /** 先尝试增量索引，再以只读连接执行消息 FTS 搜索。 */
 export function searchText(text: string, opts?: Record<string, unknown>): unknown {
   buildIndex();
@@ -58,8 +54,7 @@ export function searchText(text: string, opts?: Record<string, unknown>): unknow
   }
 }
 
-/** 执行只读查询脚本；finally 确保无论脚本成功或抛错都关闭连接。 */
-/** 执行只读查询脚本；finally 保证 SQLite 连接不会泄漏。 */
+/** 执行只读查询脚本；finally 保证无论成功或抛错都关闭连接，防止泄漏。 */
 export async function executeQuery(scriptContent: string): Promise<unknown> {
   buildIndex();
   const db = openReadDb();
@@ -71,12 +66,8 @@ export async function executeQuery(scriptContent: string): Promise<unknown> {
 }
 
 /**
- * 执行 remember/forget 脚本。记忆属于持久层，先取得 writer lease，再二次检查
- * daemon heartbeat，避免 CLI 在 App 接管写入时绕过所有权规则。
- */
-/**
- * 执行 remember/forget 脚本。记忆是持久层，必须取得 writer lease，并在持锁前后
- * 检查 daemon heartbeat，避免 CLI 绕过 App 的写入所有权。
+ * 执行 remember/forget 脚本。记忆属于持久层：先取得 writer lease，并在持锁前后
+ * 二次检查 daemon heartbeat，避免 CLI 在 App 接管写入时绕过所有权规则。
  */
 export async function executeAttune(scriptContent: string): Promise<unknown> {
   const build = buildIndex() as { reason?: string } | undefined;

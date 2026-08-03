@@ -5,11 +5,10 @@ defineOptions({ name: 'Settings' });
 
 const sources = ref([]);
 const dbPath = ref('');
-const recapPath = ref('');
 const autoRefresh = ref(true);
 const memoryCount = ref(0);
 const rebuilding = ref(false);
-const version = ref('0.2.0');
+const version = ref('');
 
 onMounted(async () => {
   await loadSettings();
@@ -20,9 +19,9 @@ async function loadSettings() {
   const s = await window.trajex.getSettings();
   sources.value = s.sources || [];
   dbPath.value = s.dbPath || '';
-  recapPath.value = s.recapDir || '~/.trajex/recap';
   autoRefresh.value = s.autoRefresh !== false;
   memoryCount.value = s.memoryCount || 0;
+  version.value = s.version || '';
 }
 
 async function browseSourcePath(source) {
@@ -31,15 +30,6 @@ async function browseSourcePath(source) {
   if (result) {
     await saveSetting(source.settingKey || `providerRoots.${source.id}`, result);
     await loadSettings();
-  }
-}
-
-async function browseRecapPath() {
-  if (!window.trajex?.browseFolder) return;
-  const result = await window.trajex.browseFolder();
-  if (result) {
-    recapPath.value = result;
-    await saveSetting('recapDir', result);
   }
 }
 
@@ -52,10 +42,6 @@ async function saveSetting(key, value) {
   if (window.trajex?.setSetting) {
     await window.trajex.setSetting(key, value);
   }
-}
-
-async function commitRecapPath() {
-  await saveSetting('recapDir', recapPath.value);
 }
 
 async function rebuildIndex() {
@@ -165,33 +151,6 @@ function fmtRelative(iso) {
         </label>
       </section>
 
-      <!-- Recap -->
-      <section class="settings-section">
-        <div class="settings-section-head">
-          <h2>Recap</h2>
-          <p>Where generated weekly and monthly recap files live.</p>
-        </div>
-        <div class="form-row">
-          <div>
-            <div class="form-label">Recap output directory</div>
-            <div class="form-label-hint">Watched by Trajex for new <code>recap-*.json</code> files.</div>
-          </div>
-          <div class="form-control">
-            <div class="path-input">
-              <input
-                class="path-field"
-                type="text"
-                v-model="recapPath"
-                spellcheck="false"
-                @keydown.enter="commitRecapPath"
-                @blur="commitRecapPath"
-              />
-              <button class="btn" @click="browseRecapPath">Browse…</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <!-- About -->
       <section class="settings-section last">
         <div class="settings-section-head">
@@ -213,7 +172,7 @@ function fmtRelative(iso) {
               </button>
             </div>
             <div class="reset-hint">
-              Rebuilding re-reads your coding agent session data. It does not delete memories or recaps.
+              Rebuilding re-reads your coding agent session data. It does not delete memories.
             </div>
           </div>
         </div>

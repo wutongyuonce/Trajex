@@ -1,6 +1,6 @@
 # Trajex CLI
 
-The local Obelisk runtime used by coding agents. It indexes Claude Code, Codex, Kimi Code, and standard top-level Pi official v3 transcripts into `~/.obelisk/obelisk.sqlite` and exposes the stable `build`, `search`, `query`, and `attune` process interface.
+The local Obelisk runtime used by coding agents. It indexes Claude Code, Codex, and standard top-level Pi official v3 transcripts into `~/.obelisk/obelisk.sqlite` and exposes the stable `build`, `search`, `query`, and `attune` process interface.
 
 ```bash
 npm install --global @trajex-apps/cli

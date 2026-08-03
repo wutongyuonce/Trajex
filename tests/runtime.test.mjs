@@ -318,7 +318,7 @@ test('runtime removes stale Codex guardian rows when the JSONL was already index
   });
 });
 
-test('runtime maps Codex child threads onto subagents', () => {
+test('runtime skips Codex child threads', () => {
   const home = tempHome();
   const codexSessionDir = join(home, '.codex', 'sessions', '2026', '06', '15');
   mkdirSync(codexSessionDir, { recursive: true });
@@ -411,16 +411,6 @@ test('runtime maps Codex child threads onto subagents', () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const payload = JSON.parse(result.stdout);
   assert.deepEqual(payload.parentSessions, [`codex:${parentId}`]);
-  assert.deepEqual(payload.subagents, [{
-    agent_id: `codex:${childId}`,
-    session_id: `codex:${parentId}`,
-    parent_tool_use_id: `codex:${parentId}:call_spawn_1`,
-    agent_type: 'worker',
-    description: 'Plato',
-    messageCount: 2,
-  }]);
-  assert.deepEqual(payload.childMessages.map(m => [m.session_id, m.agent_id, m.is_sidechain, m.source, m.text]), [
-    [`codex:${parentId}`, `codex:${childId}`, 1, 'codex', 'subagent prompt'],
-    [`codex:${parentId}`, `codex:${childId}`, 1, 'codex', 'subagent answer'],
-  ]);
+  assert.deepEqual(payload.subagents, []);
+  assert.deepEqual(payload.childMessages, []);
 });

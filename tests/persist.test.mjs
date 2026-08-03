@@ -25,7 +25,7 @@ function fixtureUnit() {
     { uuid: 'a1', type: 'assistant', timestamp: '2026-06-10T10:00:05Z', message: { role: 'assistant', model: 'm', content: [{ type: 'tool_use', id: 'tc1', name: 'Read', input: { file_path: '/f' } }], usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 } } },
     { type: 'system', subtype: 'turn_duration', parentUuid: 'a1', durationMs: 999 },
     { uuid: 'u2', type: 'user', timestamp: '2026-06-10T10:00:10Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'body', is_error: false }] } },
-    { type: 'system', subtype: 'away_summary', uuid: 's1', timestamp: '2026-06-10T10:00:11Z', content: 'sum' },
+    { uuid: 's1', type: 'user', isCompactSummary: true, timestamp: '2026-06-10T10:00:11Z', message: { role: 'user', content: 'sum' } },
   ];
   writeFileSync(path, lines.map(l => JSON.stringify(l)).join('\n') + '\n');
   return { key: path, sessionId: 'sid-p', project: 'quiet-zero' };
@@ -120,6 +120,9 @@ test('delete-session cascades across tables', () => {
   persist(db, unit, parse(unit, null));
   db.prepare('INSERT INTO workflows (run_id,session_id) VALUES (?,?)').run('run-delete', 'sid-p');
   db.prepare('INSERT INTO workflow_agents (agent_id,run_id,session_id) VALUES (?,?,?)').run('agent-delete', 'run-delete', 'sid-p');
+  db.prepare('INSERT INTO summaries (id,session_id,agent_id,source,content) VALUES (?,?,?,?,?)').run('summary-delete', 'sid-p', 'agent-delete', 'claude', 'child summary');
+  db.prepare('INSERT INTO memories (id,session_id,path,summary,created_at) VALUES (?,?,?,?,?)').run('memory-delete', 'sid-p', '/tmp/deleted.md', 'delete with session', '2026-06-10T10:00:00Z');
+  db.prepare('INSERT INTO memories (id,session_id,path,summary,created_at) VALUES (?,?,?,?,?)').run('memory-keep', 'other-session', '/tmp/kept.md', 'keep other session', '2026-06-10T10:00:00Z');
 
   // Hand-roll a one-shot generator emitting a delete for the session.
   function* del() { yield { kind: 'delete-session', sessionId: 'sid-p' }; return null; }
@@ -130,4 +133,7 @@ test('delete-session cascades across tables', () => {
   assert.equal(db.prepare('SELECT COUNT(*) c FROM tool_calls WHERE session_id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM workflows WHERE session_id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM workflow_agents WHERE session_id=?').get('sid-p').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM summaries WHERE session_id=?').get('sid-p').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE session_id=?').get('sid-p').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE session_id=?').get('other-session').c, 1);
 });

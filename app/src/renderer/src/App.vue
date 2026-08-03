@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch, ref, provide, onMounted, onUnmounted } from 'vue';
+import { computed, watch, ref, onMounted, onUnmounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import {
   state,
@@ -51,7 +51,6 @@ const currentRouteType = computed(() => {
   const name = route.name;
   if (name === 'SessionList' || name === 'SessionDetail' || name === 'SubagentDetail') return 'sessions';
   if (name === 'Activity') return 'activity';
-  if (name === 'Recap' || name === 'RecapDetail') return 'recap';
   if (name === 'Settings') return 'settings';
   return 'memory';
 });
@@ -95,10 +94,6 @@ const windowTitle = computed(() => {
   let scopeText = '';
   if (route.name === 'Activity') {
     scopeText = 'Activity';
-  } else if (route.name === 'Recap') {
-    scopeText = 'Recap';
-  } else if (route.name === 'RecapDetail') {
-    scopeText = `Recap · ${route.params.id}`;
   } else if (route.name === 'Settings') {
     scopeText = 'Settings';
   } else if (route.name?.startsWith('Session')) {
@@ -135,8 +130,6 @@ function handleSidebarRoute(routeName) {
     router.push('/sessions');
   } else if (routeName === 'activity') {
     router.push('/activity');
-  } else if (routeName === 'recap') {
-    router.push('/recap');
   } else {
     router.push('/memory');
   }
@@ -215,8 +208,6 @@ onUnmounted(() => {
   clearTimeout(searchTimer);
 });
 
-const isExportRoute = computed(() => route.name === 'RecapExport');
-
 // --- Source health dots ---
 const sourceDots = ref([]);
 const sourceDetails = ref([]);
@@ -228,12 +219,6 @@ async function loadSourceDots() {
   state.sources = s.sources || [];
 }
 loadSourceDots();
-
-// --- Recap ---
-const recapGenerateOpen = ref(false);
-function setRecapKind(k) {
-  router.replace({ path: '/recap', query: { kind: k } });
-}
 
 // --- Source filter ---
 const showSourceFilter = ref(false);
@@ -247,12 +232,10 @@ function setSourceFilter(id) {
   state.sourceFilter = id;
   showSourceFilter.value = false;
 }
-provide('recapGenerateOpen', recapGenerateOpen);
 </script>
 
 <template>
-  <router-view v-if="isExportRoute" />
-  <div class="app" v-else>
+  <div class="app">
     <div class="titlebar">
       <div class="titlebar-text" id="titlebar-text">
         <span class="app-name">{{ windowTitle.appName }}</span>
@@ -335,17 +318,6 @@ provide('recapGenerateOpen', recapGenerateOpen);
               <rect x="10" y="3" width="2.5" height="11"/>
             </svg>
             <span class="label">Activity</span>
-          </button>
-          <button
-            class="sidebar-item"
-            :class="{ active: route.name === 'Recap' }"
-            @click="handleSidebarRoute('recap')"
-          >
-            <svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 2h10v12H3z"/>
-              <path d="M6 5h4M6 8h4M6 11h2"/>
-            </svg>
-            <span class="label">Recap</span>
           </button>
         </div>
 
@@ -477,28 +449,10 @@ provide('recapGenerateOpen', recapGenerateOpen);
                 </span>
               </template>
               <span v-if="route.name === 'Activity'" class="crumb terminal">Activity</span>
-              <span v-if="route.name === 'Recap'" class="crumb terminal">Recap</span>
               <span v-if="route.name === 'Settings'" class="crumb terminal">Settings</span>
-              <router-link v-if="route.name === 'RecapDetail'" class="crumb" to="/recap">Recap</router-link>
-              <template v-if="route.name === 'RecapDetail'">
-                <span class="crumb-sep">/</span>
-                <span class="crumb terminal">{{ route.params.id }}</span>
-              </template>
             </template>
           </div>
           <div class="toolbar-spacer"></div>
-
-          <!-- Recap toolbar actions -->
-          <template v-if="route.name === 'Recap'">
-            <div class="tab-group">
-              <button :class="{ active: (route.query.kind || 'weekly') === 'weekly' }" @click="setRecapKind('weekly')">Weekly</button>
-              <button :class="{ active: route.query.kind === 'monthly' }" @click="setRecapKind('monthly')">Monthly</button>
-            </div>
-            <button class="toolbar-action-primary" @click="recapGenerateOpen = true">
-              <span class="plus">+</span>
-              <span>Generate</span>
-            </button>
-          </template>
 
           <!-- Source filter (session list only, multi-source) -->
           <div v-if="showToolbar && route.name === 'SessionList' && sourceDots.length > 1" class="source-filter-wrap">

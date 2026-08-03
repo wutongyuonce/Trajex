@@ -180,18 +180,21 @@ function commitSessionDetail(sessionId, { messages, workflows = [], summaries = 
  * Returns assembled messages with tool_calls inline.
  */
 export async function loadSubagentDetail(agentId) {
-  const [messages, toolCalls, toolResults] = await Promise.all([
+  const [messages, toolCalls, toolResults, summaries] = await Promise.all([
     window.trajex.getSubagentMessages(agentId),
     window.trajex.getSubagentToolCalls(agentId),
     window.trajex.getSubagentToolResults(agentId),
+    window.trajex.getSubagentSummaries(agentId),
   ]);
-  return assembleSessionDetail({
+  const detail = assembleSessionDetail({
     messages,
     toolCalls,
     toolResults,
+    summaries,
     subagents: [],
     workflows: [],
-  }).messages;
+  });
+  return { messages: detail.messages, summaries: detail.summaries };
 }
 
 const TEXT_LIMIT = 10000;

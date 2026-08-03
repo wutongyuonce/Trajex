@@ -14,14 +14,13 @@ exist.
 
 ## Source Model
 
-Trajex stores Claude Code, Codex, Kimi Code, and Pi transcripts in the same schema.
+Trajex stores Claude Code, Codex, and Pi transcripts in the same schema.
 
 - Claude rows use `source='claude'`.
 - Codex rows use `source='codex'`; root session and message IDs are prefixed with `codex:`.
-- Kimi Code rows use `source='kimi'` and `kimi:`-prefixed IDs.
 - Pi rows use `source='pi'` and `pi:`-prefixed IDs. Pi support currently covers standard top-level official v3 sessions, not deeper nested subagent run transcripts.
 - Omit `source` filters unless provider provenance matters.
-- Codex and Kimi child agents are represented through `subagents`; provider workflow rows may be absent when the source has no compatible metadata.
+- Codex child agents are represented through `subagents`; provider workflow rows may be absent when the source has no compatible metadata.
 
 ## Scope Fields
 
@@ -52,7 +51,7 @@ One row per root session.
 
 | Column | Meaning |
 | --- | --- |
-| `id` | Provider-native session ID; Codex, Kimi, and Pi IDs are provider-prefixed |
+| `id` | Provider-native session ID; Codex and Pi IDs are provider-prefixed |
 | `title` | AI/session title |
 | `project` | Provider-normalized project slug |
 | `project_path` | Absolute project path when known |
@@ -61,7 +60,7 @@ One row per root session.
 | `version` | Provider CLI/app version |
 | `message_count` | Indexed user + assistant messages |
 | `jsonl_path` | Source JSONL path |
-| `source` | `claude`, `codex`, `kimi`, or `pi` |
+| `source` | `claude`, `codex`, or `pi` |
 
 ### `messages`
 
@@ -84,7 +83,7 @@ Core evidence table.
 | `cwd` | Working directory at message time |
 | `skill` | Skill that generated the response, if known |
 | `turn_duration_ms` | Wall-clock duration for the turn |
-| `source` | `claude`, `codex`, `kimi`, or `pi` |
+| `source` | `claude`, `codex`, or `pi` |
 
 `content_type='tool_use'` is only a marker. Tool-call details live in
 `tool_calls`. `content_type='tool_result'` marks provider-emitted tool-result

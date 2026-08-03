@@ -17,7 +17,7 @@ import type {
 export interface ProviderRegistry {
   /** 返回所有 provider 的只读元数据快照（深度复制 descriptor，防止外部修改）。 */
   catalog(): ProviderDescriptor[];
-  /** 按 source 名称（如 'claude' | 'codex' | 'kimi'）查找对应的 adapter。 */
+  /** 按 source 名称（如 'claude' | 'codex' | 'pi'）查找对应的 adapter。 */
   get(source: string): ProviderAdapter | undefined;
   /** 返回当前注册的所有 adapter 列表（byId 快照的副本）。 */
   list(): ProviderAdapter[];

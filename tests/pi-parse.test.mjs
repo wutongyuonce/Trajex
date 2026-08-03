@@ -19,6 +19,7 @@ test('Pi indexes every tree branch and marks non-current messages as sidechain',
     { type: 'message', id: 'a1', parentId: 'u1', timestamp: '2026-07-30T10:00:02.000Z', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'reason' }, { type: 'toolCall', id: 'call-1', name: 'Read', arguments: { file_path: '/tmp/a' } }] } },
     { type: 'message', id: 'r1', parentId: 'a1', timestamp: '2026-07-30T10:00:03.000Z', message: { role: 'toolResult', toolCallId: 'call-1', toolName: 'Read', content: [{ type: 'text', text: 'file body' }], isError: false } },
     { type: 'compaction', id: 'c1', parentId: 'r1', timestamp: '2026-07-30T10:00:04.000Z', summary: 'earlier work' },
+    { type: 'branch_summary', id: 'b1', parentId: 'c1', timestamp: '2026-07-30T10:00:04.500Z', summary: 'abandoned branch summary' },
     { type: 'session_info', id: 'n1', parentId: 'c1', timestamp: '2026-07-30T10:00:05.000Z', name: 'Pi fixture' },
     { type: 'message', id: 'old', parentId: 'u1', timestamp: '2026-07-30T10:00:06.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'abandoned branch' }] } },
     { type: 'message', id: 'current', parentId: 'n1', timestamp: '2026-07-30T10:00:07.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'kept answer' }], usage: { input: 4, output: 2 } } },
@@ -36,7 +37,10 @@ test('Pi indexes every tree branch and marks non-current messages as sidechain',
   assert.equal(messages.find(record => record.text === 'kept answer').is_sidechain, 0);
   assert.deepEqual(records.filter(record => record.kind === 'tool_call').map(record => record.id), ['pi:session-1:call-1']);
   assert.deepEqual(records.filter(record => record.kind === 'tool_result').map(record => record.tool_use_id), ['pi:session-1:call-1']);
-  assert.deepEqual(records.filter(record => record.kind === 'summary').map(record => record.content), ['earlier work']);
+  assert.deepEqual(records.filter(record => record.kind === 'summary').map(record => ({ source: record.source, content: record.content })), [
+    { source: 'compaction', content: 'earlier work' },
+    { source: 'branch_summary', content: 'abandoned branch summary' },
+  ]);
   assert.deepEqual(records.find(record => record.kind === 'session' && record.id === 'pi:session-1'), { kind: 'session', id: 'pi:session-1', title: 'Pi fixture', project: '-tmp-project', started_at: '2026-07-30T10:00:00.000Z', ended_at: '2026-07-30T10:00:07.000Z', git_branch: null, version: '3', message_count: 6, countMode: 'total', jsonl_path: path, source: 'pi' });
 });
 

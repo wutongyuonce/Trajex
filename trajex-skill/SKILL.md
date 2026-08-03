@@ -1,7 +1,7 @@
 ---
 name: trajex
 description: >
-  Search and query past Claude Code, Codex, Kimi Code, and Pi session history.
+  Search and query past Claude Code, Codex, and Pi session history.
   Reactive: when the user asks "how did I fix X", "what did we do last time", "find the session where", "上次怎么修的", "之前的session", "历史记录".
   Proactive: when the user references past work you lack context for, when you're about to modify a file with complex edit history, when the user says "继续之前的" or "continue where we left off", or when understanding prior decisions would improve your current response.
   Memory: when the user says "记住这个", "remember this", "写入记忆", "save this conclusion", or when you determine a retrieval result contains a conclusion worth persisting.
@@ -13,14 +13,14 @@ allowed-tools:
 
 # trajex
 
-Search and query Claude Code, Codex, Kimi Code, and Pi session history from their configured local transcript roots.
-Defaults are `~/.claude/`, `~/.codex/`, `~/.kimi-code/`, and Pi's resolved sessions directory.
+Search and query Claude Code, Codex, and Pi session history from their configured local transcript roots.
+Defaults are `~/.claude/`, `~/.codex/`, and Pi's resolved sessions directory.
 Trajex indexes sessions, messages, tool calls, tool results, summaries, subagents, workflows, workflow agents, parent chains, and raw JSONL lines into SQLite + FTS5.
 
-Trajex has four transcript sources. Treat all as ordinary sessions by default:
-Claude rows use `source='claude'`; Codex, Kimi Code, and Pi rows use `source='codex'`, `source='kimi'`, and `source='pi'`, with provider-prefixed IDs.
+Trajex has three transcript sources. Treat all as ordinary sessions by default:
+Claude rows use `source='claude'`; Codex and Pi rows use `source='codex'` and `source='pi'`, with provider-prefixed IDs.
 Use `source` only when provenance matters or the user asks to scope to one provider.
-Codex and Kimi can project child agents into `subagents`.
+Codex can project child agents into `subagents`.
 Pi support covers standard top-level official v3 session files only and does not index deeper nested subagent run transcripts.
 
 Trajex is a CodeAct memory layer: write a small JS query, run it locally, read the JSON, then answer.
@@ -75,34 +75,6 @@ Use `sql()` only as an escalation path for exact joins, aggregations, or schema
 questions that helpers cannot express cleanly. Do not use raw SQL as a generic
 fallback for broad retrieval.
 
-## Intent Routing
-
-Trajex supports a small intent prefix layer after `/trajex`. This is for
-output intent, not retrieval architecture.
-
-| Intent | Description | Reference |
-|---|---|---|
-| `recap [target]` | Generate weekly/monthly recap card content for app handoff or share-style output. | `references/recap/overview.md` |
-
-Routing rules:
-
-1. If the first word is `recap`, read `references/recap/overview.md` before the
-   first query. Everything after `recap` is the recap target.
-   Common app-generated prompts include `/trajex recap this week`,
-   `/trajex recap last week`, `/trajex recap this month`, and
-   `/trajex recap last month`; interpret these as natural period targets
-   relative to the current date and timezone.
-2. `recap` does not create a separate retrieval layer. It still uses
-   `overview()`, `memories()`, helpers, and `sql()` only when needed.
-3. Follow the overview's card-by-card sequence. Each card has its own retrieval
-   pattern and writing file; retrieve that card's evidence, read that card's
-   writing file, update the JSON, then move to the next card. Do not preload all
-   recap references before the current card is written.
-4. If the first word is not `recap`, do not load
-   `references/recap/overview.md`. Continue with Query Routing below. Do not
-   infer recap from broad requests for weekly/monthly summaries, charts,
-   rankings, shareable cards, or playlist-style metaphors.
-
 ## Reference Map
 
 Use references by job, not by habit:
@@ -114,8 +86,6 @@ Use references by job, not by habit:
 | `references/schema.md` | Raw SQL field and join quick reference before writing non-trivial `sql()`. |
 | `references/api-reference.md` | Helper signatures, option names, return fields, or exact `remember()` / `forget()` parameter details are unclear. |
 | `references/pitfalls.md` | Error recovery, FTS syntax, aliases, ordering, row-shape surprises, or compact/raw tradeoffs. |
-| `references/recap/overview.md` | Explicit `/trajex recap ...` requests only. |
-
 ## Query Routing
 
 Before writing a query, classify the task. Progressive disclosure is useful, but
@@ -178,7 +148,7 @@ Opts: `{ limit, sessionId, project, after, before, cwd, source, includeMeta }`.
 Results are already ordered by FTS5 rank; lower rank sorts earlier.
 Prefer returned order over manually interpreting numeric rank unless you are deliberately using FTS5 semantics.
 
-`source` can be `'claude'`, `'codex'`, `'kimi'`, `'pi'`, or omitted. Omitted means search all indexed sources.
+`source` can be `'claude'`, `'codex'`, `'pi'`, or omitted. Omitted means search all indexed sources.
 
 ### `context(uuid)`
 

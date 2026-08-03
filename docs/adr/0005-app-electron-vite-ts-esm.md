@@ -43,8 +43,8 @@ decisions within this:
 
 **Two-tier typechecking.** `npm run typecheck` runs the root project (`packages/core/src/` +
 `tests/`, fully strict including `noImplicitAny`) and then the app project. The
-root project **excludes the app-importing tests** (`tests/app-*.test.mjs`,
-`tests/recap-capture-query.test.mjs`): those tests import app source, which would
+root project **excludes the app-importing tests** (`tests/app-*.test.mjs`): those
+tests import app source, which would
 otherwise drag the lenient app files into the strict root program and fail on
 implicit `any`. The app source is instead covered by `app/tsconfig.json`, so
 nothing loses type coverage — the strict core and the lenient app are checked by

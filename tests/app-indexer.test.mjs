@@ -678,7 +678,7 @@ test('app indexer removes stale Codex guardian rows when the JSONL was already i
   cleanedDb.close();
 });
 
-test('app indexer maps Codex subagent threads onto parent sessions', () => {
+test('app indexer skips Codex child threads and synthetic spawn calls', () => {
   const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-subagent-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
@@ -770,30 +770,10 @@ test('app indexer maps Codex subagent threads onto parent sessions', () => {
 
   const db = new TestDatabase(dbPath);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(`codex:${childId}`).c, 0);
-  const subagent = db.prepare('SELECT * FROM subagents WHERE agent_id=?').get(`codex:${childId}`);
-  assert.equal(subagent.session_id, `codex:${parentId}`);
-  const spawnToolId = `codex:${parentId}:call_spawn_1`;
-  assert.equal(subagent.parent_tool_use_id, spawnToolId);
-  assert.equal(subagent.agent_type, 'worker');
-  assert.equal(subagent.description, 'Plato');
-
-  const spawnMessage = db.prepare('SELECT * FROM messages WHERE uuid=?').get(`codex:${parentId}:000002`);
-  assert.equal(spawnMessage.session_id, `codex:${parentId}`);
-  assert.equal(spawnMessage.content_type, 'tool_use');
-  assert.equal(spawnMessage.source, 'codex');
-  assert.equal(db.prepare('SELECT name, message_uuid FROM tool_calls WHERE id=?').get(spawnToolId).message_uuid, spawnMessage.uuid);
-
-  const childMessages = db.prepare('SELECT session_id, agent_id, is_sidechain, source, text FROM messages WHERE agent_id=? ORDER BY timestamp, uuid').all(`codex:${childId}`);
-  assert.deepEqual(childMessages.map(m => [m.session_id, m.agent_id, m.is_sidechain, m.source, m.text]), [
-    [`codex:${parentId}`, `codex:${childId}`, 1, 'codex', 'subagent prompt'],
-    [`codex:${parentId}`, `codex:${childId}`, 1, 'codex', 'subagent answer'],
-    [`codex:${parentId}`, `codex:${childId}`, 1, 'codex', null],
-  ]);
-  const childResult = db.prepare(`
-    SELECT tr.content FROM tool_results tr
-    JOIN messages m ON m.uuid = tr.message_uuid
-    WHERE m.agent_id = ?
-  `).get(`codex:${childId}`);
-  assert.equal(childResult.content, '/tmp/trajex-app');
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM subagents WHERE agent_id=?').get(`codex:${childId}`).c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(`codex:${parentId}`).c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM tool_calls WHERE session_id=?').get(`codex:${parentId}`).c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM tool_results WHERE session_id=?').get(`codex:${parentId}`).c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE agent_id=?').get(`codex:${childId}`).c, 0);
   db.close();
 });

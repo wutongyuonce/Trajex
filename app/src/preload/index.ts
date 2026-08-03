@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('trajex', {
   getSubagentMessages: (agentId: string) => ipcRenderer.invoke('db:getSubagentMessages', agentId),
   getSubagentToolCalls: (agentId: string) => ipcRenderer.invoke('db:getSubagentToolCalls', agentId),
   getSubagentToolResults: (agentId: string) => ipcRenderer.invoke('db:getSubagentToolResults', agentId),
+  getSubagentSummaries: (agentId: string) => ipcRenderer.invoke('db:getSubagentSummaries', agentId),
   getSessionSummaries: (id: string) => ipcRenderer.invoke('db:getSessionSummaries', id),
   getMessageFullText: (uuid: string) => ipcRenderer.invoke('db:getMessageFullText', uuid),
   getMemories: () => ipcRenderer.invoke('db:getMemories'),
@@ -38,15 +39,6 @@ contextBridge.exposeInMainWorld('trajex', {
     const listener = (_: IpcRendererEvent, payload: unknown) => callback(payload);
     ipcRenderer.on('trajex:session-updated', listener);
     return () => ipcRenderer.removeListener('trajex:session-updated', listener);
-  },
-  captureExport: (opts?: unknown) => ipcRenderer.invoke('capture:export', opts),
-  copyImage: (opts?: unknown) => ipcRenderer.invoke('capture:copy', opts),
-  recapList: () => ipcRenderer.invoke('recap:list'),
-  recapRead: (filename: string) => ipcRenderer.invoke('recap:read', filename),
-  onRecapUpdated: (callback: (filePath: unknown) => void) => {
-    const listener = (_: IpcRendererEvent, filePath: unknown) => callback(filePath);
-    ipcRenderer.on('trajex:recap-updated', listener);
-    return () => ipcRenderer.removeListener('trajex:recap-updated', listener);
   },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   browseFolder: () => ipcRenderer.invoke('settings:browseFolder'),

@@ -149,6 +149,68 @@ test('provider normalization removes only structural image wrappers before dedup
   assert.deepEqual(detail.messages.map(message => message.text), ['look at this screenshot']);
 });
 
+test('provider deduplicates image messages when event text has attributed image markers', () => {
+  const threadId = '019e8951-3e7d-7343-a3e3-05bff48a3181';
+  const path = writeCodexFixture([
+    {
+      type: 'session_meta',
+      timestamp: '2026-06-10T10:00:00Z',
+      payload: { id: threadId, cwd: '/proj', timestamp: '2026-06-10T10:00:00Z' },
+    },
+    {
+      type: 'event_msg',
+      timestamp: '2026-06-10T10:00:01Z',
+      payload: {
+        type: 'user_message',
+        message: 'first image request\n<image name=[Image #1] path="/tmp/first.png">',
+      },
+    },
+    {
+      type: 'response_item',
+      timestamp: '2026-06-10T10:00:01Z',
+      payload: {
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'first image request' },
+          { type: 'input_text', text: '<image>' },
+          { type: 'input_image', image_url: 'data:image/png;base64,AAAA' },
+          { type: 'input_text', text: '</image>' },
+        ],
+      },
+    },
+    {
+      type: 'event_msg',
+      timestamp: '2026-06-10T10:00:02Z',
+      payload: {
+        type: 'user_message',
+        message: 'second image request\n<image name=[Image #2] path="/tmp/second.png">',
+      },
+    },
+    {
+      type: 'response_item',
+      timestamp: '2026-06-10T10:00:02Z',
+      payload: {
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'second image request' },
+          { type: 'input_text', text: '<image>' },
+          { type: 'input_image', image_url: 'data:image/png;base64,AAAA' },
+          { type: 'input_text', text: '</image>' },
+        ],
+      },
+    },
+  ]);
+
+  const detail = assembleSessionDetail([...parseCodex({ key: path, sessionId: '' }, null)]);
+
+  assert.deepEqual(detail.messages.map(message => message.text), [
+    'first image request',
+    'second image request',
+  ]);
+});
+
 test('canonical visibility survives persistence before row-based assembly', () => {
   const threadId = '019e8951-3e7d-7343-a3e3-05bff48a3180';
   const path = writeCodexFixture([

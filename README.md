@@ -13,7 +13,7 @@
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-数万行散落的 Claude Code、Codex、Kimi Code 与 Pi JSONL 会话，索引至同一个 SQLite 中：<br>
+数万行散落的 Claude Code、Codex 与 Pi JSONL 会话，索引至同一个 SQLite 中：<br>
 Agent 可通过 CLI /Skill 实现毫秒级查询，用户可通过 App 直观浏览。
 
 </div>
@@ -28,9 +28,9 @@ Trajex 有两面，它们共享同一个 SQLite 索引：
 
 **Agent 侧** — `trajex` CLI 负责本地运行时；另有一个独立的 Agent skill 教会 coding agents 如何搜索和查询自己的会话历史。Agent 会编写 JS 查询，在本地运行，并用自然语言回答。
 
-**App 侧** — Electron 桌面 app，供人浏览 sessions、管理 memories、查看使用统计，以及查看每周 recap cards。
+**App 侧** — Electron 桌面 app，供人浏览 sessions、管理 memories，以及查看使用统计。
 
-两者都读取同一个 `~/.trajex/trajex.sqlite` 数据库。索引器会读取 `~/.claude/projects` 中的 Claude Code transcripts、`~/.codex/sessions` 中的 Codex transcripts、`~/.kimi-code/sessions` 或 `$KIMI_CODE_HOME/sessions` 中的 Kimi Code sessions，以及 `~/.pi/agent/sessions` 中的 Pi sessions。
+两者都读取同一个 `~/.trajex/trajex.sqlite` 数据库。索引器会读取 `~/.claude/projects` 中的 Claude Code transcripts、`~/.codex/sessions` 中的 Codex transcripts，以及 `~/.pi/agent/sessions` 中的 Pi sessions。
 
 ## 多 Provider 支持
 
@@ -38,11 +38,9 @@ Trajex 会把每个 provider 都索引到同一个 SQLite schema 中，而不是
 
 Codex root threads 会成为普通 Trajex sessions。当 parent-thread metadata 可用时，Codex child threads 会通过同一个 `subagents` 表挂接。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。
 
-Kimi session directories 会各自成为一个 Trajex session。主会话和 child-agent 的 `wire.jsonl` streams 会被投影到同一套 messages、tools、summaries 和 subagents 表。undo/clear 会以完整 session replay 方式处理，因此被撤回的 wire records 不会残留在索引中。
-
 每个 Pi session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，因此 Trajex 会保存全部分支，并将不在最新叶节点路径上的消息标记为 sidechain；详情页默认折叠这些其他分支。
 
-为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions`、`~/.kimi-code/sessions` 和 `~/.pi/agent/sessions`。在 Settings 中修改 Pi 路径时，应填写 Pi agent root，Trajex 会读取其 `sessions` 子目录。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
+为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions` 和 `~/.pi/agent/sessions`。在 Settings 中修改 Pi 路径时，应填写 Pi agent root，Trajex 会读取其 `sessions` 子目录。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
 
 ## App 与 CLI 的关系
 
@@ -87,7 +85,6 @@ Kimi session directories 会各自成为一个 Trajex session。主会话和 chi
 - **Sessions** — 浏览所有 sessions，支持搜索、项目过滤、可读 tool calls，包括 diffs、terminal output、file viewers
 - **Memory** — 已注册 memory files 的列表和详情视图
 - **Activity** — GitHub 风格热力图、每周/累计 token 图表
-- **Recap** — 可分享的周/月 recap cards，带 archetype theming
 - **Settings** — 数据源配置、自动刷新、重建索引
 
 目前 macOS 预构建版本可在 [Releases](https://github.com/wutongyuonce/trajex/releases) 获取。源码 app 可在 macOS、Windows 和 Linux 上本地运行。
@@ -138,8 +135,6 @@ npx --yes skills add wutongyuonce/trajex-skill
 /trajex 这个文件最近在哪些 sessions 里被反复修改
 /trajex 找出最近失败的 tool calls，它们分别发生在哪些任务里
 /trajex 那个 review workflow 的 subagents 各自结论是什么
-/trajex recap this week
-/trajex recap this month
 ```
 
 ### 工作原理
@@ -171,7 +166,7 @@ npm ci
 npm run dev
 ```
 
-`electron-vite` 会启动 renderer dev server 并打开 Electron。首次运行时，Trajex 会创建 `~/.trajex/trajex.sqlite`，索引可用的 Claude Code、Codex、Kimi Code 和 Pi transcripts，然后监听它们的变化。默认 sources 可在 **Settings** 中改为其他目录。在 Windows 上，Trajex 还会检查常见 WSL distributions 中的 Claude Code 目录。
+`electron-vite` 会启动 renderer dev server 并打开 Electron。首次运行时，Trajex 会创建 `~/.trajex/trajex.sqlite`，索引可用的 Claude Code、Codex 和 Pi transcripts，然后监听它们的变化。默认 sources 可在 **Settings** 中改为其他目录。在 Windows 上，Trajex 还会检查常见 WSL distributions 中的 Claude Code 目录。
 
 ## 调试 App
 
@@ -181,6 +176,26 @@ npm run dev
 - development app 会读取并更新真实的 `~/.trajex` 索引。在测试破坏性 rebuild 前请先备份。要隔离运行，可以用 disposable home directory 启动，例如 macOS/Linux 上 `HOME=/tmp/trajex-dev npm run dev`，Windows 上先设置临时 `USERPROFILE`，然后在 **Settings** 中选择 fixture source directories。
 
 `better-sqlite3` 为常见平台提供预构建 binaries。如果 `npm ci` 回退到本地编译，请安装对应平台的 C/C++ 构建工具，然后重新运行 `npm ci`。
+
+## 构建与打包 App
+
+从 `app/` 目录执行：
+
+```bash
+# 仅编译 main、preload 和 renderer
+npm run build
+
+# 生成未压缩的 App 目录
+npm run pack
+
+# 生成 macOS DMG 和 ZIP 安装包
+npm run dist:mac
+```
+
+流程是先由 `electron-vite` 编译 Electron 的 main/preload/renderer，再由
+`electron-builder` 重建原生依赖、组装 App 并生成安装包。产物位于
+`app/release/`；`npm run pack` 生成 `release/mac-arm64/Trajex.app`，
+`npm run dist:mac` 生成 DMG 和 ZIP。没有 Apple Developer ID 时，产物不会签名。
 
 ## 会索引哪些内容
 
@@ -205,7 +220,6 @@ packages/core/                # @trajex/core npm workspace（TypeScript + ESM）
 │   │   ├── types.ts          # Provider + TranscriptRecord contract
 │   │   ├── claude.ts         # Claude Code adapter（行增量）
 │   │   ├── codex.ts          # Codex adapter（全量重解析）
-│   │   └── kimi.ts           # Kimi Code adapter（session projection）
 │   │   └── pi.ts             # Pi adapter（tree + sidechain projection）
 │   ├── session-detail.ts     # Provider-independent transcript projection
 │   ├── persist.ts            # Binding-agnostic record writer（upsert/merge）
@@ -230,7 +244,6 @@ packages/cli/                 # @trajex-apps/cli npm workspace
 trajex-skill/                    # docs-only trajex agent skill 的源码
 ├── SKILL.md                  # Query and memory workflow
 └── references/               # Progressive-disclosure API/schema/pattern docs
-    └── recap/                # Per-card recap retrieval + writing references
 
 app/                          # Electron desktop app（electron-vite + Vue）
 ├── src/main/                 # TypeScript main process（consumes shared core）
@@ -242,14 +255,6 @@ install.sh                    # POSIX CLI-only installer
 CONTEXT.md                    # Project glossary
 docs/adr/                     # Architecture decision records（0001–0006）
 ```
-
-可选的 `/trajex recap` 流程只会在显式 `/trajex recap` 意图下加载。它从 `trajex-skill/references/recap/overview.md` 开始，并按卡片逐步推进：
-
-- `skill-doc/references/recap/pattern1-cover.md` + `skill-doc/references/recap/writing1-cover.md`
-- `skill-doc/references/recap/pattern2-thinking.md` + `skill-doc/references/recap/writing2-thinking.md`
-- `skill-doc/references/recap/pattern3-vibe.md` + `skill-doc/references/recap/writing3-vibe.md`
-- `skill-doc/references/recap/pattern4-workflow.md` + `skill-doc/references/recap/writing4-workflow.md`
-- `skill-doc/references/recap/pattern5-closing.md` + `skill-doc/references/recap/writing5-closing.md`
 
 ### 生成的构建产物
 

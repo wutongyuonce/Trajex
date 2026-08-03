@@ -22,6 +22,7 @@ const DB_PATH = path.join(TRAJEX_DIR, 'trajex.sqlite');
 const SCHEMA = fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'); // new URL('./schema.sql', import.meta.url) — ESM 中获取当前文件同目录下另一个文件的 绝对 URL 。
 
 
+/** 打开（必要时创建）主索引连接：建目录 → 配置 busy_timeout → 双次加列迁移。 */
 function openDb(): NodeSqliteDb {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   const db = new DatabaseSync(DB_PATH);

@@ -1,11 +1,11 @@
 {
   "name": "trajex",
   "version": "0.2.0",
-  "description": "Browse and manage indexed Claude Code, Codex, Kimi Code, and Pi session memory",
-  "homepage": "https://github.com/tommy0103/trajex",
+  "description": "Browse and manage indexed Claude Code, Codex, and Pi session memory",
+  "homepage": "https://github.com/wutongyuonce/trajex",
   "author": {
     "name": "Trajex contributors",
-    "email": "tommy0103@users.noreply.github.com"
+    "email": "18896680730@163.com"
   },
   "main": "out/main/index.js",
   "scripts": {
@@ -51,15 +51,15 @@
     ]
   },
   "dependencies": {
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^13.0.2",
     "chokidar": "^4.0.3"
   },
   "devDependencies": {
     "@tanstack/vue-virtual": "^3.13.32",
     "@types/better-sqlite3": "^7.6.13",
     "@vitejs/plugin-vue": "^5.0.0",
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0",
+    "electron": "^43.2.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "vite": "^6.0.0",
     "vue": "^3.4.0",

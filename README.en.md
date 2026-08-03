@@ -13,7 +13,7 @@
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-Index scattered Claude Code, Codex, Kimi Code, and Pi JSONL sessions into a single SQLite database:<br>
+Index scattered Claude Code, Codex, and Pi JSONL sessions into a single SQLite database:<br>
 Agents query it in milliseconds via CLI/Skill; humans browse it through the desktop app.
 
 </div>
@@ -28,9 +28,9 @@ Trajex has two sides sharing the same SQLite index:
 
 **Agent side** — The `trajex` CLI provides the local runtime; a separate agent skill teaches coding agents how to search and query their own session history. Agents write JS queries, run them locally, and answer in natural language.
 
-**App side** — An Electron desktop app for humans to browse sessions, manage memories, view usage statistics, and read weekly recap cards.
+**App side** — An Electron desktop app for humans to browse sessions, manage memories, and view usage statistics.
 
-Both read the same `~/.trajex/trajex.sqlite` database. The indexer consumes Claude Code transcripts from `~/.claude/projects`, Codex transcripts from `~/.codex/sessions`, Kimi Code sessions from `~/.kimi-code/sessions` or `$KIMI_CODE_HOME/sessions`, and Pi sessions from `~/.pi/agent/sessions`.
+Both read the same `~/.trajex/trajex.sqlite` database. The indexer consumes Claude Code transcripts from `~/.claude/projects`, Codex transcripts from `~/.codex/sessions`, and Pi sessions from `~/.pi/agent/sessions`.
 
 ## Multi-Provider Support
 
@@ -38,11 +38,9 @@ Trajex indexes every provider into the same SQLite schema rather than maintainin
 
 Codex root threads become regular Trajex sessions. When parent-thread metadata is available, Codex child threads attach through the same `subagents` table. Codex does not emit Claude-style workflow metadata, so workflow-related tables may be empty when only Codex history is present.
 
-Kimi session directories each become a Trajex session. The main-session and child-agent `wire.jsonl` streams are projected into the same messages, tools, summaries, and subagents tables. Undo/clear operations are handled via full session replay, so retracted wire records do not linger in the index.
-
 Each Pi session JSONL file becomes a Trajex session. Pi session entries form a tree, so Trajex preserves all branches and marks messages not on the latest leaf path as sidechains; the detail view collapses these other branches by default.
 
-To support live app refresh, Trajex watches each registered provider's declared roots, including `~/.claude/projects`, `~/.codex/sessions`, `~/.kimi-code/sessions`, and `~/.pi/agent/sessions`. When changing the Pi path in Settings, provide the Pi agent root; Trajex reads its `sessions` subdirectory. Codex's `session_index.jsonl` is used only as lightweight title/update metadata during indexing, not as a message transcript source.
+To support live app refresh, Trajex watches each registered provider's declared roots, including `~/.claude/projects`, `~/.codex/sessions`, and `~/.pi/agent/sessions`. When changing the Pi path in Settings, provide the Pi agent root; Trajex reads its `sessions` subdirectory. Codex's `session_index.jsonl` is used only as lightweight title/update metadata during indexing, not as a message transcript source.
 
 ## App and CLI Relationship
 
@@ -87,7 +85,6 @@ A companion desktop app for browsing the same index maintained by the CLI or the
 - **Sessions** — Browse all sessions with search, project filtering, readable tool calls including diffs, terminal output, file viewers
 - **Memory** — List and detail view for registered memory files
 - **Activity** — GitHub-style heatmap, weekly/cumulative token charts
-- **Recap** — Shareable weekly/monthly recap cards with archetype theming
 - **Settings** — Data source configuration, auto-refresh, index rebuild
 
 Prebuilt macOS binaries are available on [Releases](https://github.com/wutongyuonce/trajex/releases). The source app runs locally on macOS, Windows, and Linux.
@@ -136,8 +133,6 @@ Here are some example queries:
 /trajex which recent sessions have been modifying this file repeatedly
 /trajex find the most recent failed tool calls and what tasks they belong to
 /trajex what did each subagent conclude in that review workflow
-/trajex recap this week
-/trajex recap this month
 ```
 
 ### How It Works
@@ -169,7 +164,7 @@ npm ci
 npm run dev
 ```
 
-`electron-vite` starts the renderer dev server and opens Electron. On first run, Trajex creates `~/.trajex/trajex.sqlite`, indexes available Claude Code, Codex, Kimi Code, and Pi transcripts, then watches them for changes. Default sources can be changed to other directories in **Settings**. On Windows, Trajex also checks common WSL distributions for Claude Code directories.
+`electron-vite` starts the renderer dev server and opens Electron. On first run, Trajex creates `~/.trajex/trajex.sqlite`, indexes available Claude Code, Codex, and Pi transcripts, then watches them for changes. Default sources can be changed to other directories in **Settings**. On Windows, Trajex also checks common WSL distributions for Claude Code directories.
 
 ## Debugging the App
 
@@ -179,6 +174,28 @@ npm run dev
 - The development app reads and updates the real `~/.trajex` index. Back it up before testing destructive rebuilds. To run in isolation, use a disposable home directory — for example, `HOME=/tmp/trajex-dev npm run dev` on macOS/Linux, or temporarily set `USERPROFILE` on Windows, then select fixture source directories in **Settings**.
 
 `better-sqlite3` ships prebuilt binaries for common platforms. If `npm ci` falls back to a local build, install the C/C++ build tools for your platform and re-run `npm ci`.
+
+## Building and Packaging the App
+
+Run these commands from `app/`:
+
+```bash
+# Compile main, preload, and renderer only
+npm run build
+
+# Generate an unpacked app directory
+npm run pack
+
+# Generate macOS DMG and ZIP installers
+npm run dist:mac
+```
+
+The flow first compiles Electron's main/preload/renderer processes with
+`electron-vite`, then uses `electron-builder` to rebuild native dependencies,
+assemble the app, and generate installers. Artifacts are written to
+`app/release/`; `npm run pack` generates `release/mac-arm64/Trajex.app`, while
+`npm run dist:mac` generates the DMG and ZIP. Without an Apple Developer ID,
+the artifacts are unsigned.
 
 ## What Gets Indexed
 
@@ -203,7 +220,6 @@ packages/core/                # @trajex/core npm workspace (TypeScript + ESM)
 │   │   ├── types.ts          # Provider + TranscriptRecord contract
 │   │   ├── claude.ts         # Claude Code adapter (line-incremental)
 │   │   ├── codex.ts          # Codex adapter (full reparse)
-│   │   ├── kimi.ts           # Kimi Code adapter (session projection)
 │   │   └── pi.ts             # Pi adapter (tree + sidechain projection)
 │   ├── session-detail.ts     # Provider-independent transcript projection
 │   ├── persist.ts            # Binding-agnostic record writer (upsert/merge)
@@ -228,7 +244,6 @@ packages/cli/                 # @trajex-apps/cli npm workspace
 trajex-skill/                    # Source for the docs-only trajex agent skill
 ├── SKILL.md                  # Query and memory workflow
 └── references/               # Progressive-disclosure API/schema/pattern docs
-    └── recap/                # Per-card recap retrieval + writing references
 
 app/                          # Electron desktop app (electron-vite + Vue)
 ├── src/main/                 # TypeScript main process (consumes shared core)
@@ -240,14 +255,6 @@ install.sh                    # POSIX CLI-only installer
 CONTEXT.md                    # Project glossary
 docs/adr/                     # Architecture decision records (0001–0006)
 ```
-
-The optional `/trajex recap` flow is only loaded on explicit `/trajex recap` intent. It starts at `trajex-skill/references/recap/overview.md` and proceeds card by card:
-
-- `skill-doc/references/recap/pattern1-cover.md` + `skill-doc/references/recap/writing1-cover.md`
-- `skill-doc/references/recap/pattern2-thinking.md` + `skill-doc/references/recap/writing2-thinking.md`
-- `skill-doc/references/recap/pattern3-vibe.md` + `skill-doc/references/recap/writing3-vibe.md`
-- `skill-doc/references/recap/pattern4-workflow.md` + `skill-doc/references/recap/writing4-workflow.md`
-- `skill-doc/references/recap/pattern5-closing.md` + `skill-doc/references/recap/writing5-closing.md`
 
 ### Build Artifacts
 

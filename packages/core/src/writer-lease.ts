@@ -12,11 +12,13 @@
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+/** 锁库连接的最小抽象，两种驱动均可作为 openDb 的返回类型。 */
 export interface WriterLeaseDb {
   exec(sql: string): unknown;
   close(): void;
 }
 
+/** 写租约句柄；调用方用完必须调用 release() 归还硬锁。 */
 export interface WriterLease {
   release(): void;
 }
@@ -30,8 +32,10 @@ export interface AcquireWriterLeaseOptions {
   sleep?: (ms: number) => void;
 }
 
+// SQLite 忙错误的常见文案；BEGIN IMMEDIATE 竞争时会抛出其一。
 const BUSY_MESSAGE = /SQLITE_BUSY|database is locked|database is busy/i;
 
+/** 判断错误是否属于 SQLite 忙：优先看 code 前缀，再以 message 文案兜底。 */
 function isBusy(error: unknown): boolean {
   const raw = error as { code?: unknown; errcode?: unknown; message?: unknown } | null;
   const code = raw?.code ?? raw?.errcode;
@@ -41,13 +45,13 @@ function isBusy(error: unknown): boolean {
   );
 }
 
+/** 同步阻塞 sleep：用 Atomics.wait 模拟，供非 async 的轮询循环使用。 */
 function syncSleep(ms: number): void {
   if (ms <= 0) return;
   try {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   } catch {
-    // If synchronous sleeping is unavailable, the bounded attempt count below
-    // still prevents an infinite acquisition loop.
+    // 同步 sleep 不可用时，上方有界的尝试次数仍能防止无限获取循环。
   }
 }
 

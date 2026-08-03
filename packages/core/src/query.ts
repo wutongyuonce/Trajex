@@ -12,22 +12,31 @@ import type { SqliteDb, SqliteRow } from './sqlite-types.ts';
 
 type DbRow = SqliteRow;
 
+/**
+ * 沙箱查询 API 的统一过滤/选项对象：search / sessions / subagents / memories 等方法
+ * 都接收它，各自只读自己关心的字段；字段名即沙箱公开参数名。
+ * extends Record<string, any> 保留宽松索引签名：脚本可能传入任意键，编译期不卡死。
+ */
 interface QueryOptions extends Record<string, any> {
-  limit?: number;
-  sessionId?: string;
-  sessions?: string[];
-  project?: string;
-  after?: string;
-  before?: string;
-  cwd?: string;
-  branch?: string;
-  source?: string;
-  includeMeta?: boolean;
-  query?: string;
-  projectLimit?: number;
-  memoryLimit?: number;
+  limit?: number;          // 返回条数上限
+  sessionId?: string;      // 单会话过滤（=）
+  sessions?: string[];     // 多会话过滤（IN）
+  project?: string;        // 项目过滤（LIKE 模糊匹配）
+  after?: string;          // 时间窗口下界（timestamp >）
+  before?: string;         // 时间窗口上界（timestamp <）
+  cwd?: string;            // 工作目录过滤
+  branch?: string;         // git 分支过滤
+  source?: string;         // Provider 来源过滤；'all' 表示不过滤
+  includeMeta?: boolean;   // 是否包含 meta（System 卡片）消息；默认剔除
+  query?: string;          // FTS 检索词（memories() 用）
+  projectLimit?: number;   // overview 专用：项目列表条数
+  memoryLimit?: number;    // overview 专用：记忆列表条数
 }
 
+/**
+ * buildWhere() 的白名单列名映射：过滤条件编译为 SQL 时，列名一律取这里的表别名
+ * （如 s.id / sa.session_id），绝不使用用户输入——注入防护的关键。
+ */
 interface ColumnAliases {
   sessionId: string;
   project: string;
@@ -36,21 +45,24 @@ interface ColumnAliases {
   source?: string;
 }
 
+/** remember() 的参数契约：一条记忆的必填/可选字段。 */
 interface RememberInput {
-  path: string;
-  session_id?: string;
-  message_start?: string;
-  message_end?: string;
-  summary: string;
-  project?: string;
-  anchors?: unknown;
+  path: string;            // 必填：记忆指向的文件路径
+  session_id?: string;     // 归属会话；用于推导 project_path 基准
+  message_start?: string;  // 证据消息窗口起点
+  message_end?: string;    // 证据消息窗口终点
+  summary: string;         // 必填：记忆正文（必须英文）
+  project?: string;        // 覆盖归属项目
+  anchors?: unknown;       // JSON 数组锚点
 }
 
+/** forget() 的参数契约：id 与删除理由两者都必填。 */
 interface ForgetInput {
   id: string;
   reason: string;
 }
 
+/** 统一 opts 重载：字符串 → sessionId，数字 → limit，null → 空对象。 */
 function normalizeOpts(optsOrScalar: QueryOptions | string | number | null | undefined, scalarKey = 'sessionId'): QueryOptions {
   if (optsOrScalar == null) return {};
   if (typeof optsOrScalar === 'string') return { [scalarKey]: optsOrScalar };
@@ -58,6 +70,7 @@ function normalizeOpts(optsOrScalar: QueryOptions | string | number | null | und
   return optsOrScalar;
 }
 
+/** 把结构化过滤条件编译为 SQL WHERE 片段与绑定参数（列名一律走白名单别名）。 */
 function buildWhere(opts: QueryOptions, aliases: ColumnAliases) {
   const clauses: string[] = [];
   const params: any[] = [];
@@ -79,6 +92,7 @@ function buildWhere(opts: QueryOptions, aliases: ColumnAliases) {
 
 const BASH_EXIT_PAT = 'Exit code %';
 
+/** 只允许 SELECT/WITH 开头的语句，禁止任何写/管理关键字，防止沙箱内 sql() 被用来改库。 */
 function assertReadOnlySql(sql: unknown): void {
   const text = String(sql || '').trim();
   if (!/^(SELECT|WITH)\b/i.test(text)) {
@@ -89,8 +103,10 @@ function assertReadOnlySql(sql: unknown): void {
   }
 }
 
+// 记忆层仅按英文索引，故拒绝中日韩（含假名/谚文）字符的正文。
 const CJK_TEXT_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 
+/** 校验记忆文本必须为英文：含 CJK 字符即抛错，引导用户先翻译术语再写入记忆层。 */
 function assertEnglishMemoryText(value: unknown, label: string): void {
   const text = String(value || '');
   if (!text.trim()) return;
@@ -100,6 +116,7 @@ function assertEnglishMemoryText(value: unknown, label: string): void {
   }
 }
 
+/** 把用户文本拆成最多 12 个 token 并逐个加引号，规避 FTS5 把连字符/标点误解析为运算符。 */
 function buildSafeFtsQuery(text: unknown): string {
   const tokens = String(text || '').match(/[\p{Letter}\p{Number}]+/gu) || [];
   return tokens
@@ -116,11 +133,13 @@ function createQueryApi(
   db: SqliteDb,
   { providerRegistry = createBuiltinProviderRegistry() }: { providerRegistry?: ProviderRegistry } = {},
 ) {
+  /** 受控只读 SQL 入口：先校验只读，再执行并返回全部行。 */
   const q = (sql: string, ...p: any[]) => {
     assertReadOnlySql(sql);
     return db.prepare(sql).all(...p);
   };
 
+  /** overview 专用重载：字符串 → project，数字 → limit。 */
   const normalizeOverviewOpts = (optsOrScalar: QueryOptions | string | number | null | undefined): QueryOptions => {
     if (optsOrScalar == null) return {};
     if (typeof optsOrScalar === 'string') return { project: optsOrScalar };
@@ -148,9 +167,8 @@ function createQueryApi(
       FROM messages_fts mf JOIN messages m ON m.uuid=mf.uuid LEFT JOIN sessions s ON s.id=m.session_id
       ${where} ORDER BY rank LIMIT ?`);
     const runMatch = (matchText: string): DbRow[] => stmt.all(matchText, ...filterParams, limit);
-    // Honor raw FTS5 syntax when the query is valid, but never crash on ordinary
-    // input (hyphens, punctuation) that FTS5 would parse as operators: fall back
-    // to safe per-token quoting, the same tokenization memories() uses.
+    // 查询合法时保留原始 FTS5 语法以获得更高精度；但普通输入（连字符、标点）会被
+    // FTS5 误解析为运算符，此时退回与 memories() 相同的逐 token 加引号安全写法。
     let rows;
     try {
       rows = runMatch(text);
@@ -190,6 +208,7 @@ function createQueryApi(
     return { message: msg, parentChain: chain, session, subagent, workflow };
   };
 
+  /** 沿 parent_uuid 自底向上回溯完整父链（含起点本身）。 */
   const trace = (uuid: string) => {
     const chain: DbRow[] = [];
     let cur = db.prepare('SELECT * FROM messages WHERE uuid=?').get(uuid);
@@ -197,12 +216,14 @@ function createQueryApi(
     return chain;
   };
 
+  /** 单个 session 内按时间排序的全部消息（默认剔除 meta）。 */
   const thread = (sid: string, opts: QueryOptions = {}) => {
     const includeMeta = opts?.includeMeta === true;
     const metaClause = includeMeta ? '' : 'AND COALESCE(is_meta,0)=0';
     return db.prepare(`SELECT * FROM messages WHERE session_id=? ${metaClause} ORDER BY timestamp`).all(sid);
   };
 
+  /** 列出子代理，并附带各自的 messageCount。 */
   const subagents = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
     const { limit = 100 } = opts;
@@ -216,6 +237,7 @@ function createQueryApi(
     });
   };
 
+  /** 列出 workflow 运行记录（可按 project/branch/source 过滤）。 */
   const workflows = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
     const { limit = 100 } = opts;
@@ -226,6 +248,7 @@ function createQueryApi(
     return db.prepare(`SELECT w.* FROM workflows w ${join} WHERE ${where} ORDER BY w.timestamp DESC LIMIT ?`).all(...params);
   };
 
+  /** 单个 workflow 的完整树：含解析后的 result_json 与全部 agents（带消息数）。 */
   const workflowTree = (runId: string) => {
     const wf = db.prepare('SELECT * FROM workflows WHERE run_id=?').get(runId);
     if (!wf) return null;
@@ -238,6 +261,7 @@ function createQueryApi(
     return { ...wf, result, agents };
   };
 
+  /** 按文件路径回查相关工具调用历史（含所属 session 与时间戳）。 */
   const fileHistory = (fp: string, opts: QueryOptions = {}) => {
     const { limit = 200, after, before, source } = opts;
     let where = 'tc.file_path=?';
@@ -255,6 +279,7 @@ function createQueryApi(
     }));
   };
 
+  /** 列出失败的工具结果（is_error=1 或内容以 'Exit code' 开头），附后续消息。 */
   const failures = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
     const { limit = 50 } = opts;
@@ -273,6 +298,7 @@ function createQueryApi(
     });
   };
 
+  /** 按过滤条件查 session 列表，默认按 ended_at 倒序取 50 条。 */
   const sessions = (optsOrN?: QueryOptions | number | string) => {
     const opts = normalizeOpts(optsOrN, 'sessionId');
     const { limit = 50 } = opts;
@@ -281,8 +307,10 @@ function createQueryApi(
     return db.prepare(`SELECT * FROM sessions s WHERE ${where} ORDER BY ended_at DESC LIMIT ?`).all(...params);
   };
 
+  /** sessions({ limit: n }) 的便捷包装。 */
   const recent = (n = 10) => sessions({ limit: n });
 
+  /** 会话摘要列表（可附带 session 标题与 project）。 */
   const summaries = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
     const { limit = 100 } = opts;
@@ -291,6 +319,7 @@ function createQueryApi(
     return db.prepare(`SELECT su.*, s.title as session_title, s.project FROM summaries su LEFT JOIN sessions s ON s.id=su.session_id WHERE ${where} ORDER BY su.timestamp DESC LIMIT ?`).all(...params);
   };
 
+  /** 概览：解析当前项目 + 全部项目的 session/记忆统计；是 overview 脚本的主要数据源。 */
   const overview = (optsOrScalar?: QueryOptions | string | number) => {
     const opts = normalizeOverviewOpts(optsOrScalar);
     const cwd = process.cwd();
@@ -330,6 +359,7 @@ function createQueryApi(
         return projectDescriptor(row || { project: opts.project, project_path: null }, 'opts', confidence);
       }
 
+      // 第一优先：cwd 精确匹配或前缀匹配 sessions.project_path（最长匹配 + 最近活跃）。
       const paths = db.prepare(`
         SELECT project, project_path, MAX(COALESCE(ended_at, started_at)) AS last_seen
         FROM sessions
@@ -341,6 +371,7 @@ function createQueryApi(
         .sort((a: DbRow, b: DbRow) => b.project_path.length - a.project_path.length || String(b.last_seen || '').localeCompare(String(a.last_seen || '')))[0];
       if (byProjectPath) return projectDescriptor(byProjectPath, 'cwd_project_path', 'exact');
 
+      // 第二优先：cwd 精确匹配 messages.cwd（老数据无 project_path 时的兼容路径）。
       const byMessageCwd = db.prepare(`
         SELECT s.project, s.project_path, MAX(m.timestamp) AS last_seen
         FROM messages m
@@ -355,6 +386,7 @@ function createQueryApi(
       return null;
     };
 
+    // 聚合全部项目：session/记忆计数、最近活跃时间与最近分支（供列表展示）。
     const projects = db.prepare(`
       WITH names AS (
         SELECT project FROM sessions WHERE project IS NOT NULL GROUP BY project
@@ -499,6 +531,7 @@ function createQueryApi(
     };
   };
 
+  /** 记忆检索：带 query 时走 memories_fts 相关度排序，否则按创建时间倒序。 */
   const memories = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
     const { limit = 50, query } = opts;
@@ -558,6 +591,7 @@ function createAttuneApi(db: SqliteDb) {
     return resolved;
   };
 
+  /** 校验并规范化 anchors：必须为 JSON 数组（字符串需可 parse），条目须为对象；空数组归一为 null。 */
   const normalizeAnchors = (anchors: unknown): string | null => {
     if (anchors == null) return null;
     let parsed = anchors;
@@ -579,6 +613,7 @@ function createAttuneApi(db: SqliteDb) {
     return parsed.length ? JSON.stringify(parsed) : null;
   };
 
+  /** 写入一条记忆（INSERT OR REPLACE），返回新记录的关键字段。 */
   const remember = ({ path: memoryPath, session_id, message_start, message_end, summary, project, anchors }: RememberInput) => {
     if (!memoryPath || !summary) throw new Error('remember() requires path and summary');
     assertEnglishMemoryText(summary, 'remember() summary');
@@ -592,6 +627,7 @@ function createAttuneApi(db: SqliteDb) {
     return { id, path: normalizedPath, project: proj, anchors: normalizedAnchors, created_at };
   };
 
+  /** 软删除记忆：写 deleted_at/deleted_reason；对同一 id 重复调用返回 already_deleted。 */
   const forget = ({ id, reason }: ForgetInput) => {
     const deletionReason = String(reason || '').trim();
     if (!id || !deletionReason) throw new Error('forget() requires id and reason');

@@ -17,7 +17,6 @@ export default defineConfig({
           'indexer-service': resolve('src/main/indexer-service.ts'),
           'indexer-worker': resolve('src/main/indexer-worker.ts'),
           'indexer-worker-client': resolve('src/main/indexer-worker-client.ts'),
-          'recap-capture-query': resolve('src/main/recap-capture-query.ts'),
         },
       },
     },

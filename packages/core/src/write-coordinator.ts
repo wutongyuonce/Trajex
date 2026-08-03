@@ -10,6 +10,7 @@
 
 import { runWriteTransaction, type WriteTxDb, type WriteTxOptions } from './tx.ts';
 
+/** tx.ts 写入失败时附加的诊断信息：失败阶段、错误码、事务是否存活、已尝试次数。 */
 interface TransactionDiagnostics {
   phase?: string;
   code?: string | null;
@@ -25,24 +26,28 @@ export interface WriteRetryOptions {
   sleep?: (ms: number) => void;
 }
 
+/** 提取 tx.ts 在错误对象上挂的 trajex 诊断字段，供重试决策使用。 */
 function diagnostics(error: unknown): TransactionDiagnostics | null {
   if (!error || typeof error !== 'object') return null;
   return (error as { trajex?: TransactionDiagnostics }).trajex ?? null;
 }
 
+/** 只认 SQLITE_BUSY 前缀，避免把其他 SQLite 错误误判为可重试。 */
 function isBusyCode(code: unknown): boolean {
   return typeof code === 'string' && code.startsWith('SQLITE_BUSY');
 }
 
+/** 同步阻塞 sleep：用 Atomics.wait 模拟，供非 async 的重试循环使用。 */
 function syncSleep(ms: number): void {
   if (ms <= 0) return;
   try {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   } catch {
-    // Bounded attempts still prevent an infinite retry loop.
+    // 有界尝试次数仍可防止无限重试循环。
   }
 }
 
+/** BEGIN 阶段因 SQLITE_BUSY 失败且事务确未开启：此时重试安全（尚未产生副作用）。 */
 export function isBeginBusyFailure(error: unknown): boolean {
   const info = diagnostics(error);
   return (
@@ -52,11 +57,13 @@ export function isBeginBusyFailure(error: unknown): boolean {
   );
 }
 
+/** 事务状态不明或仍存活（transactionActive 不是 false）：不可安全重试。 */
 export function hasUnusableTransaction(error: unknown): boolean {
   const info = diagnostics(error);
   return Boolean(info && info.transactionActive !== false);
 }
 
+/** work/commit 阶段失败且事务已明确结束：可按幂等语义重试。 */
 export function isRetryableWriteFailure(error: unknown): boolean {
   const info = diagnostics(error);
   return (

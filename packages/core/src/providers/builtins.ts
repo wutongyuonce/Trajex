@@ -1,12 +1,11 @@
 /**
  * 内建 Provider 装配模块。
  *
- * 模块定位：将 Claude、Codex、Kimi 的默认 adapter 组合成 registry。这里仅负责
+ * 模块定位：将 Claude、Codex、Pi 的默认 adapter 组合成 registry。这里仅负责
  * 依赖装配；每个 provider 的路径发现、解析和 raw lookup 仍完全由自身负责。
  */
 import { createClaudeProvider } from './claude.ts';
 import { createCodexProvider } from './codex.ts';
-import { createKimiProvider } from './kimi.ts';
 import { createPiProvider } from './pi.ts';
 import { createProviderRegistry, type ProviderRegistry } from './registry.ts';
 
@@ -20,7 +19,6 @@ export function createBuiltinProviderRegistry(roots: BuiltinProviderRoots = {}):
   return createProviderRegistry([
     createClaudeProvider({ rootDir: roots['claude'] }),
     createCodexProvider({ rootDir: roots['codex'] }),
-    createKimiProvider({ rootDir: roots['kimi'] }),
     createPiProvider({ rootDir: roots['pi'] }),
   ]);
 }

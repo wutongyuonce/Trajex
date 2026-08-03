@@ -24,7 +24,7 @@
 // Core provider contract (see docs/adr/0001).
 //
 // The indexing layer splits along two orthogonal axes:
-//   - Provider axis: pure per-source adapters (claude, codex, kimi, pi,
+//   - Provider axis: pure per-source adapters (claude, codex, pi,
 //     later opencode, …) that discover their own work and parse it into records. A source is
 //     NOT assumed to be a single JSONL file — an adapter may read a SQLite store,
 //     a directory tree, etc. So discovery, change-detection, and resume cursoring
@@ -163,6 +163,7 @@ export interface SummaryRecord {
   kind: 'summary';
   id: string;
   session_id: string;
+  agent_id?: string | null;
   timestamp: string | null;
   source: string;
   content: string;
@@ -261,8 +262,8 @@ export interface DeleteSessionRecord {
 /**
  * 会话级聚合记录。单元记录产出后由 adapter 发出一次，因为
  * started_at/ended_at/message_count 需要跨整个流计算。
- * title/ended_at 可由 adapter 从来源特有辅助文件（claude history.jsonl、
- * codex session_index.jsonl）补充；persist 使用 COALESCE upsert，
+ * title/ended_at 可由 adapter 从来源特有记录或辅助文件
+ * （例如 transcript 的 ai-title、codex session_index.jsonl）补充；persist 使用 COALESCE upsert，
  * 确保不会覆盖已有的值。
  *
  * project_path 不在此设置——调度层的全局 pass

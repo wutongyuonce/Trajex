@@ -82,7 +82,7 @@ async function importMain() {
 // 'dialog', 'nativeImage', 'shell') must be present, even if unused by a test.
 function electronNamespace({ app, BrowserWindow, ipcMain }) {
   return {
-    app: app ?? { whenReady: () => Promise.resolve(), on() {}, quit() {} },
+    app: app ?? { whenReady: () => Promise.resolve(), on() {}, quit() {}, getVersion: () => '0.2.0' },
     BrowserWindow,
     ipcMain: ipcMain ?? { handle() {} },
     clipboard: {},
@@ -203,7 +203,6 @@ test('main process watches every root declared by the built-in provider registry
   const codexDir = join(home, '.codex');
   mkdirSync(join(claudeDir, 'projects'), { recursive: true });
   mkdirSync(join(codexDir, 'sessions'), { recursive: true });
-  mkdirSync(join(home, '.kimi-code', 'sessions'), { recursive: true });
   mkdirSync(join(home, '.pi', 'agent', 'sessions'), { recursive: true });
   mkdirSync(join(home, '.trajex'), { recursive: true });
   writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
@@ -258,11 +257,8 @@ test('main process watches every root declared by the built-in provider registry
     assert.equal(serviceOptions.length, 1);
     assert.deepEqual(serviceOptions[0].watchDirs, [
       join(claudeDir, 'projects'),
-      join(claudeDir, 'history.jsonl'),
       join(codexDir, 'sessions'),
       join(codexDir, 'session_index.jsonl'),
-      join(home, '.kimi-code', 'sessions'),
-      join(home, '.kimi-code', 'session_index.jsonl'),
       join(home, '.pi', 'agent', 'sessions'),
     ]);
     assert.equal(serviceOptions[0].watchDirs.includes(codexDir), false);
@@ -418,7 +414,8 @@ test('session IPC hides Codex rows by default and supports explicit source opt-i
     assert.match(queries.at(-1).sql, /COALESCE\(source, 'claude'\) = \?/);
     assert.ok(queries.at(-1).params.includes('codex'));
 
-    await ipcHandlers.get('settings:get')();
+    const settings = await ipcHandlers.get('settings:get')();
+    assert.equal(settings.version, '0.2.0');
     assert.ok(
       queries.some(q => /GROUP BY COALESCE\(source, 'claude'\)/.test(q.sql)),
     );
@@ -735,7 +732,7 @@ test('closing the last macOS window releases background resources until activati
 
     assert.equal(windows.length, 1);
     assert.equal(workers.length, 1);
-    assert.equal(watchers.length, 1);
+    assert.equal(watchers.length, 0);
 
     windows.length = 0;
     appHandlers.get('window-all-closed')();
@@ -744,7 +741,6 @@ test('closing the last macOS window releases background resources until activati
     assert.equal(quitCalled, false);
     assert.ok(serviceEvents.includes('service-stop'));
     assert.ok(serviceEvents.includes('worker-stop'));
-    assert.ok(serviceEvents.includes('watcher-close'));
     assert.ok(serviceEvents.includes('db-close'));
 
     appHandlers.get('activate')();
@@ -752,7 +748,7 @@ test('closing the last macOS window releases background resources until activati
 
     assert.equal(windows.length, 1);
     assert.equal(workers.length, 2);
-    assert.equal(watchers.length, 2);
+    assert.equal(watchers.length, 0);
     assert.equal(serviceEvents.filter(e => e === 'service-start').length, 2);
   } finally {
     restore();

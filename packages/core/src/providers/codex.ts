@@ -24,7 +24,7 @@ import {
   trunc, truncJson, readLines,
   discoverCodexJsonlFiles, normalizeObservedCwd, projectSlugFromPath,
   codexRawId, codexDbId, codexCallId, codexLineUuid, codexParentThreadId,
-  codexIsGuardianThread, codexAgentNickname, codexAgentRole, codexUsage,
+  codexIsGuardianThread, codexUsage,
   codexEventText, codexMessagePayloadText, codexVisibleMessageKey,
   codexToolInput, codexToolOutput,
   extractMessageIsMeta, isSkillInstructions,
@@ -104,9 +104,10 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     const rawId = meta ? codexRawId(meta.id) : null;
     const parentId = meta ? codexParentThreadId(meta) : null;
     const indexed = rawId ? sessionIndex.get(rawId) : undefined;
+    if (guardian === null && parentId !== null) return [];
     return [{
       key: file.path,
-      sessionId: guardian === null ? codexDbId(parentId || rawId) ?? '' : '',
+      sessionId: guardian === null ? codexDbId(rawId) ?? '' : '',
       meta: {
         source: 'codex',
         guardian: guardian !== null,
@@ -149,10 +150,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     return outCursor;
   }
 
-  const parentRawId = codexParentThreadId(meta);
-  const sessionId = codexDbId(parentRawId || threadRawId) as string;
-  const agentId = (parentRawId ? codexDbId(threadRawId) : null) as string | null;
-  const isSidechain: 0 | 1 = agentId ? 1 : 0;
+  const sessionId = codexDbId(threadRawId) as string;
   const project = projectSlugFromPath(normalizeObservedCwd(meta.cwd));
   const lineUuid = (n: number): string => codexLineUuid(threadRawId, n) as string;
 
@@ -197,13 +195,13 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       timestamp: timestamp || null, role, text: trunc(text),
       content_type: skillInstructions ? 'skill_instructions' : contentType,
       is_meta: visibility === 'hidden' || skillInstructions ? 1 : (isMeta || extractMessageIsMeta({}, text)), visibility,
-      model: currentModel, is_sidechain: isSidechain, agent_id: agentId,
+      model: currentModel, is_sidechain: 0, agent_id: null,
       input_tokens: null, output_tokens: null, cwd: currentCwd, skill: null, source: 'codex',
     };
     out.push(rec);
     msgByUuid.set(uuid, rec);
     sm.lastMessageUuid = uuid;
-    if (!agentId) sm.n++;
+    sm.n++;
     if (type === 'assistant' && contentType === 'text') sm.lastTextAssistantUuid = uuid;
     updateBounds(timestamp);
     return uuid;
@@ -236,6 +234,11 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (obj.type === 'event_msg') {
       const payload = obj.payload || {};
+      if (payload.type === 'context_compacted') {
+        out.push({ kind: 'summary', id: lineUuid(currentLine), session_id: sessionId, timestamp: ts, source: 'codex', content: '已 compact' });
+        updateBounds(ts);
+        continue;
+      }
       if (payload.type === 'user_message' || payload.type === 'agent_message' || payload.type === 'agent_reasoning') {
         const text = codexEventText(payload);
         if (text === null) continue;
@@ -246,19 +249,6 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
           role: payload.type === 'user_message' ? 'user' : 'assistant',
           text, contentType: isReasoning ? 'thinking' : 'text', timestamp: ts,
         });
-        continue;
-      }
-      if (payload.type === 'collab_agent_spawn_end' && payload.call_id && payload.new_thread_id) {
-        const uuid = insertMessage({ uuid: lineUuid(currentLine), type: 'assistant', role: 'assistant', text: null, contentType: 'tool_use', timestamp: ts });
-        const toolId = codexCallId(threadRawId, payload.call_id) as string;
-        const description = payload.new_agent_nickname || payload.new_agent_role || 'Agent';
-        const input = {
-          description, subagent_type: payload.new_agent_role || 'Agent', prompt: payload.prompt || '',
-          new_thread_id: payload.new_thread_id, model: payload.model || null, reasoning_effort: payload.reasoning_effort || null,
-        };
-        out.push({ kind: 'tool_call', id: toolId, message_uuid: uuid, session_id: sessionId, name: 'Agent', input_json: truncJson(input) as string, file_path: null });
-        callMessageUuids.set(toolId, uuid);
-        out.push({ kind: 'subagent', agent_id: codexDbId(payload.new_thread_id) as string, session_id: sessionId, parent_tool_use_id: toolId, agent_type: payload.new_agent_role || null, description });
         continue;
       }
       if (payload.type === 'task_complete') {
@@ -305,22 +295,11 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
   }
 
-  if (agentId) {
-    const started = sm.started_at ? new Date(sm.started_at).getTime() : null;
-    const ended = sm.ended_at ? new Date(sm.ended_at).getTime() : null;
-    const tokenTotal = (sm.totalInputTokens || 0) + (sm.totalOutputTokens || 0);
-    out.push({
-      kind: 'subagent', agent_id: agentId, session_id: sessionId,
-      agent_type: codexAgentRole(meta), description: codexAgentNickname(meta),
-      duration_ms: started && ended ? ended - started : null, total_tokens: tokenTotal || null,
-    });
-  } else {
-    out.push({
-      kind: 'session', id: sessionId, title: sm.title, project,
-      started_at: sm.started_at, ended_at: sm.ended_at, git_branch: sm.git_branch, version: sm.version,
-      message_count: sm.n, countMode: 'total', jsonl_path: unit.key, source: 'codex',
-    });
-  }
+  out.push({
+    kind: 'session', id: sessionId, title: sm.title, project,
+    started_at: sm.started_at, ended_at: sm.ended_at, git_branch: sm.git_branch, version: sm.version,
+    message_count: sm.n, countMode: 'total', jsonl_path: unit.key, source: 'codex',
+  });
 
   yield* out;
   return outCursor;

@@ -9,7 +9,7 @@
 -- ============================================================
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,             -- 会话唯一 ID，由 provider 生成
-  title TEXT,                      -- 会话标题（可从 history.jsonl / AI 标题推断）
+  title TEXT,                      -- 会话标题
   project TEXT,                    -- 项目 slug（dash 编码的路径，如 "Users-my-app"）
   project_path TEXT,               -- 项目真实绝对路径（由 refreshSessionProjectPaths 填充）
   started_at TEXT,                 -- 会话开始时间（ISO 8601）
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   version TEXT,                    -- 生成该会话的 CLI 版本
   message_count INTEGER DEFAULT 0, -- 消息总数
   jsonl_path TEXT,                 -- 来源 JSONL 文件的绝对路径
-  source TEXT DEFAULT 'claude');   -- 来源标识：claude / codex / kimi
+  source TEXT DEFAULT 'claude');   -- 来源标识：claude / codex / pi
 
 -- ============================================================
 -- 2. 消息表：单条对话消息，是搜索和展示的核心实体
@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS workflow_agents (
 --     jsonl_path 特殊值：
 --       __last_build__     → 上次构建时间（用于防抖）
 --       __app_heartbeat__  → 桌面 App 心跳时间（判断 daemon 存活）
---       __claude/__codex/__kimi_canonical_transcript_v*__ → 适配器迁移标记
+--       __claude/__codex/__pi_canonical_transcript_v*__ → 适配器迁移标记
 -- ============================================================
 CREATE TABLE IF NOT EXISTS index_state (
   jsonl_path TEXT PRIMARY KEY,     -- 文件路径 或 系统标记
@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS index_state (
 CREATE TABLE IF NOT EXISTS summaries (
   id TEXT PRIMARY KEY,             -- 摘要 ID
   session_id TEXT,                 -- 所属会话
+  agent_id TEXT,                   -- 子 Agent 摘要所属 Agent（主会话为空）
   timestamp TEXT,                  -- 摘要时间
   source TEXT,                     -- 来源（away_summary / compaction 等）
   content TEXT);                   -- 摘要文本

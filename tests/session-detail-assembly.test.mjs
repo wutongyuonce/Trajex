@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assembleSessionDetail } from '../app/src/shared/session-detail-assembly.mjs';
 
-test('session assembly preserves thinking and keeps subagent records out of generic tool calls', () => {
+test('session assembly attaches subagent records to matching tool calls', () => {
   const messages = [
     {
       uuid: 'thinking-1', timestamp: '2026-06-10T10:00:00Z',
@@ -33,7 +33,16 @@ test('session assembly preserves thinking and keeps subagent records out of gene
   assert.equal(assembled[0].uuid, 'answer-1');
   assert.equal(assembled[0]._thinking, 'reasoning');
   assert.deepEqual(assembled[0].tool_calls[0].result.content, 'done');
-  assert.equal(assembled[0].tool_calls[0].subagent, undefined);
+  assert.deepEqual(assembled[0].tool_calls[0].subagent, {
+    agent_id: 'agent-1',
+    parent_tool_use_id: 'call-1',
+    agent_type: 'reviewer',
+    description: 'inspect',
+    kind: 'subagent',
+    session_id: '',
+    duration_ms: null,
+    total_tokens: null,
+  });
 });
 
 test('session assembly keeps Skill instructions as standalone meta evidence and embeds matching workflow agents', () => {

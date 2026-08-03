@@ -9,9 +9,6 @@ const SessionDetail = () => import('./views/SessionDetail.vue');
 const SubagentDetail = () => import('./views/SubagentDetail.vue');
 const MemoryList = () => import('./views/MemoryList.vue');
 const Activity = () => import('./views/Activity.vue');
-const Recap = () => import('./views/RecapList.vue');
-const RecapDetail = () => import('./views/RecapDetail.vue');
-const RecapExport = () => import('./views/RecapExport.vue');
 const Settings = () => import('./views/Settings.vue');
 
 const routes = [
@@ -47,22 +44,6 @@ const routes = [
     path: '/activity',
     name: 'Activity',
     component: Activity
-  },
-  {
-    path: '/recap',
-    name: 'Recap',
-    component: Recap
-  },
-  {
-    path: '/recap/:id',
-    name: 'RecapDetail',
-    component: RecapDetail,
-    props: true
-  },
-  {
-    path: '/recap-export',
-    name: 'RecapExport',
-    component: RecapExport
   },
   {
     path: '/settings',

@@ -10,15 +10,15 @@ async function readExecutableSchema() {
 }
 
 async function readSchemaReference() {
-  return readFile(new URL('../skill-doc/references/schema.md', import.meta.url), 'utf8');
+  return readFile(new URL('../trajex-skill/references/schema.md', import.meta.url), 'utf8');
 }
 
 async function readApiReference() {
-  return readFile(new URL('../skill-doc/references/api-reference.md', import.meta.url), 'utf8');
+  return readFile(new URL('../trajex-skill/references/api-reference.md', import.meta.url), 'utf8');
 }
 
 async function readSkill() {
-  return readFile(new URL('../skill-doc/SKILL.md', import.meta.url), 'utf8');
+  return readFile(new URL('../trajex-skill/SKILL.md', import.meta.url), 'utf8');
 }
 
 test('db module loads the executable schema from packages/core/src/schema.sql', async () => {

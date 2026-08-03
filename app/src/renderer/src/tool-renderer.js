@@ -127,7 +127,12 @@ export function getToolIcon(name) {
 export function getArgPreview(toolCall) {
   try {
     const input = JSON.parse(toolCall.input_json || '{}');
-    if (typeof input === 'string') return input.slice(0, 90);
+    if (typeof input === 'string') {
+      const patchFile = toolCall.name === 'apply_patch'
+        ? input.match(/^\*\*\* (?:Add|Update|Delete) File: (.+)$/m)?.[1]
+        : null;
+      return (patchFile || input).slice(0, 90);
+    }
     if (input.file_path) return input.file_path;
     if (input.command) return input.command;
     if (input.path) return input.path;

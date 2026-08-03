@@ -24,7 +24,7 @@ function writeFixture() {
     { uuid: 'a1', type: 'assistant', timestamp: '2026-06-10T10:00:05Z', message: { role: 'assistant', model: 'claude-opus', content: [{ type: 'text', text: 'ok' }, { type: 'tool_use', id: 'tc1', name: 'Read', input: { file_path: '/f' } }], usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 } } },
     { type: 'system', subtype: 'turn_duration', parentUuid: 'a1', durationMs: 1234 },
     { uuid: 'u2', type: 'user', timestamp: '2026-06-10T10:00:10Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'file body', is_error: false }] } },
-    { type: 'system', subtype: 'away_summary', uuid: 's1', timestamp: '2026-06-10T10:00:11Z', content: 'a summary' },
+    { uuid: 's1', type: 'user', isCompactSummary: true, timestamp: '2026-06-10T10:00:11Z', message: { role: 'user', content: '此前对话摘要' } },
   ];
   writeFileSync(path, lines.map(l => JSON.stringify(l)).join('\n') + '\n');
   return path;
@@ -59,11 +59,12 @@ test('claude parse() yields the expected record stream for a main session', () =
   assert.deepEqual(byKind('tool_call').map(t => ({ id: t.id, name: t.name })), [{ id: 'tc1', name: 'Read' }]);
   assert.deepEqual(byKind('tool_result').map(t => ({ id: t.tool_use_id, err: t.is_error })), [{ id: 'tc1', err: 0 }]);
 
+  assert.deepEqual(byKind('summary').map(s => ({ id: s.id, source: s.source, content: s.content })), [
+    { id: 's1', source: 'claude', content: '此前对话摘要' },
+  ]);
+
   // turn_duration is an update op keyed on the assistant message.
   assert.deepEqual(byKind('message-turn-duration'), [{ kind: 'message-turn-duration', uuid: 'a1', turn_duration_ms: 1234 }]);
-
-  // Away summary.
-  assert.deepEqual(byKind('summary').map(s => s.id), ['s1']);
 
   // Exactly one session aggregate, reflecting THIS chunk.
   const sessions = byKind('session');
@@ -130,17 +131,18 @@ test('claude provider emits workflow artifacts with an explicit canonical tool e
   writeFileSync(join(workflowAgentDir, 'agent-7.meta.json'), JSON.stringify({
     agentType: 'reviewer', description: 'Review the implementation',
   }));
-  writeFileSync(join(root, 'history.jsonl'), `${JSON.stringify({
-    sessionId: 'sid-workflow', title: 'History-owned title',
+  writeFileSync(join(workflowAgentDir, 'journal.jsonl'), `${JSON.stringify({
+    type: 'result', agentId: '7', result: { status: 'ok' },
   })}\n`);
   const provider = createClaudeProvider({ rootDir: root });
   const units = provider.discover({ lastCursor: () => null });
+  assert.equal(units.some((unit) => unit.key.endsWith('journal.jsonl')), false);
   const records = units.flatMap(unit => drain(provider.parse(unit, null)).values);
 
   const workflow = records.find(record => record.kind === 'workflow');
   assert.equal(workflow.parent_tool_use_id, 'workflow-tool');
   const detail = assembleSessionDetail(records);
-  assert.equal(detail.session.title, 'History-owned title');
+  assert.equal(detail.session.title, null);
   assert.equal(detail.messages[0].tool_calls[0].workflow.run_id, 'run-workflow');
   assert.equal(detail.workflows[0].agents[0].label, 'Reviewer');
   assert.equal(detail.workflows[0].agents.length, 1);
@@ -161,4 +163,39 @@ test('claude provider emits workflow artifacts with an explicit canonical tool e
   });
   assert.deepEqual(persistedDetail, detail);
   db.close();
+});
+
+test('claude workflow linkage uses run id when workflow names repeat', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-claude-workflow-link-'));
+  const projectDir = join(root, 'projects', '-proj');
+  const workflowDir = join(projectDir, 'sid-workflow', 'workflows');
+  mkdirSync(workflowDir, { recursive: true });
+  writeFileSync(join(projectDir, 'sid-workflow.jsonl'), [
+    {
+      uuid: 'assistant-old', type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'old-call', name: 'Workflow', input: {} }] },
+    },
+    {
+      uuid: 'old-result', type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old-call', content: 'Run ID: old-run\nSummary: same-name' }] },
+    },
+    {
+      uuid: 'assistant-new', type: 'assistant',
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: 'new-call', name: 'Workflow', input: {} }] },
+    },
+    {
+      uuid: 'new-result', type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'new-call', content: 'Run ID: new-run\nSummary: same-name' }] },
+    },
+  ].map(line => JSON.stringify(line)).join('\n') + '\n');
+  writeFileSync(join(workflowDir, 'new-run.json'), JSON.stringify({
+    runId: 'new-run', workflowName: 'same-name', status: 'completed', workflowProgress: [],
+  }));
+
+  const provider = createClaudeProvider({ rootDir: root });
+  const units = provider.discover({ lastCursor: () => null });
+  const workflowUnit = units.find(unit => unit.meta?.kind === 'workflow');
+  const records = drain(provider.parse(workflowUnit, null)).values;
+
+  assert.equal(records.find(record => record.kind === 'workflow').parent_tool_use_id, 'new-call');
 });

@@ -69,25 +69,10 @@ function totalInputTokens(usage: Record<string, unknown>): number | null {
 
 function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   const projectsDir = join(rootDir, 'projects');
-  const historyPath = normalize(join(rootDir, 'history.jsonl'));
-  const historyTitles = new Map<string, string>();
-  if (fs.existsSync(historyPath)) {
-    readLines(historyPath, (line: string) => {
-      try {
-        const item = JSON.parse(line);
-        if (item?.sessionId && item?.title) historyTitles.set(item.sessionId, item.title);
-      } catch { /* malformed history entry */ }
-    });
-  }
   const changedTranscriptPaths = new Set<string>();
   const changedWorkflowPaths = new Set<string>();
   const forcedPaths = new Set<string>();
-  let historyChanged = false;
   for (const changedPath of ctx.changedPaths ?? []) {
-    const rootRelative = isAbsolute(changedPath)
-      ? normalize(changedPath)
-      : normalize(join(rootDir, changedPath));
-    if (rootRelative === historyPath) historyChanged = true;
     const absolute = isAbsolute(changedPath)
       ? normalize(changedPath)
       : normalize(join(projectsDir, changedPath));
@@ -105,10 +90,9 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   }
   const transcriptUnits = discoverJsonlFiles(projectsDir).filter((file) => {
     const normalizedPath = normalize(file.path);
-    if (ctx.changedPaths !== undefined && !historyChanged && !changedTranscriptPaths.has(normalizedPath)) return false;
+    if (ctx.changedPaths !== undefined && !changedTranscriptPaths.has(normalizedPath)) return false;
     const cursor = ctx.lastCursor(file.path);
-    return historyChanged
-      || forcedPaths.has(normalizedPath)
+    return forcedPaths.has(normalizedPath)
       || cursor === null
       || Number(cursor.split(':')[0]) < fs.statSync(file.path).mtimeMs;
   }).map((f: any) => ({
@@ -119,7 +103,6 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     agentId: f.agentId,
     meta: {
       ...(f.workflowRunId ? { workflowRunId: f.workflowRunId } : {}),
-      ...(historyTitles.has(f.sessionId) ? { historyTitle: historyTitles.get(f.sessionId) } : {}),
     },
   }));
 
@@ -180,7 +163,6 @@ function toolResultText(content: unknown): string {
 function workflowParentToolUseId(
   transcriptPath: string,
   runId: string,
-  workflowName: string | null,
 ): string | null {
   if (!fs.existsSync(transcriptPath)) return null;
   const workflowToolIds = new Set<string>();
@@ -202,7 +184,7 @@ function workflowParentToolUseId(
     for (const block of content) {
       if (block?.type !== 'tool_result' || !workflowToolIds.has(block.tool_use_id)) continue;
       const text = toolResultText(block.content);
-      if (!text.includes(runId) && !(workflowName && text.includes(workflowName))) continue;
+      if (!text.includes(runId)) continue;
       parentToolUseId = block.tool_use_id;
       return false;
     }
@@ -230,7 +212,6 @@ function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
     parent_tool_use_id: workflowParentToolUseId(
       meta.mainTranscriptPath,
       workflow.runId,
-      workflow.workflowName || null,
     ),
     task_id: workflow.taskId || null,
     script: workflow.script || null,
@@ -261,7 +242,7 @@ function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
 }
 
 /**
- * 增量解析 Claude JSONL。先跳过 cursor 已消费的行，再提取消息、tool、summary、
+ * 增量解析 Claude JSONL。先跳过 cursor 已消费的行，再提取消息、tool、
  * duration 及 subagent 元数据；主会话末尾才产出 session 聚合记录。
  */
 export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRecord, Cursor> {
@@ -277,7 +258,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     ended_at: null as string | null,
     git_branch: null as string | null,
     version: null as string | null,
-    title: ((unit.meta as { historyTitle?: string } | undefined)?.historyTitle ?? null) as string | null,
+    title: null,
     n: 0,
   };
   const subagentStats = {
@@ -304,8 +285,11 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     if (lineNum <= skip) return;
 
     if (obj.type === 'ai-title' && obj.aiTitle) { sm.title = obj.aiTitle; return; }
-    if (obj.type === 'system' && obj.subtype === 'away_summary' && obj.content) {
-      records.push({ kind: 'summary', id: obj.uuid || `${sid}-away-${ts}`, session_id: sid, timestamp: ts, source: 'away_summary', content: obj.content });
+    if (obj.type === 'user' && (obj.isCompactSummary === true || msg.isCompactSummary === true)) {
+      const content = extractText(msg.content);
+      if (content !== null && content !== '') {
+        records.push({ kind: 'summary', id: obj.uuid || `${sid}:compact:${lineNum}`, session_id: sid, agent_id: isSubagent ? (unit.agentId ?? null) : null, timestamp: ts, source: 'claude', content });
+      }
       return;
     }
     if (obj.type === 'system' && obj.subtype === 'turn_duration' && obj.parentUuid && obj.durationMs) {
@@ -449,7 +433,6 @@ export function createClaudeProvider({ rootDir = join(homedir(), '.claude') }: {
     indexVersionMarker: CLAUDE_CANONICAL_TRANSCRIPT_MARKER,
     watchRoots: (configuredRoot) => [
       join(configuredRoot, 'projects'),
-      join(configuredRoot, 'history.jsonl'),
     ],
     discover: (ctx) => discoverAt(rootDir, ctx),
     parse,

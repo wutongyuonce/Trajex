@@ -6,7 +6,7 @@
 
 ## 范围
 
-- 仅改 `SessionDetail`；列表、Memory、Recap 和 Subagent 页面维持原有滚动条。
+- 仅改 `SessionDetail`；列表、Memory 和 Subagent 页面维持原有滚动条。
 - 保留鼠标滚轮、触控板、键盘以及现有虚拟列表滚动行为。
 - 保留详情页底部的四按钮分页器：外侧为上一/下一 session，内侧为上一/下一时间线项；session 切换按当前筛选和排序；右侧短线负责按对话轮次跳转。
 

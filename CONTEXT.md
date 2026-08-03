@@ -1,7 +1,7 @@
 # Trajex
 
 Trajex is explicit memory infrastructure for coding agents: it indexes local
-Claude Code, Codex, Kimi Code and Pi sessions into a queryable SQLite evidence layer, and a
+Claude Code, Codex and Pi sessions into a queryable SQLite evidence layer, and a
 CodeAct runtime lets an agent write a small query, run it, and answer from real
 session history. This glossary pins the terms that are specific to Trajex; it is
 not a spec.
@@ -29,10 +29,10 @@ promoted to an external tool surface.
 ## Indexing
 
 **Provider adapter**:
-A pure per-source module (claude, codex, kimi, pi, …) that owns its
+A pure per-source module (claude, codex, pi, …) that owns its
 descriptor, watch roots, discovery, parsing, cursor interpretation, and raw
 record lookup. It discovers `IndexUnit`s rather than assuming one transcript
-file per unit; Kimi uses a session directory containing multiple wire logs. It
+file per unit. It
 never opens or writes a database; adding a source means adding one adapter and
 registering it. The shared pure
 parse/discover helpers live in `packages/core/src/parsing.ts`, which imports only
@@ -84,8 +84,7 @@ _Avoid_: lazy indexing, on-read indexing
 **index_state**:
 The bookkeeping table shared by both indexing modes. It stores the adapter's
 numeric cursor pair in the existing `mtime` and `lines_processed` columns (a
-file adapter can use mtime + line offset; Kimi uses aggregate max-mtime + total
-lines), plus heartbeat/last-build markers used for daemon arbitration.
+file adapter can use mtime + line offset), plus heartbeat/last-build markers used for daemon arbitration.
 
 **Daemon arbitration**:
 The policy by which the passive pull mode detects a fresh daemon from the

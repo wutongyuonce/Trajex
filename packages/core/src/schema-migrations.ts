@@ -6,6 +6,7 @@
  */
 import type { SqliteDb } from './sqlite-types.ts';
 
+// 各表新增列的声明清单：[表名, 列名, 列定义]。只做加法迁移，不删除列、不改类型。
 const COLUMN_MIGRATIONS = [
   ['sessions', 'source', "TEXT DEFAULT 'claude'"],
   ['messages', 'content_type', 'TEXT'],
@@ -17,16 +18,17 @@ const COLUMN_MIGRATIONS = [
   ['memories', 'anchors', 'TEXT'],
   ['memories', 'deleted_at', 'TEXT'],
   ['memories', 'deleted_reason', 'TEXT'],
+  ['summaries', 'agent_id', 'TEXT'],
 ] as const;
 
+/** 判断表是否已存在，避免对不存在的表执行 ALTER 报错。 */
 function tableExists(db: SqliteDb, table: string): boolean {
   return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table));
 }
 
-/** Binding-agnostic additive migrations shared by the CLI and desktop app. */
 /**
  * 对旧数据库做幂等加列迁移。CREATE TABLE IF NOT EXISTS 无法给已存在表补列，故该
- * 函数在完整 schema 执行前后均可安全调用。
+ * 函数在完整 schema 执行前后均可安全调用（CLI 与桌面 App 共用）。
  */
 export function migrateCoreSchemaColumns(db: SqliteDb): void {
   const columnsByTable = new Map<string, Set<string>>();

@@ -71,6 +71,42 @@ test('a provider record stream assembles directly into session detail', () => {
   db.close();
 });
 
+test('Codex token_count without usage remains persistable', () => {
+  const threadId = '019e8951-3e7d-7343-a3e3-05bff48a3180';
+  const path = writeCodexFixture([
+    {
+      type: 'session_meta',
+      timestamp: '2026-07-14T12:21:21.000Z',
+      payload: { id: threadId, cwd: '/tmp/demo', timestamp: '2026-07-14T12:21:21.000Z' },
+    },
+    {
+      type: 'event_msg',
+      timestamp: '2026-07-14T12:21:30.000Z',
+      payload: { type: 'agent_message', message: 'hello' },
+    },
+    {
+      type: 'event_msg',
+      timestamp: '2026-07-14T12:21:31.000Z',
+      payload: { type: 'token_count', info: null },
+    },
+  ]);
+  const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMA);
+
+  assert.doesNotThrow(() => {
+    persist(db, { key: path, sessionId: `codex:${threadId}` }, parseCodex({
+      key: path,
+      sessionId: `codex:${threadId}`,
+    }, null));
+  });
+  const usage = db.prepare(
+    'SELECT input_tokens, output_tokens FROM messages WHERE text = ?',
+  ).get('hello');
+  assert.equal(usage.input_tokens, null);
+  assert.equal(usage.output_tokens, null);
+  db.close();
+});
+
 test('provider-classified hidden context never reaches session detail', () => {
   const threadId = '019e8951-3e7d-7343-a3e3-05bff48a317e';
   const path = writeCodexFixture([

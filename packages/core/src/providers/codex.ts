@@ -258,9 +258,9 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       }
       if (payload.type === 'token_count') {
         const usage = codexUsage(payload);
-        if (usage.inputTokens !== null) sm.totalInputTokens = usage.inputTokens;
-        if (usage.outputTokens !== null) sm.totalOutputTokens = usage.outputTokens;
-        if (sm.lastTextAssistantUuid && (usage.inputTokens !== null || usage.outputTokens !== null)) {
+        if (usage.inputTokens != null) sm.totalInputTokens = usage.inputTokens;
+        if (usage.outputTokens != null) sm.totalOutputTokens = usage.outputTokens;
+        if (sm.lastTextAssistantUuid && (usage.inputTokens != null || usage.outputTokens != null)) {
           const rec = msgByUuid.get(sm.lastTextAssistantUuid);
           if (rec) { rec.input_tokens = usage.inputTokens; rec.output_tokens = usage.outputTokens; }
         }

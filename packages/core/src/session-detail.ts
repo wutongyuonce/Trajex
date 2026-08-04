@@ -374,6 +374,13 @@ function assembleMessages(
 /**
  * 直接从 Provider 的规范记录流组装详情快照。要求传入的是全新全量解析
  * （cursor = null）；Provider 专属的线协议语义须在此 seam 之前已解析完成。
+ *
+ * 被谁调用：
+ *   - assembleSessionDetail()（记录流形态）
+ *
+ * 调用了谁：
+ *   - assembleMessages()
+ *   - withoutKind()
  */
 function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): SessionDetailSnapshot {
   let session: SessionDetailSession | null = null;
@@ -516,6 +523,9 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
 /**
  * 将 SQLite 多表行逆投影回 TranscriptRecord，使持久化快照与实时解析共用同一
  * assembleTranscriptRecords() 展示逻辑。
+ *
+ * 被谁调用：
+ *   - assembleSessionDetail()（持久化行形态）
  */
 function sessionDetailRecordsFromRows(input: SessionDetailRows): TranscriptRecord[] {
   // 逆投影：每张表行 → 对应 kind 的 TranscriptRecord，并补齐缺省字段，
@@ -602,6 +612,8 @@ function sessionDetailRecordsFromRows(input: SessionDetailRows): TranscriptRecor
     });
   }
   for (const workflow of input.workflows ?? []) {
+    // workflow 行逆投影为 workflow 事件，并把它内嵌的 agents 展开成
+    // 独立的 workflow_agent 事件（组装阶段会再按 run_id 归并回去）。
     records.push({
       ...workflow,
       kind: 'workflow',
@@ -656,10 +668,24 @@ function sessionDetailRecordsFromRows(input: SessionDetailRows): TranscriptRecor
 /**
  * Session Detail 的公开入口：接受规范记录流或持久化行两种输入，统一输出展示快照。
  * 这是详情展示的唯一 seam；Provider 线协议差异必须在此之前解决。
+ *
+ * 被谁调用：
+ *   - provider adapter 全量解析路径（claude / codex / pi）
+ *   - app 主进程（app/src/main/index.ts 经 shared 转发）
+ *   - renderer data 层（app/src/renderer/src/data.js）
+ *   - 相关测试（tests/*.test.mjs、app/tests/*.mjs）
+ *
+ * 调用了谁：
+ *   - sessionDetailRecordsFromRows()（输入为持久化行时）
+ *   - assembleTranscriptRecords()
+ *
+ * @param input 记录流（Iterable<TranscriptRecord>）或多表行（SessionDetailRows）
+ * @returns 详情展示快照：session 头 + 有序消息 + workflow 树 + 摘要
  */
 export function assembleSessionDetail(
   input: Iterable<TranscriptRecord> | SessionDetailRows,
 ): SessionDetailSnapshot {
+  // 输入形态判定：实现了 Symbol.iterator 的是记录流，否则当作持久化行逆投影。
   const records = Symbol.iterator in input
     ? input as Iterable<TranscriptRecord>
     : sessionDetailRecordsFromRows(input as SessionDetailRows);

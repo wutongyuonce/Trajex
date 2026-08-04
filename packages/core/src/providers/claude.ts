@@ -12,11 +12,9 @@
 // persist layer consumes them. Session aggregates here reflect only THIS chunk
 // (started_at/ended_at/message_count); persist merges them with any existing row.
 
-import { createRequire } from 'node:module';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
-const require = createRequire(import.meta.url);
-const fs = require('node:fs');
 
 import {
   extractText, extractContentType, extractMessageIsMeta, isSkillInstructions,
@@ -94,7 +92,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     const cursor = ctx.lastCursor(file.path);
     return forcedPaths.has(normalizedPath)
       || cursor === null
-      || Number(cursor.split(':')[0]) < fs.statSync(file.path).mtimeMs;
+      || Number(cursor.split(':')[0]) < statSync(file.path).mtimeMs;
   }).map((f: any) => ({
     key: f.path,
     sessionId: f.sessionId,
@@ -107,20 +105,20 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   }));
 
   const workflowUnits: IndexUnit[] = [];
-  if (!fs.existsSync(projectsDir)) return transcriptUnits;
+  if (!existsSync(projectsDir)) return transcriptUnits;
   let projects: string[];
-  try { projects = fs.readdirSync(projectsDir); } catch { return transcriptUnits; }
+  try { projects = readdirSync(projectsDir); } catch { return transcriptUnits; }
   for (const project of projects) {
     const projectPath = join(projectsDir, project);
     if (!isDir(projectPath)) continue;
     let sessionIds: string[];
-    try { sessionIds = fs.readdirSync(projectPath); } catch { continue; }
+    try { sessionIds = readdirSync(projectPath); } catch { continue; }
     for (const sessionId of sessionIds) {
       const workflowDir = join(projectPath, sessionId, 'workflows');
       if (!isDir(workflowDir)) continue;
       const mainTranscriptPath = join(projectPath, `${sessionId}.jsonl`);
       let files: string[];
-      try { files = fs.readdirSync(workflowDir); } catch { continue; }
+      try { files = readdirSync(workflowDir); } catch { continue; }
       for (const file of files) {
         if (!file.endsWith('.json')) continue;
         const workflowPath = join(workflowDir, file);
@@ -131,7 +129,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
           && !changedWorkflowPaths.has(normalizedPath)
           && !relationshipChanged
         ) continue;
-        const mtime = fs.statSync(workflowPath).mtimeMs;
+        const mtime = statSync(workflowPath).mtimeMs;
         const cursor = ctx.lastCursor(workflowPath);
         if (!relationshipChanged && cursor !== null && Number(cursor.split(':')[0]) >= mtime) continue;
         workflowUnits.push({
@@ -164,7 +162,7 @@ function workflowParentToolUseId(
   transcriptPath: string,
   runId: string,
 ): string | null {
-  if (!fs.existsSync(transcriptPath)) return null;
+  if (!existsSync(transcriptPath)) return null;
   const workflowToolIds = new Set<string>();
   let parentToolUseId: string | null = null;
   readLines(transcriptPath, (line: string) => {
@@ -197,10 +195,10 @@ function workflowParentToolUseId(
  * transcript 以恢复它对应的 Workflow tool call ID。
  */
 function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
-  const mtime = fs.statSync(unit.key).mtimeMs;
+  const mtime = statSync(unit.key).mtimeMs;
   const outCursor = `${mtime}:1`;
   let workflow: any;
-  try { workflow = JSON.parse(fs.readFileSync(unit.key, 'utf8')); } catch { return outCursor; }
+  try { workflow = JSON.parse(readFileSync(unit.key, 'utf8')); } catch { return outCursor; }
   if (!workflow?.runId) return outCursor;
   const meta = unit.meta as ClaudeWorkflowUnitMeta;
   const progress = Array.isArray(workflow.workflowProgress) ? workflow.workflowProgress : [];
@@ -250,7 +248,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     return yield* parseWorkflow(unit);
   }
   const skip = cursorToSkip(cursor);
-  const mtime = fs.statSync(unit.key).mtimeMs;
+  const mtime = statSync(unit.key).mtimeMs;
   const isSubagent = unit.isSubagent === true;
   const records: TranscriptRecord[] = [];
   const sm = {
@@ -341,9 +339,9 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
 
   if (isSubagent && unit.agentId) {
     const metaPath = unit.key.replace(/\.jsonl$/, '.meta.json');
-    if (fs.existsSync(metaPath)) {
+    if (existsSync(metaPath)) {
       try {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+        const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
         const workflowRunId = (unit.meta as { workflowRunId?: string } | undefined)?.workflowRunId;
         if (workflowRunId) {
           records.push({
@@ -397,7 +395,7 @@ function rawClaude(input: RawLookup): RawRecord | null {
       ? join(dirname(mainPath), String(input.session?.id ?? ''), 'subagents', 'workflows', runId, `${input.agentId}.jsonl`)
       : join(dirname(mainPath), String(input.session?.id ?? ''), 'subagents', `${input.agentId}.jsonl`);
   }
-  if (!fs.existsSync(sourcePath)) return null;
+  if (!existsSync(sourcePath)) return null;
   let found: string | null = null;
   readLines(sourcePath, (line: string) => {
     if (!line.includes(input.messageUuid)) return;

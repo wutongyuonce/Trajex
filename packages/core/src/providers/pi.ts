@@ -1,9 +1,7 @@
 /** Pi JSONL session adapter. One JSONL file is one Pi session. */
-import { createRequire } from 'node:module';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
-const require = createRequire(import.meta.url);
-const fs = require('node:fs');
 
 import { projectSlugFromPath, trunc, truncJson } from '../parsing.ts';
 import type {
@@ -21,12 +19,12 @@ function piId(sessionId: string, entryId: string, suffix = ''): string {
 }
 
 function sessionFiles(dir: string): string[] {
-  if (!fs.existsSync(dir)) return [];
+  if (!existsSync(dir)) return [];
   const out: string[] = [];
-  for (const project of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const project of readdirSync(dir, { withFileTypes: true })) {
     if (!project.isDirectory()) continue;
     const projectDir = join(dir, project.name);
-    for (const file of fs.readdirSync(projectDir, { withFileTypes: true })) {
+    for (const file of readdirSync(projectDir, { withFileTypes: true })) {
       if (file.isFile() && file.name.endsWith('.jsonl')) out.push(join(projectDir, file.name));
     }
   }
@@ -43,11 +41,11 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   }
   return sessionFiles(sessionsDir).flatMap((path) => {
     if (ctx.changedPaths !== undefined && !changed.has(normalize(path)) && !changed.has(normalize(dirname(path))) && !changed.has(normalize(sessionsDir))) return [];
-    const mtime = fs.statSync(path).mtimeMs;
+    const mtime = statSync(path).mtimeMs;
     const cursor = ctx.lastCursor(path);
     if (cursor !== null && Number(cursor.split(':')[0]) >= mtime) return [];
     let header: PiEntry | null = null;
-    try { header = JSON.parse(fs.readFileSync(path, 'utf8').split('\n')[0] || 'null'); } catch { /* malformed file */ }
+    try { header = JSON.parse(readFileSync(path, 'utf8').split('\n')[0] || 'null'); } catch { /* malformed file */ }
     if (header?.type !== 'session' || header.version !== 3 || typeof header.id !== 'string') return [];
     const project = projectSlugFromPath(header.cwd);
     return [{ key: path, sessionId: `pi:${header.id}`, ...(project ? { project } : {}), meta: { sessionId: header.id, cwd: header.cwd ?? null } }];
@@ -74,8 +72,8 @@ function toolFilePath(name: unknown, input: unknown): string | null {
 
 /** Full replay is required because the current Pi transcript is a tree path. */
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
-  const stat = fs.statSync(unit.key);
-  const raw = fs.readFileSync(unit.key, 'utf8');
+  const stat = statSync(unit.key);
+  const raw = readFileSync(unit.key, 'utf8');
   const lines = raw.split('\n');
   if (raw.endsWith('\n')) lines.pop();
   const outCursor = `${stat.mtimeMs}:${lines.length}`;
@@ -228,7 +226,7 @@ function rawPi(rootDir: string, input: RawLookup): RawRecord | null {
   if (typeof path !== 'string' || !path.startsWith(join(rootDir, 'sessions'))) return null;
   const match = /^pi:([^:]+):([^:]+)/.exec(input.messageUuid);
   if (!match) return null;
-  const line = fs.readFileSync(path, 'utf8').split('\n').find((value: string) => { try { return JSON.parse(value)?.id === match[2]; } catch { return false; } });
+  const line = readFileSync(path, 'utf8').split('\n').find((value: string) => { try { return JSON.parse(value)?.id === match[2]; } catch { return false; } });
   if (!line) return null;
   return { text: line, totalLength: line.length, offset: 0, limit: line.length, hasMore: false };
 }

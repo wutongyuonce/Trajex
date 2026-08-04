@@ -6,8 +6,9 @@
  * 不理解任何具体 Provider JSONL 格式。
  */
 // Passive-pull indexing orchestration for the Core package.
+import { existsSync } from 'node:fs';
 import { DB_PATH, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts } from './db.ts';
-import { fs, inferProjectPath } from './parsing.ts';
+import { inferProjectPath } from './parsing.ts';
 import {
   createProviderIndexPlan,
   indexProviderPlan,
@@ -87,7 +88,7 @@ function isMissingIndexStateTable(error: unknown): boolean {
 
 /** 只读预检查写入所有权；新库缺 index_state 时允许写路径初始化。 */
 function inspectBuildOwnership({ force = false }: { force?: boolean } = {}) {
-  if (!fs.existsSync(DB_PATH)) return { skip: false };
+  if (!existsSync(DB_PATH)) return { skip: false };
   const db = openReadDb();
   try {
     return shouldSkipBuild(db, { ignoreRecentBuild: force });

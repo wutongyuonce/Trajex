@@ -5,26 +5,24 @@
  * schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
  */
 // node:sqlite lifecycle and migrations for the Core package.
-import { createRequire } from 'node:module';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { CLAUDE_DIR, CODEX_DIR, TEXT_LIMIT, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines } from './parsing.ts';
 import { configureConnection } from './tx.ts';
 import { migrateCoreSchemaColumns } from './schema-migrations.ts';
 import type { NodeSqliteDb, SqliteDb } from './sqlite-types.ts';
-const require = createRequire(import.meta.url); // 基于该 URL 创建一个 require 函数，行为等同于 CommonJS 中的 require ，解析路径相对于当前文件
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const { DatabaseSync } = require('node:sqlite'); // node:sqlite 是 Node 22+ 内置的 SQLite 绑定 ，但它只在运行时存在，TypeScript 类型系统不认识。所以不能用 import 写法
 
-const TRAJEX_DIR = path.join(os.homedir(), '.trajex');
-const DB_PATH = path.join(TRAJEX_DIR, 'trajex.sqlite');
+const TRAJEX_DIR = join(homedir(), '.trajex');
+const DB_PATH = join(TRAJEX_DIR, 'trajex.sqlite');
 // 将同目录下的 schema.sql 文件内容读取为字符串，存入常量 SCHEMA 。
-const SCHEMA = fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'); // new URL('./schema.sql', import.meta.url) — ESM 中获取当前文件同目录下另一个文件的 绝对 URL 。
+const SCHEMA = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'); // new URL('./schema.sql', import.meta.url) — ESM 中获取当前文件同目录下另一个文件的 绝对 URL 。
 
 
 /** 打开（必要时创建）主索引连接：建目录 → 配置 busy_timeout → 双次加列迁移。 */
 function openDb(): NodeSqliteDb {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+  mkdirSync(dirname(DB_PATH), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
   configureConnection(db, { busyTimeoutMs: 250 });
   migrateCoreSchemaColumns(db);
@@ -53,4 +51,4 @@ function rebuildMemoryFts(db: SqliteDb): void {
 }
 
 
-export { CLAUDE_DIR, CODEX_DIR, TRAJEX_DIR, DB_PATH, TEXT_LIMIT, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines, fs, path, os };
+export { CLAUDE_DIR, CODEX_DIR, TRAJEX_DIR, DB_PATH, TEXT_LIMIT, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines };

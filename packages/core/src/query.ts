@@ -5,7 +5,8 @@
  * 已打开的 SQLite 连接，不负责索引调度或 VM 执行。
  */
 // Query and attune sandbox helpers for the Core package.
-import { fs, path } from './db.ts';
+import { statSync } from 'node:fs';
+import { isAbsolute, normalize, resolve, sep } from 'node:path';
 import { createBuiltinProviderRegistry } from './providers/builtins.ts';
 import type { ProviderRegistry } from './providers/registry.ts';
 import type { SqliteDb, SqliteRow } from './sqlite-types.ts';
@@ -398,7 +399,7 @@ function createQueryApi(
         GROUP BY project, project_path
       `).all();
       const byProjectPath = paths
-        .filter((r: DbRow) => cwd === r.project_path || cwd.startsWith(r.project_path + path.sep))
+        .filter((r: DbRow) => cwd === r.project_path || cwd.startsWith(r.project_path + sep))
         .sort((a: DbRow, b: DbRow) => b.project_path.length - a.project_path.length || String(b.last_seen || '').localeCompare(String(a.last_seen || '')))[0];
       if (byProjectPath) return projectDescriptor(byProjectPath, 'cwd_project_path', 'exact');
 
@@ -611,12 +612,12 @@ function createAttuneApi(db: SqliteDb) {
     if (sessionId) {
       base = db.prepare('SELECT project_path FROM sessions WHERE id=?').get(sessionId)?.project_path || null;
     }
-    const resolved = path.isAbsolute(memoryPath)
-      ? path.normalize(memoryPath)
-      : path.resolve(base || process.cwd(), memoryPath);
+    const resolved = isAbsolute(memoryPath)
+      ? normalize(memoryPath)
+      : resolve(base || process.cwd(), memoryPath);
     let stat;
     try {
-      stat = fs.statSync(resolved);
+      stat = statSync(resolved);
     } catch {
       throw new Error(`remember() memory file does not exist: ${resolved}`);
     }

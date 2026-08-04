@@ -235,9 +235,12 @@ function assembleMessages(
   subagents: Array<Pick<SessionSubagentRow, 'agent_id' | 'parent_tool_use_id'>>,
   workflows: SessionDetailWorkflow[],
 ): AssembledMessage[] {
+  // 索引一：tool_use_id → 执行结果，供后续给每个 tool call 补 result。
   const resultsByCallId = new Map<string, SessionDetailToolResult>();
   for (const result of toolResults) resultsByCallId.set(result.tool_use_id, withoutKind(result));
 
+  // 索引二：parent_tool_use_id → workflow / subagent。
+  // workflow 与 subagent 都以“父 tool call 的 id”为锚点，挂在同一个 call 上。
   const callsByMessageUuid = new Map<string, AssembledToolCall[]>();
   const workflowsByCallId = new Map(
     workflows
@@ -249,6 +252,7 @@ function assembleMessages(
       .filter((subagent) => subagent.parent_tool_use_id)
       .map((subagent) => [subagent.parent_tool_use_id as string, subagent]),
   );
+  // 索引三：message_uuid → 该消息发起的全部 tool call（含 result/workflow/subagent）。
   for (const toolCall of toolCalls) {
     const call: AssembledToolCall = {
       id: toolCall.id,
@@ -265,6 +269,7 @@ function assembleMessages(
     callsByMessageUuid.set(toolCall.message_uuid, calls);
   }
 
+  // 先把 tool_calls 附着到各消息，再进入合并阶段。
   const raw = messages.map((message): AssembledMessage => {
     const assembled: AssembledMessage = { ...message };
     const calls = callsByMessageUuid.get(message.uuid);
@@ -272,11 +277,15 @@ function assembleMessages(
     return assembled;
   });
 
+  // 合并阶段：把 Provider 切碎的消息片段还原成用户可读的“一条消息”。
   const output: AssembledMessage[] = [];
   for (let index = 0; index < raw.length; index++) {
     const message = raw[index];
+    // tool_result 不独立成条：其内容已经挂在对应 tool call 的 result 上。
     if (message.content_type === 'tool_result') continue;
 
+    // thinking 片段合并：把紧邻的连续 thinking 段拼成一段，若有紧随其后的
+    // assistant 消息则存进它的 _thinking（保留在 UI 折叠区），否则独立成条。
     if (message.type === 'assistant' && message.content_type === 'thinking') {
       const thinkingParts = [message.text ?? ''];
       let nextIndex = index + 1;
@@ -302,6 +311,8 @@ function assembleMessages(
       continue;
     }
 
+    // tool_use 片段合并：把连续的多条 tool_use（中间夹着 tool_result）合并成
+    // 一条 assistant 消息，tool_calls 全部汇入同一条展示。
     if (message.type === 'assistant' && message.content_type === 'tool_use') {
       const merged: AssembledMessage = {
         ...message,
@@ -329,6 +340,8 @@ function assembleMessages(
       continue;
     }
 
+    // 普通 assistant 消息：同样向后吞并紧随的 tool_use 片段（含中间的
+    // tool_result），使其文本与工具调用同条展示；无调用时删掉空数组。
     const assembled: AssembledMessage = { ...message };
     if (message._thinking) assembled._thinking = message._thinking;
     if (message.type === 'assistant'
@@ -374,9 +387,11 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
   const workflowAgentsById = new Map<string, WorkflowAgentRecord>();
   const summaries: SessionDetailSummary[] = [];
 
+  // 单遍扫描记录流：按 kind 分桶到各自集合，同时建立 uuid → 消息索引。
   for (const record of records) {
     switch (record.kind) {
       case 'session':
+        // 详情组装需要“一次性全量”视角：delta 增量无法还原完整 session 视图。
         if (record.countMode === 'delta') {
           throw new Error('Direct session detail assembly requires a fresh full parse (cursor = null), not a provider delta');
         }
@@ -394,6 +409,7 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
         };
         break;
       case 'message': {
+        // hidden 消息对用户不可见，直接丢弃。
         if (record.visibility === 'hidden') break;
         const message: SessionDetailMessage = {
           uuid: record.uuid,
@@ -402,12 +418,15 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
           text: record.text,
           content_type: record.content_type,
           is_meta: record.is_meta,
+          // turn_duration_ms 不随 message 事件带出时保持 null，稍后由
+          // message-turn-duration 事件按 uuid 回填。
           turn_duration_ms: typeof (record as MessageRecord & { turn_duration_ms?: unknown }).turn_duration_ms === 'number'
             ? (record as MessageRecord & { turn_duration_ms: number }).turn_duration_ms
             : null,
         };
         messages.push(message);
         messagesByUuid.set(message.uuid, message);
+        // agent_id === null 表示主线程消息；subagent 的消息在详情页不展示。
         if (record.agent_id === null) mainMessageUuids.add(message.uuid);
         break;
       }
@@ -424,6 +443,8 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
         workflows.push(record);
         break;
       case 'workflow_agent':
+        // workflow agent 可能被拆成多次事件发射：按 agent_id 合并，后到的事件
+        // 只覆盖非空字段，避免覆盖掉之前已解析出的信息。
         workflowAgentsById.set(record.agent_id, {
           ...(workflowAgentsById.get(record.agent_id) ?? record),
           ...Object.fromEntries(
@@ -435,15 +456,18 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
         summaries.push(withoutKind(record));
         break;
       case 'message-turn-duration': {
+        // 迟到的事件：把 turn_duration_ms 回填到已登记的消息上。
         const message = messagesByUuid.get(record.uuid);
         if (message) message.turn_duration_ms = record.turn_duration_ms;
         break;
       }
       case 'delete-session':
+        // 删除标记只影响持久化增量，详情组装直接忽略。
         break;
     }
   }
 
+  // workflow 树：把散落的 workflow_agent 记录按 run_id 归并进各自的 run。
   const assembledWorkflows: SessionDetailWorkflow[] = workflows.map((workflow) => {
     const agents = [...workflowAgentsById.values()]
       .filter((agent) => agent.run_id === workflow.run_id)
@@ -462,14 +486,18 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
       status: workflow.status,
       duration_ms: workflow.duration_ms,
       total_tokens: workflow.total_tokens,
+      // 缺省 agent_count 时用实际 agents 数量兜底，避免 UI 显示空计数。
       agent_count: workflow.agent_count ?? agents.length,
       agents,
     };
   });
 
+  // 主线程过滤：session 存在时只展示主线程消息（subagent 内部对话归入 workflow）；
+  // session === null（如持久化行未带 session）则显示全部，避免误删数据。
   const detailMessages = session === null
     ? messages
     : messages.filter((message) => mainMessageUuids.has(message.uuid));
+  // 消息按时间戳排序（同时间戳按 uuid 稳定排序），保证展示顺序可复现。
   detailMessages.sort((left, right) => {
     const leftTimestamp = left.timestamp ?? '';
     const rightTimestamp = right.timestamp ?? '';
@@ -490,9 +518,12 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
  * assembleTranscriptRecords() 展示逻辑。
  */
 function sessionDetailRecordsFromRows(input: SessionDetailRows): TranscriptRecord[] {
+  // 逆投影：每张表行 → 对应 kind 的 TranscriptRecord，并补齐缺省字段，
+  // 使持久化快照能复用与实时解析完全相同的组装逻辑。
   const records: TranscriptRecord[] = [];
   if (input.session) {
     const session = input.session;
+    // 字符串字段逐一校验：非字符串回退为 null，避免脏数据污染展示。
     records.push({
       kind: 'session',
       id: session.id,
@@ -509,6 +540,7 @@ function sessionDetailRecordsFromRows(input: SessionDetailRows): TranscriptRecor
     });
   }
   for (const message of input.messages ?? []) {
+    // 消息行透传所有未知字段，同时把 role 并入 type（role 只是线协议层概念）。
     records.push({
       ...message,
       kind: 'message',

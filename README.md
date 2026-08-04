@@ -190,7 +190,8 @@ npm run dev
 从 `app/` 目录执行：
 
 ```bash
-# 仅编译 main、preload 和 renderer
+# 编译 main/preload/renderer 并打包（electron-builder 按当前平台配置出安装包，
+# macOS 上等价于 dist:mac）；仅想编译产物可执行 npx electron-vite build
 npm run build
 
 # 生成未压缩的 App 目录
@@ -204,6 +205,7 @@ npm run dist:mac
 `electron-builder` 重建原生依赖、组装 App 并生成安装包。产物位于
 `app/release/`；`npm run pack` 生成 `release/mac-arm64/Trajex.app`，
 `npm run dist:mac` 生成 DMG 和 ZIP。没有 Apple Developer ID 时，产物不会签名。
+仅编译不打包时，`electron-vite` 的产物在 `app/out/`。
 
 ## 发布 npm 包
 

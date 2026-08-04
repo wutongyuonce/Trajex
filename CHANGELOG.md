@@ -11,6 +11,11 @@
 
 ### Changed
 
+- 清理 renderer 中未使用的 `fmtSize`、SubagentDetail 返回逻辑、父会话计算和循环索引。
+- 移除 Memory 的 `anchors` 文件引用字段，仅保留可选的 `message_start` / `message_end` 消息证据范围。
+- 为 thinking 块增加边框，并收紧其内部的顶部留白、行高和段落间距。
+- 将 renderer 的 Markdown 渲染改为本地 `marked`，并使用白名单 sanitizer 过滤危险 HTML 和链接协议。
+- 将 Core 的 Node.js 原生模块导入统一为 ESM named imports，移除 `createRequire()` 兼容层。
 - 让 `subagents()` 的 `after`/`before` 按关联 session 的 `started_at` 过滤。
 - 让没有 `project` 和 `session_id` 的 `remember()` 记录保存为 `NULL` 项目。
 - 清理未使用的 Codex agent nickname/role 解析函数和过时的 `tool_calls.presentation` 迁移。
@@ -19,6 +24,11 @@
 
 ### Fixed
 
+- 校验 Electron `getSessions()` 的 `limit`，拒绝负数、小数和非法值，避免绕过 SQLite 查询数量限制或导致查询报错。
+- 修复应用退出时未等待 watcher、索引 worker 和异步停止流程完成的问题。
+- 修复 SubagentDetail 快速切换 agent 时旧请求覆盖新内容，并将全文展开改为 Vue 状态驱动。
+- 移除 Markdown 对 CDN 版 `marked` 的运行时依赖，防止离线环境渲染失败。
+- 修复 Codex `token_count` 缺少 usage 时向 SQLite 传入 `undefined`，统一规范化为 `null`。
 - 修复 Query API 对负数、无限值和小数 `limit` 的边界处理。
 - 修复空 `sessions: []` 过滤条件被错误忽略的问题。
 - 修复 `raw()` 的非法负数 `offset`。

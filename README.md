@@ -244,7 +244,11 @@ npm i -g @trajex-apps/cli   # 本地全局更新
   `npm version <版本> -w @trajex-apps/cli --no-git-tag-version` 回退；
 - 发布刚完成后立刻 `npm view` 可能短暂 404（registry CDN 传播延迟），稍等重试即可。
 
-## 会索引哪些内容
+## SQLite Schema
+
+<div align="center">
+  <img src=".github/assets/sql_schema.png" alt="Trajex App" width="900">
+</div>
 
 | Layer | Source | 捕获内容 |
 |-------|--------|----------|

@@ -205,7 +205,11 @@ assemble the app, and generate installers. Artifacts are written to
 `npm run dist:mac` generates the DMG and ZIP. Without an Apple Developer ID,
 the artifacts are unsigned.
 
-## What Gets Indexed
+## SQLite Schema
+
+<div align="center">
+  <img src=".github/assets/sql_schema.png" alt="Trajex App" width="900">
+</div>
 
 | Layer | Source | Capture Content |
 |-------|--------|----------------|

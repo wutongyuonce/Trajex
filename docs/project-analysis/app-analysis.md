@@ -1,3 +1,64 @@
+## 四个文件夹的职责
+
+**`main/` —— 主进程（Node 全权，管窗口、文件、数据库、索引）**
+
+| 文件                                                         | 职责                                                         |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| index.ts                                                     | 进程入口：创建 BrowserWindow、app 生命周期、菜单，以及**所有 `ipcMain.handle`**（`db:*` 查询、`settings:*`、`local-link:*`、`capture:*`、`recap:*`） |
+| `indexer.ts` + `indexer-service.ts` + `indexer-worker.ts` + `indexer-worker-client.ts` | **索引服务**：主进程启动 worker thread 跑 core 的 `buildIndex`，监听文件变化、广播进度 |
+| `local-markdown-link.mjs`                                    | 本地文件链接的预览/打开                                      |
+| `provider-settings.ts`                                       | 数据源（provider root）设置                                  |
+
+**`preload/` —— 安全桥（renderer 与主进程之间唯一的通道）**
+
+- index.ts：`contextBridge.exposeInMainWorld('trajex', {...})` 暴露**白名单 API**——每个方法都是 `ipcRenderer.invoke('db:xxx', ...)` 的转发，加 `onIndexUpdated`/`onSessionUpdated` 事件订阅（返回清理函数）。
+
+**`renderer/` —— 渲染进程（浏览器环境，纯 Vue UI）**
+
+- 6 个 views（SessionList / SessionDetail / SubagentDetail / Activity / MemoryList / Settings）、4 个组件、5 个 CSS、`router.js` / `store.js` / `tool-renderer.js`，加一整套 `session-*.mjs`（时间线渲染、live reload、viewport、sidechain、segment navigation 等逻辑）。
+
+**`shared/` —— 跨进程共享的纯契约（不绑定任何进程）**
+
+- ipc-types.ts：IPC payload 类型（`SessionPatch`、`SessionMetadata`…）；
+- `session-detail-types.ts`：timeline 类型；`session-detail-assembly.mjs`：转发 core 的组装；`session-patch.mjs`：增量 patch 工具。
+
+## 关系：单向依赖 + 安全闸门
+
+```
+renderer（浏览器，无 Node 权限）
+   │  window.trajex.getSessions()          ← preload 暴露的白名单
+   ▼
+preload（contextBridge 透传）
+   │  ipcRenderer.invoke('db:getSessions')
+   ▼
+main（Node 全权）
+   │  ipcMain.handle → 查 SQLite → 返回
+   ▼
+renderer 渲染
+```
+
+- **依赖永远单向**：renderer 拿不到 Node/Electron 原生 API（`contextIsolation`），只能调 `window.trajex` 上 preload 显式暴露的方法——preload 是安全闸；
+- **`shared/` 是横切层**：main/preload/renderer 都 import 它（如 preload 里 `import type { SessionPatch } from '../shared/ipc-types.ts'`），保证两端类型一致；运行时被各层 bundle 内联，不是独立分发物；
+- **两条主数据流**：
+  1. *查询流*：renderer 请求 → preload → main 查库 → 原路返回；
+  2. *索引流*：main 的 indexer-service 在 worker 里跑完 `buildIndex` → `ipcMain` 广播 `trajex:index-updated` → preload `onIndexUpdated` 订阅 → renderer 刷新。
+
+## 怎么组织（打包视角）
+
+electron.vite.config.ts 决定三层如何成为可运行产物：
+
+| 层       | 入口                                      | 特殊处理                                                     |
+| -------- | ----------------------------------------- | ------------------------------------------------------------ |
+| main     | **5 个 input**：`index` + 4 个 `indexer*` | 每个 main 模块独立产出 `.js`——因为 `new Worker(__dirname/indexer-worker.js)` 需要 worker 是独立文件 |
+| preload  | `index.ts`                                | 强制 **CJS**（Electron sandbox 不支持 ESM preload，注释里写明） |
+| renderer | `index.html`                              | 标准 Vue bundle                                              |
+
+一句话总结：**main 是"大脑"（有全权），preload 是"唯一门卫"（白名单转发），renderer 是"脸面"（纯 UI），shared 是"共同语言"（两边共享的契约类型）**。
+
+
+
+
+
 > **chokidar** 是 Node.js 生态里最常用的**跨平台文件监听库** 。
 >
 > 原理：在系统原生事件之上做一层"归一化"

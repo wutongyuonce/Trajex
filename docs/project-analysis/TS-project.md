@@ -148,6 +148,27 @@ save-exact=true
 "./oauth": { "types": "./dist/oauth.d.ts", "import": "./dist/oauth.js" }
 ```
 
+> `.d.ts` 是 TypeScript 的声明文件（declaration file）：只含类型签名、不含实现逻辑，是包发布给使用者的"类型说明书"。同一份源码编译后一分为二：
+>
+> ```js
+> // dist/db.js —— 运行时执行的代码（实现）
+> export function openDb(path) { ... }
+> ```
+>
+> ```ts
+> // dist/db.d.ts —— 仅供编译器/编辑器读取，不参与运行
+> export declare function openDb(path: string): SqliteDb;
+> ```
+>
+> TS 编译成 JS 后类型信息会丢失。没有 `.d.ts` 时，TS 使用者在
+> `import { openDb } from '@scope/core'` 后拿到的全是 `any`：没有参数提示、
+> 传错类型也不报错。`.d.ts` 正是把丢失的类型形状补回来。它由 `tsc` 在
+> `declaration: true` 时自动生成，不参与运行时（`node dist/db.js` 不会读它），
+> 也不需要手写。
+>
+> `.d.ts` 的取舍：**库**（会被别人 import）必须发布它；**纯 CLI**（只有 bin
+> 入口、没人 import 它的模块）可以关闭 `declaration`，减少产物。
+
 不要把 `src`、测试、私有配置或整个仓库发布出去；`files` 是发布白名单。可以用 `npm pack --dry-run` 验证它。
 
 在另一个 workspace 中依赖它时，先写真实的包依赖：

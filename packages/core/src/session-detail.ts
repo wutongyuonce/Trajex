@@ -1,8 +1,21 @@
 /**
  * Session Detail 组装模块。
  *
- * 模块定位：把规范 TranscriptRecord 或持久化表行转为 renderer 可直接消费的
- * SessionDetailSnapshot；它是“原始索引事实”和“详情展示模型”之间的纯转换层。
+ * 模块定位：把规范 TranscriptRecord 流或持久化表行（SessionDetailRows）转为
+ * renderer 可直接消费的 SessionDetailSnapshot；它是“原始索引事实”和
+ * “详情展示模型”之间的纯转换层。
+ *
+ * 核心职责：
+ * - 接受两种输入形态：新鲜全量解析的记录流 / 持久化 round-trip 后的多表行
+ * - 按 message_uuid / tool_use_id 重新附着 tool call 与结果，隐藏表拆分
+ * - 合并连续 thinking / tool_use 消息，展开 workflow agents，过滤非主线程消息
+ * - 输出 session 头 + 有序消息 + workflow 树 + 摘要的稳定展示契约
+ *
+ * 调用链：
+ *   provider adapter（claude/codex/pi 全量解析）→ assembleSessionDetail()
+ *   app 主进程 / renderer data 层（SQL 拼装 SessionDetailRows）→ assembleSessionDetail()
+ *   ↓
+ *   assembleTranscriptRecords() → assembleMessages() → SessionDetailSnapshot
  */
 import type {
   TranscriptRecord,
@@ -15,8 +28,10 @@ import type {
   WorkflowRecord,
 } from './providers/types.ts';
 
+/** 去掉判别字段 kind 后的记录主体。 */
 type WithoutKind<T extends { kind: string }> = Omit<T, 'kind'>;
 
+/** 详情页单条消息的展示形态：兼容字段透传，关键字段显式声明。 */
 export interface SessionDetailMessage {
   [key: string]: unknown;
   uuid: string;
@@ -28,8 +43,10 @@ export interface SessionDetailMessage {
   turn_duration_ms: number | null;
 }
 
+/** tool call 对应的执行结果（去掉 kind 的 ToolResultRecord）。 */
 export type SessionDetailToolResult = WithoutKind<ToolResultRecord>;
 
+/** workflow 下单个 agent 的展示摘要。 */
 export interface SessionDetailWorkflowAgent {
   agent_id: string;
   phase: string | null;
@@ -39,6 +56,7 @@ export interface SessionDetailWorkflowAgent {
   duration_ms: number | null;
 }
 
+/** 详情页 workflow 树节点：run 头信息 + 展开后的 agents 数组。 */
 export interface SessionDetailWorkflow {
   [key: string]: unknown;
   run_id: string;
@@ -47,10 +65,12 @@ export interface SessionDetailWorkflow {
   status: string | null;
   duration_ms: number | null;
   total_tokens: number | null;
+  /** 缺省时由 agents 数组长度兜底（agent_count ?? agents.length）。 */
   agent_count: number | null;
   agents: SessionDetailWorkflowAgent[];
 }
 
+/** 组装后的 tool call：结果、workflow、subagent 三类关联挂在同一 call 上。 */
 export interface AssembledToolCall {
   id: string;
   name: string;
@@ -60,6 +80,7 @@ export interface AssembledToolCall {
   subagent?: Pick<SessionSubagentRow, 'agent_id' | 'parent_tool_use_id' | 'agent_type' | 'description'>;
 }
 
+/** 组装后的消息：在 SessionDetailMessage 上叠加 tool_calls 与合并后的 _thinking。 */
 export interface AssembledMessage extends SessionDetailMessage {
   [key: string]: unknown;
   tool_calls?: AssembledToolCall[];
@@ -78,6 +99,7 @@ export type SessionDetailSummary = WithoutKind<SummaryRecord> & Record<string, u
 
 export type SessionDetailSession = Omit<WithoutKind<SessionRecord>, 'countMode'>;
 
+/** 输入形态之一：DB session 表行（主键 id 必填，其余兼容透传）。 */
 export interface SessionDetailSessionRow {
   [key: string]: unknown;
   id: string;
@@ -92,6 +114,7 @@ export interface SessionDetailSessionRow {
   source?: string | null;
 }
 
+/** DB messages 表行。 */
 export interface SessionMessageRow {
   [key: string]: unknown;
   uuid: string;
@@ -106,6 +129,7 @@ export interface SessionMessageRow {
   visibility?: string | null;
 }
 
+/** DB tool_results 表行。 */
 export interface SessionToolResultRow {
   [key: string]: unknown;
   tool_use_id: string;
@@ -114,6 +138,7 @@ export interface SessionToolResultRow {
   content?: string | null;
 }
 
+/** DB tool_calls 表行。 */
 export interface SessionToolCallRow {
   [key: string]: unknown;
   id: string;
@@ -123,6 +148,7 @@ export interface SessionToolCallRow {
   input_json?: string | null;
 }
 
+/** DB subagents 表行（通过 parent_tool_use_id 挂到父消息的 tool call 上）。 */
 export interface SessionSubagentRow {
   [key: string]: unknown;
   agent_id: string;
@@ -132,6 +158,7 @@ export interface SessionSubagentRow {
   description?: string | null;
 }
 
+/** DB workflow_agents 表行：workflow run 下的单个 agent 摘要。 */
 export interface SessionWorkflowAgentRow {
   [key: string]: unknown;
   agent_id: string;
@@ -144,6 +171,7 @@ export interface SessionWorkflowAgentRow {
   duration_ms?: number | null;
 }
 
+/** DB workflows 表行：可内嵌 agents 数组（round-trip 展开后的形态）。 */
 export interface SessionWorkflowRow {
   [key: string]: unknown;
   run_id: string;
@@ -157,6 +185,7 @@ export interface SessionWorkflowRow {
   agents?: SessionWorkflowAgentRow[] | null;
 }
 
+/** DB summaries 表行。 */
 export interface SessionSummaryRow {
   [key: string]: unknown;
   id: string | number;
@@ -174,6 +203,7 @@ export interface SessionDetailRows {
   summaries?: SessionSummaryRow[];
 }
 
+/** 剥掉记录上的 kind 判别字段，保留其余字段。 */
 function withoutKind<T extends { kind: string }>(record: T): WithoutKind<T> {
   const { kind: _kind, ...value } = record;
   return value;
@@ -182,6 +212,21 @@ function withoutKind<T extends { kind: string }>(record: T): WithoutKind<T> {
 /**
  * 将扁平 message/tool 记录组装成 renderer 需要的有序消息块。工具调用与结果按
  * message_uuid、tool_use_id 重新附着，避免 UI 了解数据库表的拆分方式。
+ *
+ * 定位：assembleTranscriptRecords() 的展示层后处理；输入消息已按主线程过滤并排序。
+ *
+ * 被谁调用：
+ *   - assembleTranscriptRecords()
+ *
+ * 调用了谁：
+ *   - withoutKind()
+ *
+ * @param messages   有序的主线程消息（content_type 为 tool_result 的会被吞并）
+ * @param toolCalls  session 下全部 tool_call 记录
+ * @param toolResults session 下全部 tool_result 记录
+ * @param subagents  session 下全部 subagent 摘要（按 parent_tool_use_id 挂载）
+ * @param workflows  session 下全部 workflow 树（按 parent_tool_use_id 挂载）
+ * @returns 可直接渲染的 AssembledMessage[]，消息条数可能少于输入（连续片段已合并）
  */
 function assembleMessages(
   messages: SessionDetailMessage[],

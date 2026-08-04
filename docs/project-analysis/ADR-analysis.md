@@ -5,7 +5,7 @@
 
 **ADR-0001 — Indexing is a registry of pure provider adapters over one shared persist layer**
 
-将索引拆成两个正交轴：Provider 轴是纯适配器注册表（Claude、Codex、Kimi、Pi 各自实现 `discover`/`parse` 等接口），持久化轴是共享的 binding-agnostic writer。不再每个 provider 一个索引器，不再每个 binding 一个 persist 层。修正了早期草案中"一个 parse core + 两个 persist"的错误假设。
+将索引拆成两个正交轴：Provider 轴是纯适配器注册表（Claude、Codex、Pi 各自实现 `discover`/`parse` 等接口），持久化轴是共享的 binding-agnostic writer。不再每个 provider 一个索引器，不再每个 binding 一个 persist 层。修正了早期草案中"一个 parse core + 两个 persist"的错误假设。
 
 ---
 

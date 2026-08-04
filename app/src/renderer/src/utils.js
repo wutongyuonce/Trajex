@@ -2,6 +2,8 @@
 // Pure helpers with no side-effects on global state (except formatProjectLabel which reads store).
 
 import { state } from './store.js';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 
 // --- Time / formatting ---
 
@@ -38,13 +40,6 @@ export function fmtClockTime(iso) {
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
-export function fmtSize(bytes) {
-  if (!bytes) return '-';
-  if (bytes < 1024) return bytes + 'B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'K';
-  return (bytes / 1024 / 1024).toFixed(1) + 'M';
-}
-
 // --- HTML / Markdown ---
 
 export function escapeHTML(s) {
@@ -58,12 +53,49 @@ export function highlightPlain(text, query) {
   return safe.replace(new RegExp(q, 'gi'), m => `<mark>${m}</mark>`);
 }
 
+const MARKDOWN_ALLOWED_TAGS = [
+  'a', 'abbr', 'b', 'blockquote', 'br', 'code', 'del', 'details', 'em',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'img', 'li', 'mark', 'ol',
+  'p', 'pre', 's', 'strong', 'sub', 'sup', 'summary', 'table', 'tbody', 'td',
+  'tfoot', 'th', 'thead', 'tr', 'u', 'ul',
+];
+
+const MARKDOWN_ALLOWED_ATTR = [
+  'alt', 'class', 'colspan', 'height', 'href', 'rel', 'rowspan', 'src',
+  'start', 'target', 'title', 'width',
+];
+
+const MARKDOWN_ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|tel|file):|#|\/|[^:/?#]+(?:[/?#]|$))/i;
+
+export function isSafeMarkdownHref(href) {
+  if (typeof href !== 'string' || !href.trim()) return false;
+  const value = href.trim();
+  if (value.startsWith('#')) return true;
+  try {
+    const url = new URL(value, 'https://trajex.invalid');
+    if (url.protocol === 'file:') return !url.hostname || url.hostname === 'localhost';
+    return ['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
 export function sanitizeMarkdown(html) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/\son\w+="[^"]*"/gi, '');
+  const clean = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: MARKDOWN_ALLOWED_TAGS,
+    ALLOWED_ATTR: MARKDOWN_ALLOWED_ATTR,
+    ALLOW_DATA_ATTR: false,
+    ALLOWED_URI_REGEXP: MARKDOWN_ALLOWED_URI_REGEXP,
+  });
+  const container = document.createElement('div');
+  container.innerHTML = clean;
+  for (const link of container.querySelectorAll('a[href]')) {
+    if (!isSafeMarkdownHref(link.getAttribute('href'))) link.removeAttribute('href');
+  }
+  for (const image of container.querySelectorAll('img[src]')) {
+    if (!isSafeMarkdownHref(image.getAttribute('src'))) image.remove();
+  }
+  return container.innerHTML;
 }
 
 export function resolveRelativeMarkdownHref(href, cwd) {
@@ -105,19 +137,18 @@ export function highlightTextNodes(rootEl, query) {
 
 export function renderMarkdown(text, opts = {}) {
   if (text == null) return '';
-  // marked is loaded globally via CDN in index.html
-  const html = sanitizeMarkdown(window.marked.parse(text));
   const cls = opts.variant === 'msg' ? 'markdown-msg'
             : opts.variant === 'compact' ? 'markdown-compact'
             : 'markdown-body';
   const container = document.createElement('div');
   container.className = cls;
-  container.innerHTML = html;
+  container.innerHTML = marked.parse(text);
   if (opts.cwd) {
     for (const link of container.querySelectorAll('a[href]')) {
       link.setAttribute('href', resolveRelativeMarkdownHref(link.getAttribute('href'), opts.cwd));
     }
   }
+  container.innerHTML = sanitizeMarkdown(container.innerHTML);
   if (opts.query) highlightTextNodes(container, opts.query.trim());
   return container.outerHTML;
 }

@@ -1,6 +1,6 @@
 {
   "name": "trajex",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Browse and manage indexed Claude Code, Codex, and Pi session memory",
   "homepage": "https://github.com/wutongyuonce/trajex",
   "author": {
@@ -52,7 +52,9 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.2",
-    "chokidar": "^4.0.3"
+    "chokidar": "^4.0.3",
+    "dompurify": "^3.4.13",
+    "marked": "^15.0.12"
   },
   "devDependencies": {
     "@tanstack/vue-virtual": "^3.13.32",

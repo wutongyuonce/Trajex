@@ -191,7 +191,7 @@ function navigateToSubagent(agentId, description = '') {
       </div>
 
       <template v-if="msg.text">
-        <div v-html="presentation.messageHtml"></div>
+        <div class="message-content" v-html="presentation.messageHtml"></div>
         <button
           v-if="canLoadFullText(msg)"
           class="truncated-btn"

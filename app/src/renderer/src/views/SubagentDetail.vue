@@ -1,32 +1,40 @@
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue';
-import { useRouter } from 'vue-router';
-import { state } from '../store.js';
+import { ref, onMounted, watch } from 'vue';
 import { loadSubagentDetail, isTextTruncated, loadFullText } from '../data.js';
-import { escapeHTML, fmtClockTime, renderMarkdown } from '../utils.js';
+import { fmtClockTime, renderMarkdown } from '../utils.js';
 
 defineOptions({ name: 'SubagentDetail' });
-const props = defineProps({ id: String, agentId: String });
-const router = useRouter();
+const props = defineProps({ agentId: String });
 
 const messages = ref([]);
 const summaries = ref([]);
 const openSummaries = ref(new Set());
+const expandedMessageText = ref(new Map());
 const loading = ref(false);
+let revision = 0;
 
-const parentSession = computed(() => state.sessions.find(s => s.id === props.id));
+onMounted(async () => { await load(revision, props.agentId); });
+watch(() => props.agentId, async (n, o) => {
+  if (!n || n === o) return;
+  revision += 1;
+  messages.value = [];
+  summaries.value = [];
+  openSummaries.value = new Set();
+  expandedMessageText.value = new Map();
+  await load(revision, n);
+});
 
-onMounted(async () => { await load(); });
-watch(() => props.agentId, async (n, o) => { if (n && n !== o) { messages.value = []; await load(); } });
-
-async function load() {
-  if (!props.agentId) return;
+async function load(requestRevision, agentId) {
+  if (!agentId) return;
   loading.value = true;
   try {
-    const detail = await loadSubagentDetail(props.agentId);
+    const detail = await loadSubagentDetail(agentId);
+    if (revision !== requestRevision || props.agentId !== agentId) return;
     messages.value = detail.messages;
     summaries.value = detail.summaries;
-  } finally { loading.value = false; }
+  } finally {
+    if (revision === requestRevision && props.agentId === agentId) loading.value = false;
+  }
 }
 
 function toggleSummary(id) {
@@ -35,18 +43,15 @@ function toggleSummary(id) {
   openSummaries.value = next;
 }
 
-function goBack() {
-  router.push(`/sessions/${props.id}`);
-}
-
-async function handleLoadFull(uuid, el) {
+async function handleLoadFull(uuid) {
+  const requestRevision = revision;
+  const agentId = props.agentId;
   const full = await loadFullText(uuid);
-  if (full && el) {
-    const body = el.closest('.msg')?.querySelector('.markdown-msg, .markdown-compact');
-    const message = messages.value.find(candidate => candidate.uuid === uuid);
-    if (body) body.outerHTML = renderMarkdown(full, { variant: 'msg', cwd: message?.cwd });
-    el.remove();
-  }
+  if (!full || revision !== requestRevision || props.agentId !== agentId) return;
+  if (!messages.value.some(message => message.uuid === uuid)) return;
+  const next = new Map(expandedMessageText.value);
+  next.set(uuid, full);
+  expandedMessageText.value = next;
 }
 </script>
 
@@ -75,7 +80,7 @@ async function handleLoadFull(uuid, el) {
       </div>
       <div v-if="!loading" class="timeline">
         <div
-          v-for="(msg, idx) in messages"
+          v-for="msg in messages"
           :key="msg.uuid"
           class="msg"
           :class="[msg.type === 'user' ? 'user' : 'assistant']"
@@ -117,12 +122,12 @@ async function handleLoadFull(uuid, el) {
               </button>
               <div class="thinking-body" v-html="renderMarkdown(msg._thinking, { variant: 'msg', cwd: msg.cwd })"></div>
             </div>
-            <div v-if="msg.text" v-html="renderMarkdown(msg.text, { variant: 'msg', cwd: msg.cwd })"></div>
+            <div v-if="expandedMessageText.has(msg.uuid) || msg.text" v-html="renderMarkdown(expandedMessageText.get(msg.uuid) ?? msg.text, { variant: 'msg', cwd: msg.cwd })"></div>
             <div v-else-if="!msg.tool_calls?.length" class="msg-text empty-text">(no text content)</div>
             <button
-              v-if="isTextTruncated(msg.text)"
+              v-if="isTextTruncated(msg.text) && !expandedMessageText.has(msg.uuid)"
               class="truncated-btn"
-              @click="handleLoadFull(msg.uuid, $event.currentTarget)"
+              @click="handleLoadFull(msg.uuid)"
             >Message truncated — click to load full text</button>
 
             <!-- Tool calls -->

@@ -357,27 +357,6 @@
 }
 .detail-section-divider::after { content: ''; flex: 1; height: 1px; background: var(--hairline); }
 .detail-section-divider .count { font-family: var(--font-mono); color: var(--fg-2); }
-.anchor-list { display: flex; flex-direction: column; gap: 4px; }
-.anchor-link {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px; border-radius: 4px;
-  color: var(--fg-2); font-family: var(--font-mono); font-size: 12px;
-  transition: all 0.1s; cursor: pointer;
-  text-align: left; border: 0; background: transparent; width: 100%;
-}
-.anchor-link:hover { background: var(--surface-strong); color: var(--fg); }
-.anchor-link .anchor-icon { width: 12px; height: 12px; color: var(--muted); flex-shrink: 0; }
-.anchor-link:hover .anchor-icon { color: var(--accent-2); }
-.anchor-link .anchor-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.anchor-link .anchor-line { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.anchor-link:disabled {
-  color: var(--muted-2);
-  text-decoration: line-through; text-decoration-color: var(--danger); text-decoration-thickness: 1px;
-  cursor: not-allowed;
-}
-.anchor-link:disabled .anchor-icon { color: var(--danger); }
-.anchor-link:disabled:hover { background: transparent; color: var(--muted-2); }
-
 .detail-actions { margin-top: 32px; display: flex; justify-content: flex-end; gap: 8px; }
 .detail-actions .btn {
   height: 30px; padding: 0 14px; border-radius: 6px;
@@ -788,6 +767,7 @@
   border-color: #e2e2e5;
   background: #f5f5f6;
 }
+[data-theme='light'] .msg-thinking { border-color: #e2e2e5; }
 [data-theme='light'] .toolcall-toggle:hover { background: #eeeeef; }
 [data-theme='light'] .toolcall-body { border-top: 0; background: #fcfcfd; }
 [data-theme='light'] .toolcall-body-strip {
@@ -1067,7 +1047,11 @@
 
 /* Thinking messages - collapsed by default */
 .msg-thinking {
+  border: 1px solid var(--hairline);
+  border-radius: 5px;
   background: transparent;
+  overflow: hidden;
+  transition: border-color 0.1s;
 }
 .thinking-toggle {
   display: flex; align-items: center; gap: 8px;
@@ -1094,10 +1078,13 @@
   flex: 1; min-width: 0;
 }
 .thinking-body {
-  display: none; padding: 8px 14px 12px;
+  display: none; padding: 3px 14px 8px;
   font-style: italic;
 }
+.thinking-body .markdown-msg { line-height: 1.35; }
+.thinking-body .markdown-msg p { margin: 0.25em 0; }
 .msg-thinking.open .thinking-body { display: block; }
+.msg-thinking + .message-content { padding-top: 12px; }
 
 /* Truncated message button */
 .truncated-btn {

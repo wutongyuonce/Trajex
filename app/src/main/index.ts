@@ -253,18 +253,26 @@ function startBackgroundResources({ runStartupBuild = false } = {}) {
 async function stopIndexerServiceAndWait({ waitForIdle = true } = {}) {
   const service = indexerService;
   if (!service) return;
-  service.stop();
+  await service.stop();
   if (waitForIdle && typeof service.idle === 'function') await service.idle();
   if (indexerService === service) indexerService = null;
 }
 
-async function stopBackgroundResources({ stopWorker = false } = {}) {
-  await stopIndexerServiceAndWait();
-  if (stopWorker && indexerWorker) {
-    indexerWorker.stop();
-    indexerWorker = null;
-  }
-  closeDb();
+let backgroundStopPromise: Promise<void> | null = null;
+
+function stopBackgroundResources({ stopWorker = false } = {}) {
+  if (backgroundStopPromise) return backgroundStopPromise;
+  backgroundStopPromise = (async () => {
+    await stopIndexerServiceAndWait();
+    if (stopWorker && indexerWorker) {
+      await Promise.resolve(indexerWorker.stop());
+      indexerWorker = null;
+    }
+    closeDb();
+  })().finally(() => {
+    backgroundStopPromise = null;
+  });
+  return backgroundStopPromise;
 }
 
 function createWindow() {
@@ -322,12 +330,20 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('before-quit', () => {
-  void stopBackgroundResources({ stopWorker: true });
+let isQuitting = false;
+
+app.on('before-quit', (event) => {
+  if (isQuitting) return;
+  event.preventDefault();
+  isQuitting = true;
+  void stopBackgroundResources({ stopWorker: true }).then(
+    () => app.quit(),
+    () => app.quit(),
+  );
 });
 
 app.on('window-all-closed', () => {
-  void stopBackgroundResources({ stopWorker: true });
+  void stopBackgroundResources({ stopWorker: true }).catch(() => {});
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -417,6 +433,9 @@ function querySessionMetadata(sessionId: string): SessionMetadata | null {
 ipcMain.handle('db:getSessions', (_, opts = {}) => {
   if (!db) return [];
   const { project, limit = 200 } = opts;
+  if (!Number.isSafeInteger(limit) || limit < 0) {
+    throw new TypeError('limit must be a non-negative integer');
+  }
   let sql = `SELECT ${SESSION_METADATA_COLUMNS} FROM sessions`;
   const params: unknown[] = [];
   const sourceFilter = sourceWhereClause(opts);
@@ -502,7 +521,7 @@ ipcMain.handle('db:getSessionSummaries', (_, sessionId) => {
 ipcMain.handle('db:getMemories', () => {
   if (!db) return [];
   return db.prepare(`
-    SELECT id, session_id, project, message_start, message_end, path, anchors, summary, created_at, deleted_at, deleted_reason
+    SELECT id, session_id, project, message_start, message_end, path, summary, created_at, deleted_at, deleted_reason
     FROM memories ORDER BY created_at DESC
   `).all();
 });

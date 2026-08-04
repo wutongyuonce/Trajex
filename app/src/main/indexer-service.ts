@@ -122,6 +122,7 @@ function createIndexerService({
   let lastReason: string | null = null;
   let changedPaths = new Set<string>();
   let idlePromise = Promise.resolve();
+  let stopPromise: Promise<void> | null = null;
 
   const addChangedPath = (changedPath?: string | string[]) => {
     if (Array.isArray(changedPath)) {
@@ -233,6 +234,7 @@ function createIndexerService({
   };
 
   const stop = () => {
+    if (stopPromise) return stopPromise;
     stopped = true;
     pending = false;
     if (buildTimer) timers.clearTimeout(buildTimer);
@@ -245,8 +247,10 @@ function createIndexerService({
     deferredRetryTimer = null;
     if (heartbeatTimer && typeof timers.clearInterval === 'function') timers.clearInterval(heartbeatTimer);
     heartbeatTimer = null;
-    if (watcher?.close) watcher.close();
+    const currentWatcher = watcher;
     watcher = null;
+    stopPromise = Promise.resolve(currentWatcher?.close?.()).then(() => undefined);
+    return stopPromise;
   };
 
   return {

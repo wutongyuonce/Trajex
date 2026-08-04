@@ -365,28 +365,6 @@ onUnmounted(() => {
         <div v-else class="markdown-body" v-html="renderedMarkdown"></div>
       </div>
 
-      <div v-if="detailMemory.anchors?.length" class="detail-section-divider" id="anchors-section">
-        <span>Anchors</span><span class="count">{{ detailMemory.anchors.length }}</span>
-      </div>
-      <div v-if="detailMemory.anchors?.length" class="anchor-list">
-        <button
-          v-for="anchor in detailMemory.anchors"
-          :key="`${anchor.path}:${anchor.line}`"
-          class="anchor-link"
-          :disabled="anchor.exists === false"
-          :title="anchor.exists === false ? 'File no longer exists' : 'Open in editor'"
-        >
-          <span class="anchor-icon">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round">
-              <path d="M3.5 2h6l3 3v9a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z"/>
-              <path d="M9.5 2v3h3"/>
-            </svg>
-          </span>
-          <span class="anchor-path">{{ anchor.path }}</span>
-          <span v-if="anchor.line" class="anchor-line">:{{ anchor.line }}</span>
-        </button>
-      </div>
-
       <div class="detail-actions">
         <button class="btn" @click="closeDetail">
           Back<span class="kbd">Esc</span>

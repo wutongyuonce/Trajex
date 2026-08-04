@@ -60,7 +60,6 @@ export function commitInitialData({ rawMemories, rawSessions, stats, projects })
     ts: m.created_at ? new Date(m.created_at).getTime() : 0,
     archived: !!m.deleted_at,
     archivedAt: m.deleted_at ? new Date(m.deleted_at).getTime() : null,
-    anchors: m.anchors ? (typeof m.anchors === 'string' ? JSON.parse(m.anchors) : m.anchors) : [],
     markdown: null  // loaded on demand via loadMemoryMarkdown
   }));
 

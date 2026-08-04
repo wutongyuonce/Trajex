@@ -69,7 +69,6 @@ function copyMemoriesFromDb(db, sourceDbPath) {
       'message_start',
       'message_end',
       'path',
-      'anchors',
       'summary',
       'created_at',
       'deleted_at',

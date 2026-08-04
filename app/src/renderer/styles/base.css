@@ -100,7 +100,7 @@ input { font: inherit; color: inherit; }
 
 button, input, .row, .sidebar-item, .toolbar-btn,
 .row-action, .row-checkbox, .crumb, .provenance-link,
-.banner-action, .source-toggle, .anchor-link,
+.banner-action, .source-toggle,
 .session-link, .msg-tool, .toolcall-toggle,
 .agent-indicator, .agent-row, .filter-toggle {
   -webkit-app-region: no-drag;

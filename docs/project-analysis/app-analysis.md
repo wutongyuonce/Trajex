@@ -1,3 +1,24 @@
+三个框架都是用来用Web技术（HTML/CSS/JS）开发跨平台桌面应用的工具，但实现思路差别很大。简单来说：Electron是“自带浏览器”的重量级老大哥，Tauri是“用系统浏览器”的轻量级新秀，而Electrobun则是想用Bun和TypeScript再走出一条新路的探索者。
+
+🚀 三者的核心区别速览
+
+* 运行时后端：Electron 是 Node.js；Tauri 是 Rust；Electrobun 是 Bun (TypeScript原生)。
+* Web渲染引擎：Electron 打包了完整的 Chromium；Tauri 使用操作系统自带的 WebView；Electrobun 默认也是系统 WebView，但也可以选择打包 Chromium。
+* 最终安装包大小：Electron 通常 80MB - 150MB；Tauri 仅 2MB - 10MB，非常小；Electrobun 约 14MB - 40MB（主要包含 Bun 运行时）。
+* 团队技术栈要求：Electron 只需 JavaScript/HTML/CSS 即可入门；Tauri 需要前端技术 + Rust 来处理后端逻辑；Electrobun 是 纯TypeScript/JavaScript，无需额外语言。
+
+🛠️ 各自怎么用？
+
+* Electron：最成熟，遵循经典的 “主进程+渲染进程” 模型。先通过 npm 初始化项目并安装 electron 包，再编写主进程和页面代码，最后用 npm start 启动。类似 VS Code、Slack 等众多知名应用都是用它打造的。
+* Tauri：用官方脚手架 create-tauri-app 创建项目，你会得到一个前端项目（如Vue/React）与一个src-tauriRust后端文件夹的组合。前端只管界面，后端用 Rust 处理系统交互、文件读写等任务。由于采用系统 WebView，包体积极小。
+* Electrobun：非常新，追求“纯TypeScript体验”。可以用 npx electrobun init 创建项目，后端直接写 TypeScript（由 Bun 运行），无需像 Tauri 那样学习 Rust。虽然生态年轻，但提供了非常细粒度的更新机制（小至4KB的增量更新）。
+
+🤔 场景怎么选？
+
+* 选 Electron：如果你的团队是纯前端，希望保证在所有平台上渲染效果完全一致，且需要一个成熟稳定、遇到问题能立刻找到解决方案的生态。
+* 选 Tauri：如果你极度在意安装包大小，团队不介意或已经掌握Rust，且能接受在不同操作系统上对界面进行微调和测试（因为调用的系统WebView内核不同）。
+* 选 Electrobun：如果你喜欢TypeScript优先的开发体验，项目想保持轻量，但又不想引入Rust来增加复杂度，并且愿意为一个年轻、充满可能性但生态尚不完善的框架承担一定风险。
+
 ## 四个文件夹的职责
 
 **`main/` —— 主进程（Node 全权，管窗口、文件、数据库、索引）**

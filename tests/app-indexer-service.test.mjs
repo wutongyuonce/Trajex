@@ -253,6 +253,29 @@ test('indexer service watches Claude JSON files through chokidar', async () => {
   assert.equal(watcher.closeCalled, true);
 });
 
+test('indexer service waits for the watcher to close', async () => {
+  let resolveClose;
+  const watcher = {
+    on() { return watcher; },
+    close() { return new Promise(resolve => { resolveClose = resolve; }); },
+  };
+  const service = createIndexerService({
+    buildIndex: async () => {},
+    watchProjects: () => watcher,
+    writeHeartbeat: () => {},
+  });
+
+  service.start({ buildOnStart: false });
+  let stopped = false;
+  const stopping = service.stop().then(() => { stopped = true; });
+  await Promise.resolve();
+  assert.equal(stopped, false);
+
+  resolveClose();
+  await stopping;
+  assert.equal(stopped, true);
+});
+
 test('indexer service passes changed JSONL paths to the build worker', async () => {
   const projectsDir = mkdtempSync(join(tmpdir(), 'trajex-changed-paths-'));
   const timers = manualTimers();

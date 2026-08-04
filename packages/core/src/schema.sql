@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS memories (
   message_start TEXT,              -- 记忆覆盖的起始消息 UUID
   message_end TEXT,                -- 记忆覆盖的结束消息 UUID
   path TEXT,                       -- 引用的文件路径
-  anchors TEXT,                    -- JSON 锚点数组（记录摘要位置引用）
+  anchors TEXT,                    -- Legacy column retained for existing databases; no longer used
   summary TEXT,                    -- 记忆摘要文本（FTS 索引列）
   created_at TEXT,                 -- 创建时间（ISO 8601）
   deleted_at TEXT,                 -- 删除时间（软删除标记）

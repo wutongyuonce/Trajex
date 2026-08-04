@@ -188,7 +188,6 @@ durable memory; `summary` is the compact retrieval surface.
 | `project` | Project slug for scoped recall |
 | `message_start`, `message_end` | Source message UUID range |
 | `path` | Normalized absolute markdown path |
-| `anchors` | Optional JSON array of recall anchors |
 | `summary` | English retrieval summary |
 | `created_at` | Registration timestamp |
 | `deleted_at` | Archive timestamp |
@@ -280,7 +279,7 @@ LIMIT 20;
 Active memories:
 
 ```sql
-SELECT id, path, anchors, summary, session_id, created_at
+SELECT id, path, summary, session_id, message_start, message_end, created_at
 FROM memories
 WHERE project LIKE ?
   AND deleted_at IS NULL

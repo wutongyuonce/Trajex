@@ -54,7 +54,6 @@ interface RememberInput {
   message_end?: string;    // 证据消息窗口终点
   summary: string;         // 必填：记忆正文（必须英文）
   project?: string;        // 覆盖归属项目
-  anchors?: unknown;       // JSON 数组锚点
 }
 
 /** forget() 的参数契约：id 与删除理由两者都必填。 */
@@ -480,7 +479,7 @@ function createQueryApi(
       `).all(currentProject.project, sessionLimit);
       const memoryTotal = db.prepare('SELECT COUNT(*) AS c FROM memories WHERE project = ? AND deleted_at IS NULL').get(currentProject.project)?.c || 0;
       const memoriesForProject = db.prepare(`
-        SELECT id, path, anchors, summary, session_id, project, created_at
+        SELECT id, path, summary, session_id, project, created_at
         FROM memories
         WHERE project = ? AND deleted_at IS NULL
         ORDER BY created_at DESC
@@ -566,6 +565,7 @@ function createQueryApi(
 
   /** 记忆检索：带 query 时走 memories_fts 相关度排序，否则按创建时间倒序。 */
   const memories = (optsOrSid?: QueryOptions | string) => {
+    const memoryColumns = 'mem.id, mem.session_id, mem.project, mem.message_start, mem.message_end, mem.path, mem.summary, mem.created_at, mem.deleted_at, mem.deleted_reason';
     const opts = normalizeOpts(optsOrSid);
     const { query } = opts;
     const limit = normalizeLimit(opts.limit, 50);
@@ -584,13 +584,13 @@ function createQueryApi(
     const ftsQuery = buildSafeFtsQuery(query);
     if (!hasQuery) {
       params.push(limit);
-      return db.prepare(`SELECT mem.* FROM memories mem ${join} WHERE ${where} ORDER BY mem.created_at DESC LIMIT ?`).all(...params);
+      return db.prepare(`SELECT ${memoryColumns} FROM memories mem ${join} WHERE ${where} ORDER BY mem.created_at DESC LIMIT ?`).all(...params);
     }
     if (!ftsQuery) return [];
     params.unshift(ftsQuery);
     params.push(limit);
     return db.prepare(`
-      SELECT mem.*, mf.rank AS rank
+      SELECT ${memoryColumns}, mf.rank AS rank
       FROM memories_fts mf
       JOIN memories mem ON mem.rowid = mf.rowid
       ${join}
@@ -625,42 +625,19 @@ function createAttuneApi(db: SqliteDb) {
     return resolved;
   };
 
-  /** 校验并规范化 anchors：必须为 JSON 数组（字符串需可 parse），条目须为对象；空数组归一为 null。 */
-  const normalizeAnchors = (anchors: unknown): string | null => {
-    if (anchors == null) return null;
-    let parsed = anchors;
-    if (typeof anchors === 'string') {
-      const trimmed = anchors.trim();
-      if (!trimmed) return null;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        throw new Error('remember() anchors must be a JSON array');
-      }
-    }
-    if (!Array.isArray(parsed)) throw new Error('remember() anchors must be an array');
-    for (const anchor of parsed) {
-      if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor)) {
-        throw new Error('remember() anchors entries must be objects');
-      }
-    }
-    return parsed.length ? JSON.stringify(parsed) : null;
-  };
-
   /** 写入一条记忆（INSERT OR REPLACE），返回新记录的关键字段。 */
-  const remember = ({ path: memoryPath, session_id, message_start, message_end, summary, project, anchors }: RememberInput) => {
+  const remember = ({ path: memoryPath, session_id, message_start, message_end, summary, project }: RememberInput) => {
     if (!memoryPath || !summary) throw new Error('remember() requires path and summary');
     assertEnglishMemoryText(summary, 'remember() summary');
     const normalizedPath = resolveMemoryPath(memoryPath, session_id);
-    const normalizedAnchors = normalizeAnchors(anchors);
     const id = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const proj = project || (session_id
       ? db.prepare('SELECT project FROM sessions WHERE id=?').get(session_id)?.project || null
       : null);
     const created_at = new Date().toISOString();
-    db.prepare('INSERT OR REPLACE INTO memories (id, session_id, project, message_start, message_end, path, anchors, summary, created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(
-      id, session_id || null, proj, message_start || null, message_end || null, normalizedPath, normalizedAnchors, summary, created_at);
-    return { id, path: normalizedPath, project: proj, anchors: normalizedAnchors, created_at };
+    db.prepare('INSERT OR REPLACE INTO memories (id, session_id, project, message_start, message_end, path, summary, created_at) VALUES (?,?,?,?,?,?,?,?)').run(
+      id, session_id || null, proj, message_start || null, message_end || null, normalizedPath, summary, created_at);
+    return { id, path: normalizedPath, project: proj, created_at };
   };
 
   /** 软删除记忆：写 deleted_at/deleted_reason；对同一 id 重复调用返回 already_deleted。 */

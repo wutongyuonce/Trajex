@@ -205,7 +205,7 @@ filters or return fields.
 - `thread(sessionId, opts?)` -- session messages ordered by timestamp, omitting meta messages by default. Pass `{ includeMeta: true }` when investigating injected context or command envelopes.
 - `raw(uuid, opts?)` -- windowed access to the original JSONL line; `offset` and
   `limit` must be finite non-negative numbers.
-- `memories(opts?)` -- recall memory layer. opts: `{ query, project, sessionId, sessions, after, before, branch, limit }`. Without `query`, returns active memory records newest first. With `query`, searches `summary`/`path` through safe FTS5 tokenization and returns `rank`; lower rank sorts earlier. Records may include nullable JSON `anchors` for explicit recall surfaces such as files. Read the file at `path` for full content.
+- `memories(opts?)` -- recall memory layer. opts: `{ query, project, sessionId, sessions, after, before, branch, limit }`. Without `query`, returns active memory records newest first. With `query`, searches `summary`/`path` through safe FTS5 tokenization and returns `rank`; lower rank sorts earlier. Read the file at `path` for full content.
 
 ## Retrieval Contract
 
@@ -266,7 +266,6 @@ return remember({
   session_id: 'current-session-id',
   message_start: 'uuid-of-first-relevant-msg',
   message_end: 'uuid-of-last-relevant-msg',
-  anchors: [{ kind: 'file', path: 'src/path/to/file.ts' }],
   summary: 'Detailed summary: what was decided, why, what alternatives were considered, and what constraints drove the choice.'
 })
 ```
@@ -286,10 +285,6 @@ helpers. If you need source IDs or memory IDs, find them first with a normal
 paths are resolved against the source session's `project_path` when
 `session_id` is provided, then stored as normalized absolute paths. Prefer
 project-relative paths such as `.trajex/memories/...` plus `session_id`.
-Optional `anchors` must be an array of objects and is stored as nullable JSON
-text. Use it only for explicit recall surfaces, such as files associated with
-the memory.
-
 `summary` must be English and detailed enough that `memories()` results alone
 can judge relevance without reading the file. Include the decision, the
 reasoning, and the key constraints — not just a title.

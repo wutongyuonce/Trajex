@@ -161,7 +161,7 @@ Returns:
     ],
     memory_total,
     memories: [
-      { id, path, anchors, summary, session_id, project, created_at }
+      { id, path, summary, session_id, project, created_at }
     ]
   } | null,
   projects: [
@@ -429,17 +429,16 @@ Register a human-approved markdown memory file. Available only in
 | `record.message_start` | `string` | First relevant source message UUID |
 | `record.message_end` | `string` | Last relevant source message UUID |
 | `record.project` | `string` | Project slug override |
-| `record.anchors` | `array` or JSON `string` | Optional recall anchors |
 
 Relative paths resolve against the source session `project_path` when
 `session_id` is provided, otherwise against the runtime cwd. `remember()`
 validates that `path` exists and is a regular file, rejects obvious CJK text in
-`summary`, stores the normalized absolute path, and accepts nullable `anchors`.
+`summary`, and stores the normalized absolute path.
 
 Returns:
 
 ```js
-{ id, path, project, anchors, created_at }
+{ id, path, project, created_at }
 ```
 
 #### `forget(record)`

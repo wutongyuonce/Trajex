@@ -43,14 +43,12 @@ return {
     memories: map.current_project.memories.map(m => ({
       id: m.id,
       path: m.path,
-      anchors: m.anchors,
       summary: m.summary?.slice(0, 240),
     })),
   },
   prior_memories: memories({ ...scoped, query: topic, limit: 5 }).map(m => ({
     id: m.id,
     path: m.path,
-    anchors: m.anchors,
     session_id: m.session_id,
     created_at: m.created_at,
     rank: m.rank,
@@ -91,7 +89,6 @@ return {
     memories: map.current_project.memories.map(m => ({
       id: m.id,
       path: m.path,
-      anchors: m.anchors,
       summary: m.summary?.slice(0, 240),
     })),
   },
@@ -142,7 +139,6 @@ const prior_memories = memories({
 }).map(m => ({
   id: m.id,
   path: m.path,
-  anchors: m.anchors,
   session_id: m.session_id,
   message_start: m.message_start,
   message_end: m.message_end,
@@ -188,7 +184,6 @@ return remember({
   session_id: 'source-session-id',
   message_start: 'first-message-uuid',
   message_end: 'last-message-uuid',
-  anchors: [{ kind: 'file', path: 'SKILL.md' }],
   summary: [
     'Decision: Trajex uses one user-facing entry that queries both memory and raw sessions.',
     'Memory records are prior notes and must be identified naturally when they influence an answer.',
@@ -234,7 +229,6 @@ const created = remember({
   session_id: 'current-session-id',
   message_start: 'first-message-uuid',
   message_end: 'last-message-uuid',
-  anchors: [{ kind: 'file', path: 'src/path/to/file.ts' }],
   summary: 'Updated summary: concise English retrieval surface for the replacement memory.',
 });
 

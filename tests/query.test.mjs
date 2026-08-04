@@ -225,6 +225,7 @@ test('remember stores absolute project-relative memory path', () => {
   });
 
   assert.equal(result.path, memoryPath);
+  assert.equal(Object.hasOwn(result, 'anchors'), false);
   assert.equal(db.prepare('SELECT path FROM memories WHERE id=?').get(result.id).path, memoryPath);
   db.close();
 });
@@ -250,6 +251,7 @@ test('remember updates FTS recall for the registered memory immediately', () => 
   });
 
   assert.deepEqual(rows.map(m => m.id), [registered.id]);
+  assert.equal(Object.hasOwn(rows[0], 'anchors'), false);
   assert.equal(typeof rows[0].rank, 'number');
   db.close();
 });

@@ -2031,7 +2031,7 @@ jsonl_path = "__codex_canonical_transcript_v2__" / "__claude_canonical_transcrip
 | `message_start`  | TEXT    | 起始消息 UUID          |
 | `message_end`    | TEXT    | 结束消息 UUID          |
 | `path`           | TEXT    | 引用的文件路径         |
-| `anchors`        | TEXT    | JSON 锚点数组          |
+| `anchors`        | TEXT    | Legacy JSON 锚点列，现已不再使用 |
 | `summary`        | TEXT    | 记忆摘要（FTS 索引列） |
 | `created_at`     | TEXT    | 创建时间               |
 | `deleted_at`     | TEXT    | 删除时间（软删除）     |
@@ -2702,7 +2702,7 @@ executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
 
 | 方法 | 作用 |
 |---|---|
-| `remember({ path, session_id, message_start, message_end, summary, project, anchors })` | 写一条记忆（INSERT OR REPLACE），返回新记录关键字段 |
+| `remember({ path, session_id, message_start, message_end, summary, project })` | 写一条记忆（INSERT OR REPLACE），返回新记录关键字段 |
 | `forget({ id, reason })` | 软删除记忆（写 deleted_at/deleted_reason）；对同一 id 重复调用返回 `already_deleted` |
 
 "不是通用写库接口"体现在三层约束：
@@ -2710,7 +2710,7 @@ executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
 1. **能力面极窄**：没有 `sql()`、没有任意 UPDATE/DELETE，只能"新增记忆 / 软删记忆"，碰不到 sessions、messages 等索引数据。
 2. **物理隔离**：`createQueryApi` / `createAttuneApi` 是两个独立工厂；core.ts 只在 `executeQuery` 注入 Query API、只在 `executeAttune` 注入 Attune API——读能力与写能力在入口处就分家，脚本拿不到不属于自己的那套。
 3. **写入本身也受限**：
-   - `remember` 必填 `path` + `summary`，且 summary 必须英文（记忆层按英文索引，CJK 直接抛错，引导先翻译术语）；`path` 经 `resolveMemoryPath` 校验必须已存在且是文件（有 session_id 时以其 `project_path` 为基准，否则 cwd）；`anchors` 须为 JSON 数组（字符串可 parse）、条目须对象，空数组归一为 null；
+   - `remember` 必填 `path` + `summary`，且 summary 必须英文（记忆层按英文索引，CJK 直接抛错，引导先翻译术语）；`path` 经 `resolveMemoryPath` 校验必须已存在且是文件（有 session_id 时以其 `project_path` 为基准，否则 cwd）；`message_start` / `message_end` 可选，用于标记同一 session 内的消息证据范围；
    - `forget` 必填 `id` + `reason`，找不到即抛错。
 
 所以即便拿到了 Attune API，脚本能做的也只有"往记忆层追加一条、软删一条"，无法改写任何索引数据——这是 `executeAttune` 敢给它开写库连接 + 写锁的底气。

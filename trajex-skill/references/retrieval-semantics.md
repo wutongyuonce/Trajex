@@ -100,7 +100,7 @@ For semantic questions, build a task-local evidence view:
 {
   query_plan: { mode, scope, facets, limits },
   prior_memories: [
-    { id, path, anchors, session_id, created_at, summary }
+    { id, path, session_id, message_start, message_end, created_at, summary }
   ],
   evidence: [
     { type, id, session_id, timestamp, content_type, is_meta, facet, snippet }

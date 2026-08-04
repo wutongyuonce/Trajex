@@ -16,31 +16,53 @@
 // via type stripping in development, while the CLI package ships readable,
 // non-bundled tsc output. Core source lives in the @trajex/core workspace.
 
-import { createContext, runInNewContext } from 'node:vm';
+import { Worker } from 'node:worker_threads';
 
-import { DB_PATH, openDb, openReadDb, openWriterLeaseDb } from './db.ts';
-import { buildIndex, shouldSkipBuild } from './indexer.ts';
-import { createQueryApi, createAttuneApi } from './query.ts';
-import { acquireWriterLease, writerLockPathFor } from './writer-lease.ts';
+import { DB_PATH, openReadDb } from './db.ts';
+import { buildIndex } from './indexer.ts';
+import { createQueryApi } from './query.ts';
 
 export { buildIndex, DB_PATH };
 
-/** 注入 sandbox 的 API 集合（键名即脚本可访问的全局名）。 */
-type SandboxApi = Record<string, unknown>;
+const SANDBOX_TIMEOUT_MS = 30000;
 
-/**
- * 在受限 VM context 中运行用户的 CodeAct 脚本。
- *
- * 被谁调用：executeQuery()、executeAttune()。脚本包装成 async IIFE，因此可 await；
- * 30 秒 timeout 限制同步死循环。传入的 api 决定脚本可查询历史还是可写记忆。
- */
-function runInSandbox(api: SandboxApi, scriptContent: string): Promise<unknown> {
-  const sandbox = {
-    ...api, JSON, Math, Array, Object, Set, Map, Date, RegExp,
-    parseInt, parseFloat, String, Number, Boolean, Error, Promise, console, setTimeout,
-  };
-  const ctx = createContext(sandbox);
-  return runInNewContext(`(async()=>{${scriptContent}})()`, ctx, { timeout: 30000 });
+function runInSandboxWorker(mode: 'query' | 'attune', script: string): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL(
+      import.meta.url.endsWith('.js') ? './sandbox-worker.js' : './sandbox-worker.ts',
+      import.meta.url,
+    ), {
+      workerData: { mode, script, timeoutMs: SANDBOX_TIMEOUT_MS },
+    });
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      finish(() => {
+        void worker.terminate();
+        reject(new Error(`Sandbox execution timed out after ${SANDBOX_TIMEOUT_MS}ms`));
+      });
+    }, SANDBOX_TIMEOUT_MS);
+    worker.once('message', (message: { result?: unknown; error?: { message: string; stack?: string } }) => {
+      finish(() => {
+        if (message.error) {
+          const error = new Error(message.error.message);
+          error.stack = message.error.stack;
+          reject(error);
+        } else {
+          resolve(message.result);
+        }
+      });
+    });
+    worker.once('error', (error) => finish(() => reject(error)));
+    worker.once('exit', (code) => {
+      if (!settled) finish(() => reject(new Error(`Sandbox worker exited with code ${code}`)));
+    });
+  });
 }
 
 /** 先尝试增量索引，再以只读连接执行消息 FTS 搜索。 */
@@ -54,15 +76,10 @@ export function searchText(text: string, opts?: Record<string, unknown>): unknow
   }
 }
 
-/** 执行只读查询脚本；finally 保证无论成功或抛错都关闭连接，防止泄漏。 */
+/** 执行只读查询脚本；worker 持有并关闭查询连接，超时时随 worker 一起回收。 */
 export async function executeQuery(scriptContent: string): Promise<unknown> {
   buildIndex();
-  const db = openReadDb();
-  try {
-    return await runInSandbox(createQueryApi(db), scriptContent);
-  } finally {
-    db.close();
-  }
+  return runInSandboxWorker('query', scriptContent);
 }
 
 /**
@@ -77,30 +94,5 @@ export async function executeAttune(scriptContent: string): Promise<unknown> {
   if (build?.reason === 'writer_busy' || build?.reason === 'database_busy') {
     throw new Error('Trajex index writer is busy; attune was not applied');
   }
-  const lease = acquireWriterLease({
-    lockPath: writerLockPathFor(DB_PATH),
-    openDb: openWriterLeaseDb,
-    waitMs: 1000,
-  });
-  if (!lease) throw new Error('Trajex index writer is busy; attune was not applied');
-  try {
-    // 持有硬锁后再次确认 daemon 所有权，缩小两次检查之间的 TOCTOU 窗口。
-    const ownershipDb = openReadDb();
-    try {
-      const ownership = shouldSkipBuild(ownershipDb, { ignoreRecentBuild: true });
-      if (ownership.reason === 'daemon_active') {
-        throw new Error('Trajex daemon owns index writes; attune is read-only until the daemon stops');
-      }
-    } finally {
-      ownershipDb.close();
-    }
-    const db = openDb();
-    try {
-      return await runInSandbox(createAttuneApi(db), scriptContent);
-    } finally {
-      db.close();
-    }
-  } finally {
-    lease.release();
-  }
+  return runInSandboxWorker('attune', scriptContent);
 }

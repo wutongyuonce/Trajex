@@ -257,8 +257,8 @@ function createQueryApi(
   const subagents = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
     const limit = normalizeLimit(opts.limit, 100);
-    const needsJoin = opts.project || opts.branch || opts.source;
-    const { where, params } = buildWhere(opts, { sessionId: 'sa.session_id', project: 's.project', timestamp: 'sa.session_id', branch: 's.git_branch', source: 's.source' });
+    const needsJoin = opts.project || opts.after || opts.before || opts.branch || opts.source;
+    const { where, params } = buildWhere(opts, { sessionId: 'sa.session_id', project: 's.project', timestamp: 's.started_at', branch: 's.git_branch', source: 's.source' });
     params.push(limit);
     const join = needsJoin ? 'LEFT JOIN sessions s ON s.id=sa.session_id' : '';
     return db.prepare(`SELECT sa.* FROM subagents sa ${join} WHERE ${where} LIMIT ?`).all(...params).map((r: DbRow) => {
@@ -653,7 +653,9 @@ function createAttuneApi(db: SqliteDb) {
     const normalizedPath = resolveMemoryPath(memoryPath, session_id);
     const normalizedAnchors = normalizeAnchors(anchors);
     const id = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const proj = project || db.prepare('SELECT project FROM sessions WHERE id=?').get(session_id)?.project || null;
+    const proj = project || (session_id
+      ? db.prepare('SELECT project FROM sessions WHERE id=?').get(session_id)?.project || null
+      : null);
     const created_at = new Date().toISOString();
     db.prepare('INSERT OR REPLACE INTO memories (id, session_id, project, message_start, message_end, path, anchors, summary, created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(
       id, session_id || null, proj, message_start || null, message_end || null, normalizedPath, normalizedAnchors, summary, created_at);

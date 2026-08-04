@@ -13,7 +13,6 @@ const COLUMN_MIGRATIONS = [
   ['messages', 'is_meta', 'INTEGER DEFAULT 0'],
   ['messages', 'visibility', "TEXT DEFAULT 'visible'"],
   ['messages', 'source', "TEXT DEFAULT 'claude'"],
-  ['tool_calls', 'presentation', "TEXT DEFAULT 'default'"],
   ['workflows', 'parent_tool_use_id', 'TEXT'],
   ['memories', 'anchors', 'TEXT'],
   ['memories', 'deleted_at', 'TEXT'],

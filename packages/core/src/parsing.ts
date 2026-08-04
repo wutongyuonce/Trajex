@@ -339,20 +339,6 @@ function readCodexGuardianThreadInfo(filePath: string): { threadRawId: string; l
   return threadRawId ? { threadRawId, lineNum } : null;
 }
 
-/** 从 meta 提取子代理昵称（spawn 或 fork 来源均可）。 */
-function codexAgentNickname(meta: JsonRecord): string | null {
-  return meta?.agent_nickname
-    || meta?.source?.subagent?.thread_spawn?.agent_nickname
-    || null;
-}
-
-/** 从 meta 提取子代理角色。 */
-function codexAgentRole(meta: JsonRecord): string | null {
-  return meta?.agent_role
-    || meta?.source?.subagent?.thread_spawn?.agent_role
-    || null;
-}
-
 /** 字符串先 JSON.parse 成对象；解析失败或非字符串则保持原值。 */
 function parseCodexJsonInput(value: JsonValue): JsonValue {
   if (value === null || value === undefined || value === '') return {};
@@ -442,6 +428,6 @@ export {
   legacyProjectPathFromSlug, normalizeObservedCwd, projectSlugFromPath, inferProjectPath,
   discoverJsonlFiles, discoverCodexJsonlFiles,
   codexDbId, codexRawId, codexLineUuid, codexCallId, codexParentThreadId, codexIsGuardianThread,
-  readCodexGuardianThreadInfo, codexAgentNickname, codexAgentRole, parseCodexJsonInput,
+  readCodexGuardianThreadInfo, parseCodexJsonInput,
   codexUsage, codexEventText, codexMessagePayloadText, codexVisibleMessageKey, codexToolInput, codexToolOutput,
 };

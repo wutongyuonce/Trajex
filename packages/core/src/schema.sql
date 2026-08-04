@@ -127,14 +127,14 @@ CREATE TABLE IF NOT EXISTS index_state (
   lines_processed INTEGER);        -- JSONL 已处理行数（用于增量 resume）
 
 -- ============================================================
--- 9. 摘要表：会话摘要（来自 away_summary / compaction 等）
+-- 9. 摘要表：会话摘要（来自 compact、工作流等）
 -- ============================================================
 CREATE TABLE IF NOT EXISTS summaries (
   id TEXT PRIMARY KEY,             -- 摘要 ID
   session_id TEXT,                 -- 所属会话
   agent_id TEXT,                   -- 子 Agent 摘要所属 Agent（主会话为空）
   timestamp TEXT,                  -- 摘要时间
-  source TEXT,                     -- 来源（away_summary / compaction 等）
+  source TEXT,                     -- 摘要类型（如 compact、workflow）
   content TEXT);                   -- 摘要文本
 
 -- ============================================================

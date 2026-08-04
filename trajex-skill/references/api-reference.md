@@ -8,9 +8,10 @@ Detailed reference for globals available inside `trajex --query` and
 - Use `references/retrieval-semantics.md` for query design and scope choices.
 - Use `references/pitfalls.md` after runtime errors or confusing row shapes.
 
-Query scripts run inside an async IIFE with a 30-second timeout. Use `return` to
-emit JSON. `--query` scripts are read-only. `--attune` scripts expose only
-memory mutation helpers.
+Query and attune scripts run inside an async IIFE in an isolated worker. The
+worker is terminated if the script does not settle within 30 seconds. Use
+`return` to emit JSON. `--query` scripts are read-only. `--attune` scripts
+expose only memory mutation helpers.
 
 ## Query API Reference
 

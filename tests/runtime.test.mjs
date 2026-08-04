@@ -45,7 +45,6 @@ test('runtime attune scripts expose only memory mutation helpers', () => {
       overviewType: typeof overview,
       result: remember({
         path: ${JSON.stringify(memoryPath)},
-        project: 'runtime-test',
         summary: 'Decision: runtime remember exposes only memory registration.'
       })
     };
@@ -61,6 +60,7 @@ test('runtime attune scripts expose only memory mutation helpers', () => {
   assert.equal(payload.sqlType, 'undefined');
   assert.equal(payload.overviewType, 'undefined');
   assert.equal(payload.result.path, memoryPath);
+  assert.equal(payload.result.project, null);
 });
 
 test('runtime rejects removed remember mode', () => {

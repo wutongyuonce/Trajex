@@ -130,14 +130,18 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     return result;
   };
   const modelByEntry = new Map<string, string | null>();
+  const resolvingModel = new Set<string>();
   const modelAt = (entry: PiEntry): string | null => {
     if (modelByEntry.has(entry.id)) return modelByEntry.get(entry.id) ?? null;
+    if (resolvingModel.has(entry.id)) return null;
+    resolvingModel.add(entry.id);
     const parent = typeof entry.parentId === 'string' ? byId.get(entry.parentId) : undefined;
     const model = typeof entry.message?.model === 'string'
       ? entry.message.model
       : entry.type === 'model_change' && typeof entry.modelId === 'string'
         ? entry.modelId
         : parent ? modelAt(parent) : null;
+    resolvingModel.delete(entry.id);
     modelByEntry.set(entry.id, model);
     return model;
   };

@@ -144,6 +144,16 @@ test('subagents() row carries messageCount', () => {
   db.close();
 });
 
+test('subagents() filters by its session start time', () => {
+  const db = fixture();
+  db.prepare('INSERT INTO sessions (id, started_at) VALUES (?, ?)').run('sid-2', '2026-07-10T10:00:00Z');
+  db.prepare('INSERT INTO subagents (agent_id, session_id) VALUES (?, ?)').run('sub-B', 'sid-2');
+
+  const rows = createQueryApi(db).subagents({ after: '2026-07-01T00:00:00Z' });
+  assert.deepEqual(rows.map(row => row.agent_id), ['sub-B']);
+  db.close();
+});
+
 test('workflowTree() shape carries result and agents with messageCount', () => {
   const db = fixture();
   const tree = createQueryApi(db).workflowTree('wf-1');

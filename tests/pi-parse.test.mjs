@@ -75,3 +75,20 @@ test('Pi rejects a malformed complete JSONL line instead of deleting valid histo
   const unit = provider.discover({ lastCursor: () => null })[0];
   assert.throws(() => drain(provider.parse(unit, null)), /Pi session: corrupted line 2/);
 });
+
+test('Pi treats a cyclic model parent chain as an unknown model', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-model-cycle-'));
+  const dir = join(root, 'sessions', '--project--');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    JSON.stringify({ type: 'session', version: 3, id: 'model-cycle' }),
+    JSON.stringify({ type: 'message', id: 'a', parentId: 'b', message: { role: 'user', content: 'first' } }),
+    JSON.stringify({ type: 'message', id: 'b', parentId: 'a', message: { role: 'user', content: 'second' } }),
+  ].join('\n') + '\n');
+
+  const provider = createPiProvider({ rootDir: root });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  const messages = drain(provider.parse(unit, null)).filter(record => record.kind === 'message');
+  assert.deepEqual(messages.map(record => record.model), [null, null]);
+});

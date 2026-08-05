@@ -324,8 +324,8 @@ docs/adr/                     # Architecture decision records（0001–0006）
 
 <a href="https://www.star-history.com/?repos=wutongyuonce%2FTrajex&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&theme=dark&legend=top-left&sealed_token=qpRlulsVFcKOFiQmgRTyhJGgQE4vPVD7fjISVr2wGRJh4BaQpNv64srTB40VT-_rOVpfVJJQkdtlTqbaXLDYKmSHaVyzu0KdipfI1fwjfIdykbLIoG9gfJbkPr2spo6zOyGg7uK6i__o3UBJ5AmyCsvpDQWZte7JWsGTNHLXKiJ6TAJQvhOJUmqO1lXk" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&legend=top-left&sealed_token=qpRlulsVFcKOFiQmgRTyhJGgQE4vPVD7fjISVr2wGRJh4BaQpNv64srTB40VT-_rOVpfVJJQkdtlTqbaXLDYKmSHaVyzu0KdipfI1fwjfIdykbLIoG9gfJbkPr2spo6zOyGg7uK6i__o3UBJ5AmyCsvpDQWZte7JWsGTNHLXKiJ6TAJQvhOJUmqO1lXk" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&legend=top-left&sealed_token=qpRlulsVFcKOFiQmgRTyhJGgQE4vPVD7fjISVr2wGRJh4BaQpNv64srTB40VT-_rOVpfVJJQkdtlTqbaXLDYKmSHaVyzu0KdipfI1fwjfIdykbLIoG9gfJbkPr2spo6zOyGg7uK6i__o3UBJ5AmyCsvpDQWZte7JWsGTNHLXKiJ6TAJQvhOJUmqO1lXk" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&theme=dark&legend=top-left&sealed_token=HKrAE-WlJp394cD9nfW6st3_OZkSQRNE2jzuSOTiW2arGz-96bIHlMjWb5He8j9YGDvBmltmLay7gSsCtTES-meraJxbdSts1g9yg0Bh-P6GxTDh1tWz4oR4BZLF-7pLKfJDpNxtpmZny6VzRDeM1IETAIRVgQxSIZHkghwgQrNfqjpT9V2uSo1sUayS" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&legend=top-left&sealed_token=HKrAE-WlJp394cD9nfW6st3_OZkSQRNE2jzuSOTiW2arGz-96bIHlMjWb5He8j9YGDvBmltmLay7gSsCtTES-meraJxbdSts1g9yg0Bh-P6GxTDh1tWz4oR4BZLF-7pLKfJDpNxtpmZny6VzRDeM1IETAIRVgQxSIZHkghwgQrNfqjpT9V2uSo1sUayS" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&legend=top-left&sealed_token=HKrAE-WlJp394cD9nfW6st3_OZkSQRNE2jzuSOTiW2arGz-96bIHlMjWb5He8j9YGDvBmltmLay7gSsCtTES-meraJxbdSts1g9yg0Bh-P6GxTDh1tWz4oR4BZLF-7pLKfJDpNxtpmZny6VzRDeM1IETAIRVgQxSIZHkghwgQrNfqjpT9V2uSo1sUayS" />
  </picture>
 </a>

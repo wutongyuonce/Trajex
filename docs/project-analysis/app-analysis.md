@@ -1,862 +1,618 @@
-三个框架都是用来用Web技术（HTML/CSS/JS）开发跨平台桌面应用的工具，但实现思路差别很大。简单来说：Electron是“自带浏览器”的重量级老大哥，Tauri是“用系统浏览器”的轻量级新秀，而Electrobun则是想用Bun和TypeScript再走出一条新路的探索者。
+# Trajex App 架构解析（Vue / Electron 入门版）
 
-🚀 三者的核心区别速览
+> 本文按当前 `app/` 目录的代码梳理（版本见 `app/package.json`）。它和 [cli&core-analysis.md](./cli&core-analysis.md) 配套阅读：后者解释「原始 Agent 日志怎样成为统一数据和 SQLite」，本文解释「桌面 App 怎样维护这些数据并把它变成界面」。
 
-* 运行时后端：Electron 是 Node.js；Tauri 是 Rust；Electrobun 是 Bun (TypeScript原生)。
-* Web渲染引擎：Electron 打包了完整的 Chromium；Tauri 使用操作系统自带的 WebView；Electrobun 默认也是系统 WebView，但也可以选择打包 Chromium。
-* 最终安装包大小：Electron 通常 80MB - 150MB；Tauri 仅 2MB - 10MB，非常小；Electrobun 约 14MB - 40MB（主要包含 Bun 运行时）。
-* 团队技术栈要求：Electron 只需 JavaScript/HTML/CSS 即可入门；Tauri 需要前端技术 + Rust 来处理后端逻辑；Electrobun 是 纯TypeScript/JavaScript，无需额外语言。
+## 0. 先用一句话建立全局感觉
 
-🛠️ 各自怎么用？
+Trajex App 是一个 Electron 桌面程序：它在本机持续监听 Claude Code、Codex、Pi 等 Agent 的历史文件；用后台线程把变化写入 SQLite；再让 Vue 页面通过受限的 IPC API 浏览会话、记忆和统计数据。
 
-* Electron：最成熟，遵循经典的 “主进程+渲染进程” 模型。先通过 npm 初始化项目并安装 electron 包，再编写主进程和页面代码，最后用 npm start 启动。类似 VS Code、Slack 等众多知名应用都是用它打造的。
-* Tauri：用官方脚手架 create-tauri-app 创建项目，你会得到一个前端项目（如Vue/React）与一个src-tauriRust后端文件夹的组合。前端只管界面，后端用 Rust 处理系统交互、文件读写等任务。由于采用系统 WebView，包体积极小。
-* Electrobun：非常新，追求“纯TypeScript体验”。可以用 npx electrobun init 创建项目，后端直接写 TypeScript（由 Bun 运行），无需像 Tauri 那样学习 Rust。虽然生态年轻，但提供了非常细粒度的更新机制（小至4KB的增量更新）。
-
-🤔 场景怎么选？
-
-* 选 Electron：如果你的团队是纯前端，希望保证在所有平台上渲染效果完全一致，且需要一个成熟稳定、遇到问题能立刻找到解决方案的生态。
-* 选 Tauri：如果你极度在意安装包大小，团队不介意或已经掌握Rust，且能接受在不同操作系统上对界面进行微调和测试（因为调用的系统WebView内核不同）。
-* 选 Electrobun：如果你喜欢TypeScript优先的开发体验，项目想保持轻量，但又不想引入Rust来增加复杂度，并且愿意为一个年轻、充满可能性但生态尚不完善的框架承担一定风险。
-
-## 四个文件夹的职责
-
-**`main/` —— 主进程（Node 全权，管窗口、文件、数据库、索引）**
-
-| 文件                                                         | 职责                                                         |
-| ------------------------------------------------------------ | ------------------------------------------------------------ |
-| index.ts                                                     | 进程入口：创建 BrowserWindow、app 生命周期、菜单，以及**所有 `ipcMain.handle`**（`db:*` 查询、`settings:*`、`local-link:*`、`capture:*`、`recap:*`） |
-| `indexer.ts` + `indexer-service.ts` + `indexer-worker.ts` + `indexer-worker-client.ts` | **索引服务**：主进程启动 worker thread 跑 core 的 `buildIndex`，监听文件变化、广播进度 |
-| `local-markdown-link.mjs`                                    | 本地文件链接的预览/打开                                      |
-| `provider-settings.ts`                                       | 数据源（provider root）设置                                  |
-
-**`preload/` —— 安全桥（renderer 与主进程之间唯一的通道）**
-
-- index.ts：`contextBridge.exposeInMainWorld('trajex', {...})` 暴露**白名单 API**——每个方法都是 `ipcRenderer.invoke('db:xxx', ...)` 的转发，加 `onIndexUpdated`/`onSessionUpdated` 事件订阅（返回清理函数）。
-
-**`renderer/` —— 渲染进程（浏览器环境，纯 Vue UI）**
-
-- 6 个 views（SessionList / SessionDetail / SubagentDetail / Activity / MemoryList / Settings）、4 个组件、5 个 CSS、`router.js` / `store.js` / `tool-renderer.js`，加一整套 `session-*.mjs`（时间线渲染、live reload、viewport、sidechain、segment navigation 等逻辑）。
-
-**`shared/` —— 跨进程共享的纯契约（不绑定任何进程）**
-
-- ipc-types.ts：IPC payload 类型（`SessionPatch`、`SessionMetadata`…）；
-- `session-detail-types.ts`：timeline 类型；`session-detail-assembly.mjs`：转发 core 的组装；`session-patch.mjs`：增量 patch 工具。
-
-## 关系：单向依赖 + 安全闸门
-
-```
-renderer（浏览器，无 Node 权限）
-   │  window.trajex.getSessions()          ← preload 暴露的白名单
-   ▼
-preload（contextBridge 透传）
-   │  ipcRenderer.invoke('db:getSessions')
-   ▼
-main（Node 全权）
-   │  ipcMain.handle → 查 SQLite → 返回
-   ▼
-renderer 渲染
-```
-
-- **依赖永远单向**：renderer 拿不到 Node/Electron 原生 API（`contextIsolation`），只能调 `window.trajex` 上 preload 显式暴露的方法——preload 是安全闸；
-- **`shared/` 是横切层**：main/preload/renderer 都 import 它（如 preload 里 `import type { SessionPatch } from '../shared/ipc-types.ts'`），保证两端类型一致；运行时被各层 bundle 内联，不是独立分发物；
-- **两条主数据流**：
-  1. *查询流*：renderer 请求 → preload → main 查库 → 原路返回；
-  2. *索引流*：main 的 indexer-service 在 worker 里跑完 `buildIndex` → `ipcMain` 广播 `trajex:index-updated` → preload `onIndexUpdated` 订阅 → renderer 刷新。
-
-## 怎么组织（打包视角）
-
-electron.vite.config.ts 决定三层如何成为可运行产物：
-
-| 层       | 入口                                      | 特殊处理                                                     |
-| -------- | ----------------------------------------- | ------------------------------------------------------------ |
-| main     | **5 个 input**：`index` + 4 个 `indexer*` | 每个 main 模块独立产出 `.js`——因为 `new Worker(__dirname/indexer-worker.js)` 需要 worker 是独立文件 |
-| preload  | `index.ts`                                | 强制 **CJS**（Electron sandbox 不支持 ESM preload，注释里写明） |
-| renderer | `index.html`                              | 标准 Vue bundle                                              |
-
-一句话总结：**main 是"大脑"（有全权），preload 是"唯一门卫"（白名单转发），renderer 是"脸面"（纯 UI），shared 是"共同语言"（两边共享的契约类型）**。
-
-
-
-
-
-> **chokidar** 是 Node.js 生态里最常用的**跨平台文件监听库** 。
->
-> 原理：在系统原生事件之上做一层"归一化"
->
-> 1、底层依赖 OS 的原生通知机制（事件驱动，非轮询）
->
-> - Linux → inotify
-> - macOS → FSEvents
-> - Windows → ReadDirectoryChangesW
->
-> 这些是内核级机制：文件一变化内核就回调，不需要程序定时去扫目录。
->
-> 2、为什么不用 Node 自带的 fs.watch ？ fs.watch 虽然也接同一套底层机制，但 API 很"糙"。
-
-### 12.2 app daemon 数据流
+它**不是**「Vue 直接读取 JSONL 文件」的应用。真正的数据主链路是：
 
 ```text
-Electron ready
-  -> startBackgroundResources
-  -> createWorkerBuildIndex
-  -> startIndexerService
-  -> chokidar watch providerRegistry.watchRoots(...)
-  -> scheduleBuild debounce/stability
-  -> worker buildIndex({ changedPaths })
-  -> createProviderIndexPlan
-  -> provider.parse + persist
-  -> finalize markers
-  -> notifyIndexUpdated / notifySessionUpdated
-  -> renderer fetch patch
-  -> apply patch
-  -> timeline update
+Agent 写本机历史文件
+        │
+        ▼
+Electron 主进程的文件监听服务（chokidar）
+        │  收集变化、等待文件写完、去抖
+        ▼
+Node worker thread（app/src/main/indexer-worker.ts）
+        │  调用 core 的 provider / persist 能力
+        ▼
+~/.trajex/trajex.sqlite
+        │
+        ▼
+Electron main 的 IPC handler（SQL 查询、组装详情）
+        │
+        ▼
+preload 注入的 window.trajex 白名单 API
+        │
+        ▼
+Vue renderer（列表、详情、Memory、Activity、Settings）
 ```
 
+因此，排查问题时先问它属于哪一层：
 
+| 现象 | 优先看哪里 |
+| --- | --- |
+| 某个 Agent 的日志没有进入数据库 | `packages/core/src/providers/`、`app/src/main/indexer.ts` |
+| 数据库有数据但 App 没显示 | `app/src/main/index.ts` 的 SQL / IPC、`app/src/renderer/src/data.js` |
+| 会话详情的工具、Thinking、Workflow 排版不对 | `packages/core/src/session-detail.ts`、`session-timeline-items.mjs`、`SessionTimelineRow.vue` |
+| 文件改了，界面没有自动刷新 | `indexer-service.ts`、worker、`notifyIndexUpdated()`、`session-live*.mjs` |
 
+## 1. 给 Vue / Electron 初学者的四个名词
 
+### 1.1 Electron 的三个进程边界
 
-`session-detail.ts` 不是直接组装 Vue 的“卡片”；它先把 record 流投影为一套稳定的详情数据模型。`session-timeline-items.mjs` 再基于这套模型，把一条已组装消息拆成最终要渲染的时间线块。
+Electron 同时具备「桌面程序」和「网页」能力，但它不会把所有代码放进一个 JavaScript 环境。
 
-```
-原始 records / SQLite 各表行
-        ↓
-session-detail.ts：事实关联 + 消息序列归并
-        ↓
-{ messages: AssembledMessage[], workflows, summaries }
-        ↓
-session-timeline-items.mjs：一条消息 → 1 或 2 个 timeline item
-        ↓
-SessionTimelineRow.vue：按 item.kind 选用具体 UI
-```
-
-## `session-detail.ts` 组装出的块
-
-它的主输出不是泛型 `Record[]`，而是：
-
-- `messages`：按时间排序的 `AssembledMessage[]`，是详情主时间线的内容来源
-- `workflows`：完整 workflow 列表，供页面或关联工具调用使用
-- `summaries`：summary 列表，目前不直接变成主时间线行
-
-核心在 [session-detail.ts (line 180)](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/packages/core/src/session-detail.ts:180) 的 `assembleMessages()`。它把下列记录组装为一个“消息块”：
-
-| 输入 record             | 进入输出的位置                         | 关键规则                                                     |
-| ----------------------- | -------------------------------------- | ------------------------------------------------------------ |
-| `message`               | 一个基础 `AssembledMessage`            | 保留 `uuid`、角色、文本、时间、`content_type` 等             |
-| `tool_call`             | 附到对应消息的 `message.tool_calls[]`  | 用 `message_uuid` 关联                                       |
-| `tool_result`           | 附到对应工具的 `tool_calls[i].result`  | 用 `tool_use_id` 关联；不作为单独消息显示                    |
-| `workflow`              | 附到 `Workflow` 工具调用的 `.workflow` | 用 workflow 的 `parent_tool_use_id` 关联                     |
-| `workflow_agent`        | 收进对应 `workflow.agents[]`           | 按 `run_id` 归属，并合并同 agent 的补充状态                  |
-| `summary`               | `snapshot.summaries[]`                 | 与主消息流分离                                               |
-| `message-turn-duration` | 补到对应 message                       | 用消息 `uuid` 关联                                           |
-| `subagent`              | 当前只收集，不直接生成主时间线卡片     | workflow agent 的点击目标来自 workflow 数据；子会话由详情页单独打开 |
-
-这里有一个重要边界：`session-detail.ts` 只认识 canonical record 字段和关联 ID，不判断 Claude / Codex / Pi / Kimi。因此它是 Provider 无关的“语义归并层”。
-
-## 消息归并的设计细节
-
-### 1. 结果不会单独占一行
-
-`tool_result` 在读取时会被跳过为独立消息，再挂回对应工具调用：
-
-```
-assistant message
-  └─ tool_calls
-      └─ { id, name, input_json, result }
+```text
+┌──────────────────────────────────────────────────────────┐
+│ main process（主进程，Node / Electron 权限）               │
+│ 创建窗口、打开 SQLite、文件监听、系统文件与对话框、IPC     │
+└───────────────────────┬──────────────────────────────────┘
+                        │ IPC
+┌───────────────────────▼──────────────────────────────────┐
+│ preload（预加载脚本，安全桥）                              │
+│ 只把允许的能力挂到 window.trajex                           │
+└───────────────────────┬──────────────────────────────────┘
+                        │ 浏览器 API
+┌───────────────────────▼──────────────────────────────────┐
+│ renderer（渲染进程，Vue 网页）                             │
+│ 组件、路由、状态、DOM、CSS；没有 Node 文件系统权限          │
+└──────────────────────────────────────────────────────────┘
 ```
 
-这避免详情页出现“调用工具一行、输出又一行”的断裂感；折叠工具时，输入和输出始终在同一块内。
+- **main process**：程序的「后端」。`app/src/main/index.ts` 是入口。这里可以调用 `fs`、SQLite、Electron 的 `BrowserWindow`、文件选择框等。
+- **renderer**：窗口里的网页。Vue 代码在 `app/src/renderer/src/`，写法就是普通 Vue 3 单页应用。
+- **preload**：夹在两者之间的桥。它既能使用 Electron 的 `ipcRenderer`，又能安全地向网页暴露非常小的一组函数。
+- **worker thread**：不是第四种 UI 进程，而是 main 创建的后台 Node 线程。索引可能很慢，放进 worker 后主进程仍能响应窗口和 IPC。
 
-### 2. 连续 thinking 会被合并
+### 1.2 为什么 renderer 不能直接 `import fs`
 
-连续的 assistant `content_type === 'thinking'` 会以双换行拼成一段：
+创建窗口时，main 明确设置：
 
-```
-thinking A + thinking B + thinking C
-              ↓
-一个 thinking 文本块
-```
-
-如果其后紧跟普通 assistant 消息或工具调用，这段 thinking 不会另占时间线位置，而是写到后一个消息的 `_thinking` 字段。于是 UI 可在回复/工具上方显示可折叠的 Thinking 区域。
-
-如果 thinking 后面没有可附着的 assistant 消息，才会保留为独立的 `content_type: 'thinking'` 消息。
-
-### 3. 连续工具调用被并到一条 assistant 消息
-
-当 assistant 消息的 `content_type === 'tool_use'` 时，后续连续的 tool-use 会合并进同一条 `tool_calls[]`；中间的 tool result 不会打断合并。
-
-普通 assistant 文本后面若接连续 tool-use，也会把这些工具调用附到这条文本消息上。
-
-```
-assistant 文本 → tool_use A → tool_result A → tool_use B → tool_result B
-        ↓
-一个 AssembledMessage：
-{ text, tool_calls: [A(result), B(result)] }
-```
-
-这正是“一个 assistant 回合 + 它执行的工具”的展示单元。
-
-### 4. workflow 进一步成为工具调用的附属语义
-
-当一个工具调用名为 `Workflow`，且有匹配的 workflow record：
-
-```
-tool_call(id)
-  ← workflow.parent_tool_use_id
-      ← workflow_agent.run_id
-```
-
-组装结果会是：
-
-```
-{
-  name: 'Workflow',
-  workflow: {
-    workflow_name,
-    status,
-    agents: [{ agent_id, phase, label, state, ... }]
-  }
+```ts
+webPreferences: {
+  preload: path.join(__dirname, '..', 'preload', 'index.js'),
+  contextIsolation: true,
+  nodeIntegration: false,
 }
 ```
 
-所以 renderer 不必再查询或猜测多 agent 数据关系。
-
-### 5. 可见性与主线先于 UI 被决定
-
-在 record → detail 的阶段：
-
-- `visibility === 'hidden'` 的 message 不会进入详情；
-- 主 session 的详情只取主线 message；
-- Pi 的 sidechain 是已进入详情的标记，默认是否显示由 renderer 决定，而不是重新解析原始日志。
-
-## 它和 `session-timeline-items.mjs` 的关系
-
-两者是相邻但职责不同的两层：
-
-| 文件                         | 问题                                                 | 输出                 |
-| ---------------------------- | ---------------------------------------------------- | -------------------- |
-| `session-detail.ts`          | “哪些记录属于同一条通用消息？”                       | `AssembledMessage[]` |
-| `session-timeline-items.mjs` | “这条通用消息在时间线上应占几个、什么类型的 UI 行？” | `TimelineItem[]`     |
-
-例如，`session-detail.ts` 已产出一条：
-
-```
-{
-  uuid: 'm1',
-  type: 'assistant',
-  text: '处理完成',
-  _thinking: '先分析需求…',
-  tool_calls: [
-    { name: 'Read', result: {...} },
-    { name: 'Edit', result: {...} }
-  ]
-}
-```
-
-`session-timeline-items.mjs` 看到它不是 meta / workflow / 纯 thinking，就生成一个：
-
-```
-{ kind: 'message', message: m1 }
-```
-
-随后 [SessionTimelineRow.vue (line 186)](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/app/src/renderer/src/components/SessionTimelineRow.vue:186) 在这个 `message` 行内依次渲染：
-
-1. assistant 标头和正文；
-2. `_thinking` 的折叠块；
-3. 两个工具的折叠块。
-
-也就是说，这类常规消息不会因 thinking 或工具被拆成多条虚拟列表行。
-
-但 timeline-items 有两个刻意拆行的例外：
-
-### workflow：拆成 workflow 卡片和其余工具行
-
-如果一条 assistant 消息含带 `workflow` 数据的 `Workflow` 工具调用：
-
-```
-[
-  { kind: 'workflow', message, workflowCall },
-  { kind: 'workflow-tools', message, toolCalls: 其余工具 }
-]
-```
-
-这样 workflow 能拥有独立的 agent 卡片、phase 分组、跳转交互；同一消息内的普通工具仍以另一行保留，避免被 workflow 卡片吞掉。
-
-### 独立 thinking：成为专门的 thinking 行
-
-只有无法附着到后续 assistant 消息的纯 thinking，才变为：
-
-```
-{ kind: 'thinking', message }
-```
-
-之后由 `SessionTimelineRow.vue` 渲染为独立可折叠 Thinking 行。
-
-### meta：成为专门的 system 行
-
-当 `message.is_meta === 1`：
-
-```
-{ kind: 'meta', message }
-```
-
-它用紧凑的 System 折叠 UI，而不是 user/assistant 气泡。
-
-所以，`session-detail.ts` 的“块”是稳定的**数据级会话块**；`session-timeline-items.mjs` 的 `meta / workflow / workflow-tools / thinking / message` 才是稳定的**UI 级时间线块**。后者刻意很薄，只依据前者已经完成的关联结果做展示切分，不重复工具、thinking、workflow 的组装逻辑。
-
-
-
-
-
-## 六、Electron App 架构
-
-Electron app 可以理解成两部分：
-
-```
-Electron app = UI 浏览器 + 本地索引 daemon
-```
-
-UI 部分负责展示：
-
-- Sessions
-- Session Detail
-- Memory
-- Activity
-- Settings
-
-daemon 部分负责实时维护 SQLite：
-
-```
-写 heartbeat
-用 chokidar 监听 provider roots
-文件变化时 scheduleBuild
-debounce + 等文件写稳定
-调用 worker buildIndex
-写 SQLite
-通知 renderer 更新
-定时继续写 heartbeat
-```
-
-### Worker 与 daemon
-
-索引任务可能很重：扫描文件、解析 JSONL、写 SQLite、重建 FTS。为了不阻塞 Electron main process，app 把索引任务放到 worker thread。
-
-`indexer-worker-client.ts` 是主进程和 worker 的通信桥：
-
-```
-main process -> postMessage({ id, args })
-worker -> buildIndex(args)
-worker -> postMessage({ id, result })
-```
-
-它用自增 id 和 pending map 把每次 build 请求包装成 Promise。
-
-### Heartbeat 与 chokidar
-
-heartbeat 是 app daemon 写进 `index_state` 的特殊 marker：
-
-```
-jsonl_path = __app_heartbeat__
-mtime = Date.now()
-```
-
-作用是告诉 CLI：app 还活着，正在负责写索引。CLI 看到最近 60 秒内有 heartbeat，就不主动写 SQLite，避免和 app 抢写。
-
-chokidar 用来监听 provider roots：
-
-```
-~/.codex/sessions
-~/.codex/session_index.jsonl
-~/.claude/projects
-~/.claude/history.jsonl
-```
-
-文件新增、修改、删除会触发 `scheduleBuild`。Trajex 不会立刻 build，而是 debounce 并等待文件写稳定，避免读到半截 JSONL 或频繁写库。
-
-## app：Electron 桌面端实现
-
-app 的主线是：
-
-```text
-main process
-  -> open/migrate SQLite
-  -> start indexer service + worker
-  -> expose IPC
-preload
-  -> window.trajex API
-renderer
-  -> Vue state/data/session timeline
-```
-
-### 11.1 main process
-
-文件：`app/src/main/index.ts`
-
-主进程负责：
-
-- 创建窗口。
-- 定位默认 provider roots。
-- 管理 SQLite 连接。
-- 启动/停止索引后台资源。
-- 注册 IPC handlers。
-- 处理 settings、memory archive/restore。
-
-关键函数：
-
-- `detectClaudeDir()`
-  - macOS/Linux 直接 `~/.claude`。
-  - Windows 尝试 WSL 路径。
-
-- `getRuntimePaths(persisted)`
-  - 基于 settings 解析 provider roots。
-  - 创建 provider registry。
-  - 返回 `dbPath`、`projectsDir`、`claudeDir`、`codexDir` 等。
-
-- `migrateLegacyDbIfNeeded(...)`
-  - 如果 `~/.trajex/trajex.sqlite` 不存在，但旧位置有 DB，则迁移。
-
-- `openDb(...)`
-  - 打开 better-sqlite3。
-  - 设置 busy_timeout。
-  - 在写锁保护下迁移 schema。
-
-- `startBackgroundResources(...)`
-  - 创建 indexer worker。
-  - 打开 DB。
-  - 启动 indexer service。
-  - 启动 Trajex watcher。
-
-- `notifyIndexUpdated(result)`
-  - 给所有 renderer 窗口发送：
-    - `trajex:index-updated`
-    - 对每个 affected session 发送 `trajex:session-updated`
-
-- `sourceWhereClause(opts)`
-  - 给 source filter 生成 SQL 条件。
-  - 默认是 Claude，`source: all` 时不过滤。
-
-### 11.2 app indexer
-
-文件：`app/src/main/indexer.ts`
-
-app 里的 buildIndex 和 CLI 共享 provider/persist，但因为 Electron 使用 `better-sqlite3`，并且需要 daemon 语义，所以它有自己的外层。
-
-主要能力：
-
-- `openIndexDb(...)`
-  - 创建 DB 目录。
-  - 打开 better-sqlite3。
-  - 配置连接。
-  - 安装 schema。
-
-- `writeHeartbeat(...)`
-  - 写 `__app_heartbeat__` marker。
-  - CLI passive pull 看到新鲜 heartbeat 会跳过写操作。
-
-- `buildIndex(...)`
-  - 获取 writer lease。
-  - 打开 DB。
-  - 创建 provider registry。
-  - 调 `createProviderIndexPlan`。
-  - force 时清空派生表。
-  - 调 `indexProviderPlan`。
-  - finalize：
-    - refresh project paths。
-    - 确保 FTS。
-    - 写 `__last_build__`。
-    - 写 `__app_last_successful_build__`。
-    - 写 `__indexer_owner_app__`。
-    - 写 provider markers。
-    - 写 `__last_source_mtime__`。
-  - 返回 affectedSessionIds，让 renderer 增量刷新。
-
-app indexer 与 CLI indexer 的区别：
-
-- app 是 daemon mode，会持续监听。
-- app 使用 better-sqlite3。
-- app 支持 changedPaths，只重索引变化文件。
-- app build 失败遇到 writer busy 时返回 `deferred`，service 会稍后重试。
-
-### 11.3 indexer service
-
-文件：`app/src/main/indexer-service.ts`
-
-这是文件监听和调度层，不懂 provider 解析。
-
-关键参数：
-
-- `debounceMs = 2000`
-- `stabilityMs = 500`
-- `heartbeatMs = 30000`
-- `watchRetryMs = 5000`
-- `deferredRetryMs = 250`
-
-关键状态：
-
-- `running`
-  - 当前是否有 build 在跑。
-
-- `pending`
-  - build 期间又来了变化，结束后再跑一次。
-
-- `changedPaths`
-  - 去重后的变化文件集合。
-
-- `idlePromise`
-  - 测试和停止服务时等待当前 build 完成。
-
-关键函数：
-
-- `scheduleBuild(reason, changedPath)`
-  - 收集变化路径。
-  - debounce。
-  - 等文件写稳定后调用 `runBuildNow`。
-
-- `runBuildNow(reason, paths)`
-  - 如果正在运行，标记 pending。
-  - 调注入的 `buildIndex({ reason, changedPaths })`。
-  - 如果结果 `deferred`，说明写锁或 DB busy，稍后重试。
-  - 成功后写 heartbeat。
-
-- `start()`
-  - 立即写 heartbeat。
-  - 可选 startup build。
-  - 启动 chokidar watcher。
-  - 定时 heartbeat。
-
-- `stop()`
-  - 清理 timers、watcher、heartbeat。
-
-### 11.4 indexer worker
-
-文件：
-
-- `app/src/main/indexer-worker.ts`
-- `app/src/main/indexer-worker-client.ts`
-
-目的：把耗时索引构建放到 worker thread，避免阻塞 Electron 主进程。
-
-`createWorkerBuildIndex()` 做：
-
-- lazy 创建 worker。
-- 用递增 id 匹配 request/response。
-- pending map 保存 resolve/reject。
-- worker error/exit 时 reject 所有 pending。
-- `stop()` 终止 worker。
-
-worker 文件很薄：
-
-- 监听 message。
-- 调 app indexer 的 `buildIndex(args)`。
-- postMessage result 或 error。
-
-### 11.5 preload IPC API
-
-文件：`app/src/preload/index.ts`
-
-preload 用 `contextBridge.exposeInMainWorld('trajex', ...)` 暴露 API。
-
-renderer 不直接访问 Electron IPC，而是调用：
-
-- `getSessions`
-- `getSessionMessages`
-- `getSessionToolCalls`
-- `getSessionToolResults`
-- `getSessionPatch`
-- `getSubagentMessages`
-- `getMessageFullText`
-- `getMemories`
-- `archiveMemory`
-- `restoreMemory`
-- `getProjects`
-- `getStats`
-- `getUsageStats`
-- `onIndexUpdated`
-- `onSessionUpdated`
-- `getSettings`
-- `setSetting`
-- `rebuildIndex`
-
-这层是安全边界：renderer 只能使用白名单 API。
-
-### 11.6 main IPC 查询
-
-文件：`app/src/main/index.ts`
-
-session detail 相关查询：
-
-- `querySessionMessages(sessionId)`
-  - 只取 `agent_id IS NULL` 的主线消息。
-
-- `querySessionToolCalls(sessionId)`
-  - 取 session 的 tool calls。
-
-- `querySessionToolResults(sessionId)`
-  - 取 session 的 tool results。
-
-- `querySessionSubagents(sessionId)`
-  - 取 subagents。
-
-- `querySessionWorkflows(sessionId)`
-  - 取 workflows，并为每个 workflow 补 agents。
-
-- `querySessionSummaries(sessionId)`
-  - 取 summaries。
-
-- `querySessionSnapshot(sessionId)`
-  - 组装上述 rows。
-
-- `querySessionDisplaySnapshot(sessionId)`
-  - 调 `assembleSessionDetail(snapshot)`，得到 renderer 直接可用的 messages/workflows/summaries。
-
-- `db:getSessionPatch`
-  - 根据 renderer 传来的 cursor 计算 session patch。
-  - 返回 changes/removed/hashes/positions 和 session metadata。
-
-全文相关：
-
-- `db:getMessageFullText`
-  - 根据 message source 调 registry.raw。
-  - Codex 会走 `rawCodex`。
-
-### 11.7 renderer data layer
-
-文件：`app/src/renderer/src/data.js`
-
-定位：把 `window.trajex` IPC 调用转换成 Vue state 可用的数据。
-
-关键函数：
-
-- `fetchInitialData()`
-  - 并行加载 memories、sessions、stats、projects。
-
-- `commitInitialData(...)`
-  - 写入全局 `state`。
-  - 保留已加载 session messages。
-
-- `loadSessionDetail(sessionId)`
-  - 并行取 messages/toolCalls/toolResults/subagents/workflows/summaries。
-  - 调 `assembleSessionDetail`。
-  - 缓存 snapshot cursor。
-  - 写入 session store。
-
-- `fetchSessionDetailPatch(sessionId)`
-  - 如果有缓存 cursor，调用 IPC `getSessionPatch`。
-
-- `materializeSessionDetailPatch(...)`
-  - 用 shared patch 算法把 patch 应用到本地 snapshot。
-  - 生成 `messagePatch` metadata，告诉 UI 是否 tail-only。
-
-- `loadSubagentDetail(agentId)`
-  - 加载 subagent messages 和 tools。
-
-- `loadFullText(uuid)`
-  - 调 main 的 `getMessageFullText`，从原始日志取未截断正文。
-
-### 11.8 session patch
-
-文件：`app/src/shared/session-patch.mjs`
-
-这套 patch 是 app 实时刷新体验的基础。
-
-核心表：
+这表示网页代码与 Electron/Node 上下文隔离，且没有 Node integration。即使某条日志的 Markdown 含有恶意脚本，页面也不能直接读你的磁盘。renderer 想查数据，唯一正规路径是：
 
 ```js
-messages -> uuid
-toolCalls -> id
-toolResults -> tool_use_id
-subagents -> agent_id
-workflows -> run_id
-summaries -> id
+const sessions = await window.trajex.getSessions({ source: 'all' });
 ```
 
-核心函数：
+### 1.3 IPC 是什么
 
-- `rowId(table, row)`
-  - 获取表内主键。
+IPC（Inter-Process Communication）就是进程间调用：
 
-- `rowHash(row)`
-  - 对整行 JSON 序列化后做 hash。
+```text
+renderer: window.trajex.getSessions()
+    ↓
+preload: ipcRenderer.invoke('db:getSessions')
+    ↓
+main: ipcMain.handle('db:getSessions', ...) 运行 SQL
+    ↓ Promise 返回查询结果
+renderer: Vue 状态更新，组件重新渲染
+```
 
-- `rowFingerprint(row, position)`
-  - 把 position 和 rowHash 组合。
-  - 不仅检测内容变化，也检测位置变化。
+`invoke/handle` 是一问一答的异步 RPC。反方向的 `webContents.send()` / `ipcRenderer.on()` 是主进程主动通知页面，例如「索引完成」。
 
-- `createSessionPatchCursor(snapshot)`
-  - 为当前 snapshot 生成 `{ table: { id: fingerprint } }`。
+### 1.4 Vue 在本项目里做什么
 
-- `createSessionPatch(snapshot, cursor)`
-  - 对比当前 snapshot 和旧 cursor。
-  - 生成：
-    - `changes`
-    - `removed`
-    - `hashes`
-    - `positions`
+Vue 只管理界面：`state` 是响应式对象；`computed()` 从状态导出展示数据；组件模板里的 `{{ value }}` 和 `v-for` 自动随状态变化刷新。
 
-- `applySessionPatch(snapshot, cursor, patch)`
-  - 如果是 append-only，直接尾部追加。
-  - 否则删除旧行、插入变更行并按 positions 放回。
+本项目没有 Vuex/Pinia。跨页面共享的轻量状态直接放在 `renderer/src/store.js`：会话目录、记忆、项目、统计、筛选条件、选择状态等。路由状态则交给 Vue Router，不混入 store。
 
-这让长 session 的实时刷新不需要每次重载全部 timeline。
+## 2. 和 Core / CLI 的关系
 
-### 11.9 SessionDetail renderer
+请先把职责边界记成这张图：
 
-文件：`app/src/renderer/src/views/SessionDetail.vue`
+```text
+                    packages/core
+┌───────────────────────────────────────────────────────────────┐
+│ provider adapters: 原始 Claude/Codex/Pi 文件 -> TranscriptRecord│
+│ persist/indexer: 统一记录 -> SQLite                             │
+│ session-detail: SQLite 行/记录 -> 可显示的会话语义              │
+└───────────────┬───────────────────────────────────────────────┘
+                │ 被复用，而非复制
+      ┌─────────┴──────────┐
+      ▼                    ▼
+ CLI（一次性命令）      Electron App（常驻 daemon + UI）
+ `packages/cli/`        `app/`
+```
 
-这是 session 阅读体验的核心页面。
+- Core 是事实层：provider 差异、canonical `TranscriptRecord`、数据库 schema、写入语义、会话详情组装都在那里。
+- CLI 是薄命令行入口：用户或 Agent 主动运行时，调用 Core。
+- App 是常驻入口：它用自己的 `better-sqlite3` 连接和后台监听语义，但复用 Core 的 provider registry、索引计划、持久化、事务和详情组装。
 
-它负责：
+App 不应重新理解 Codex/Claude 的原始 wire format；新增 provider 的主要修改也应留在 Core。详情展示所需的新字段，先考虑通过 Core 的 `session-detail.ts` 组装出来，再传给 renderer。
 
-- 加载 session snapshot。
-- 监听 `onSessionUpdated` 做 live reload。
-- 使用 patch 增量更新。
-- 使用虚拟列表渲染长 timeline。
-- 恢复阅读位置。
-- 展开/收起 message、tool、thinking。
-- 懒加载全文。
-- 处理 focus query。
-- 处理字体缩放。
+## 3. App 目录与构建产物
 
-重要模块：
+```text
+app/
+├── electron.vite.config.ts      三端构建规则
+├── package.json                 开发、打包、测试命令
+├── src/
+│   ├── main/                    主进程 + 索引后台服务
+│   ├── preload/                 window.trajex 安全桥
+│   ├── renderer/                Vue 应用和 CSS
+│   └── shared/                  main/preload/renderer 共用契约
+├── resources/icon.png           macOS 图标
+└── tests/                       Electron 与纯 Node 测试
+```
 
-- `session-live.mjs`
-  - 全局 dirty 标记。
+`electron.vite.config.ts` 会分别构建三类入口：
 
-- `session-live-reload.mjs`
-  - reload coordinator。
-  - 用户滚动时延迟应用刷新，避免阅读位置跳动。
+| 层 | 源入口 | 产物用途 |
+| --- | --- | --- |
+| main | `src/main/index.ts` 和 4 个 `indexer*` 文件 | 输出到 `out/main/`；worker 必须是可单独加载的 JS 文件 |
+| preload | `src/preload/index.ts` | 输出 CommonJS 的 `out/preload/index.js`，供 Electron 加载 |
+| renderer | `src/renderer/index.html` | Vite 打出的 Vue/HTML/CSS/JS 静态页面 |
 
-- `session-timeline-viewport.mjs`
-  - 虚拟列表和滚动位置捕获/恢复。
+主进程的五个 Rollup input 不能随便合并。`indexer-worker-client.ts` 在运行时用 `new Worker(.../indexer-worker.js)` 启动旁边的独立文件。
 
-- `session-reader-state.mjs`
-  - 缓存阅读状态。
+`app/package.json` 的常用命令：
 
-- `session-disclosures.mjs`
-  - 管理展开状态。
+```bash
+cd app
+npm run dev                    # Vite 开发服务器 + Electron
+npm run pack                   # 构建未签名的目录包
+npm run build                  # 构建并交给 electron-builder 打包
+npm run test:electron          # 并发/索引 Electron 测试
+npm run test:electron:timeline # 长会话虚拟列表测试
+npm run test:electron:reader-state # 阅读位置状态测试
+npm run test:local-links       # 本地 Markdown 链接纯 Node 测试
+```
 
-- `session-timeline-items.mjs`
-  - 把 messages 转成 timeline item。
+打包时 `schema.sql` 会被作为额外资源带入应用；`better-sqlite3` 被解包，以便它的原生模块能被 Electron 加载。
 
-这个页面体现了 app 的核心工程取舍：数据库和 provider 层提供证据，assembly 层提供可读结构，renderer 层负责长文阅读和实时更新的人机体验。
+## 4. 从启动到看到页面：完整启动链路
 
-## 13. 如何二开
+### 4.1 主进程先启动
 
-### 13.1 新增一个 provider
+`app/src/main/index.ts` 在 `app.whenReady()` 后依次做两件事：
 
-目标：比如适配 Pi、OpenCode 或另一个 Agent。
+```text
+startBackgroundResources({ runStartupBuild: true })
+    ├─ 创建/复用 indexer worker
+    ├─ 打开已有的 ~/.trajex/trajex.sqlite
+    ├─ 启动 indexer service（heartbeat + watcher）
+    └─ 请求一次 startup build
 
-推荐步骤：
+createWindow()
+    ├─ 创建 BrowserWindow
+    ├─ 加载 preload
+    └─ 开发时 loadURL(Vite)，生产时 loadFile(renderer/index.html)
+```
 
-1. 新建 `packages/core/src/providers/<name>.ts`。
-2. 实现 adapter：
-   - `name`
-   - `descriptor`
-   - `indexVersionMarker`
-   - `watchRoots(configuredRoot)`
-   - `discover(ctx)`
-   - `parse(unit, cursor)`
-   - `raw(input)`
-3. 把 provider 原始事件翻译成现有 `TranscriptRecord`。
-4. 在 `packages/core/src/providers/builtins.ts` 注册。
-5. 加 provider parse golden tests。
-6. 加 app provider settings/source catalog 测试。
+数据库尚不存在时，普通 `openDb()` 会返回 `null`；首次索引由 worker 创建数据库和 schema。退出时 `before-quit` 会先停止 watcher、终止 worker、关闭数据库，再真正退出，避免后台线程或 SQLite 连接被硬切断。
 
-注意：
+### 4.2 renderer 再启动 Vue
 
-- 不要在 adapter 中写 DB。
-- 不要在 persist 中写 provider-specific 分支，除非真的扩展 canonical record。
-- provider 自己决定 cursor 语义。
-- provider 自己处理去重、撤回、隐藏上下文、child thread 归属。
+`app/src/renderer/src/main.js` 是 Vue 的入口：
 
-### 13.2 修改 Codex 适配
+```text
+createApp(App)
+  -> app.use(router)
+  -> app.mount('#app')
+  -> router.isReady() 后
+  -> fetchInitialData() 并行读取 memories / sessions / stats / projects
+  -> commitInitialData() 写入 store
+```
 
-常见需求：
+它还注册三种全局刷新来源：
 
-- Codex 新增事件类型。
-- Codex token usage 字段变化。
-- Codex child thread metadata 变化。
-- Codex 工具调用 payload 变化。
-- 需要展示新的 content type。
+1. 首次路由就绪；
+2. 窗口从后台回到前台（`visibilitychange`）；
+3. main 发来的 `trajex:index-updated`。
 
-改动位置：
+若用户正在阅读 `SessionDetail`，全局目录刷新会先延迟。详情页走自己的增量更新，避免一个全量目录刷新把正在读的长时间线打断。
 
-- 新事件转 message/tool/subagent：
-  - `packages/core/src/providers/codex.ts` 的第二遍 parse loop。
+## 5. 索引 daemon：文件变化如何进入 SQLite
 
-- 新文本提取规则：
-  - `codexEventText`
-  - `codexMessagePayloadText`
+这是 App 最重要的后台主链路。
 
-- 新 tool input/output 格式：
-  - `codexToolInput`
-  - `codexToolOutput`
+```text
+providerRegistry.watchRoots(providerRoots)
+   │  Claude / Codex / Pi 等已配置根目录
+   ▼
+chokidar 监听 .jsonl / .json 的 add、change、unlink
+   │
+   ▼
+createIndexerService.scheduleBuild('watch', changedPath)
+   │  Set 去重变化路径；2s debounce；至少 500ms 写稳定等待
+   ▼
+worker client.postMessage({ id, args })
+   ▼
+indexer-worker.ts: buildIndex(args)
+   ▼
+app/main/indexer.ts
+   │  writer lease -> provider plan -> persist -> finalize
+   ▼
+SQLite commit
+   ▼
+main/index.ts: notifyIndexUpdated(affectedSessionIds)
+   │
+   ├─ trajex:index-updated
+   └─ trajex:session-updated { sessionId }
+```
 
-- parent thread 识别：
-  - `codexParentThreadId`
+### 5.1 `main/indexer-service.ts`：只负责调度，不解析数据
 
-- guardian/auto-review 识别：
-  - `codexIsGuardianThread`
-  - `readCodexGuardianThreadInfo`
+`createIndexerService()` 是 watcher 和节流器。它不知道 Claude/Codex 格式，也不写业务 SQL；它只负责什么时候请求一次构建。
 
-- 原始行回查：
-  - `rawCodex`
+| 状态/参数 | 含义 |
+| --- | --- |
+| `changedPaths: Set` | 收集并去重本轮变化的文件 |
+| `running` | 当前是否已有 build 在跑 |
+| `pending` | build 期间是否又发生变化；结束后再跑一次 |
+| `debounceMs = 2000` | 多次文件事件合为一次构建 |
+| `stabilityMs = 500` | 等写入稳定，避免读取半截 JSONL |
+| `heartbeatMs = 30000` | 每 30 秒更新一次 daemon 存活标记 |
+| `deferredRetryMs = 250` | 遇到 writer busy 后的短暂重试 |
 
-测试建议：
+`chokidar` 在 Node 的文件事件 API 上做跨平台归一化（macOS FSEvents、Linux inotify、Windows ReadDirectoryChangesW）。这里使用 `awaitWriteFinish`，再加 service 自己的 debounce，重点是正确性而非「每一次保存都立刻建索引」。
 
-- 用最小 JSONL fixture 覆盖新增事件。
-- 断言 parse 输出的 `TranscriptRecord`。
-- 如果影响 DB 写入，补 persist/indexer 测试。
-- 如果影响 app 展示，补 session detail assembly 测试。
+当配置目录暂时不存在时，service 不会崩溃，而是按 `watchRetryMs = 5000` 重试建立监听。
 
-### 13.3 扩展 schema
+### 5.2 worker：让窗口不被索引工作卡住
 
-只有当现有 `TranscriptRecord` 无法表达新事实时才扩 schema。
+- `indexer-worker-client.ts`：main 侧客户端。懒创建 `Worker`，给每个请求分配递增 `id`，在 `pending: Map<id, {resolve,reject}>` 里等待响应；worker 出错/退出时拒绝所有未完成请求。
+- `indexer-worker.ts`：真正的 worker 入口。收到 `{ id, args }` 后调用 `buildIndex(args)`，把 `result` 或序列化的错误传回。
 
-步骤：
+索引包含文件扫描、JSONL 解析、事务写入和 FTS 重建，放在 worker 的目的就是保证 `BrowserWindow`、IPC 和窗口拖动仍然流畅。
 
-1. 改 `schema.sql`。
-2. 改 `schema-migrations.ts`。
-3. 改 `providers/types.ts` 的 record 类型。
-4. 改 `persist.ts` 的 SQL 和 switch。
-5. 改 `session-detail.ts` / app shared assembly。
-6. 改 query helper 或 app IPC。
-7. 加迁移测试、persist 测试、query/app 测试。
+### 5.3 `main/indexer.ts`：App 版的索引执行器
 
-### 13.4 扩展 query API
+它复用 Core 的 `createProviderIndexPlan()`、`indexProviderPlan()`、事务工具和 writer lease，但负责 Electron daemon 特有的连接和结果格式。
 
-如果只是给 Agent 新增查询便利函数：
+`buildIndex()` 的顺序是：
 
-1. 在 `packages/core/src/query.ts` 的 `createQueryApi` 里加 helper。
-2. 确保只读。
-3. 使用 `buildWhere`/`normalizeOpts` 这类现有模式。
-4. 给 helper 加测试。
-5. 更新 skill 文档或 API reference。
+```text
+1. 获取跨进程 writer lease；拿不到返回 { deferred: true }
+2. openIndexDb()：创建目录、打开 better-sqlite3、安装/迁移 schema
+3. 创建内置 provider registry 和本次 provider index plan
+4. force 时清理会话派生表（保留 memories）
+5. 逐项执行 provider plan
+   └─ 每个 unit 通过可重试 SQLite 写事务进入数据库
+6. 一个 finalize 事务：补 project_path、保证 FTS、写索引 marker
+7. PASSIVE WAL checkpoint，关闭本次 worker 的数据库连接
+8. 返回 affectedSessionIds，供 UI 精确刷新
+```
 
-不要把 helper 设计成外部工具集合。Trajex 的交互方式是 Agent 写 JS，一次性调用本地 sandbox。
+几个容易混淆的点：
 
-### 13.5 改 app session 展示
+- **writer lease** 在独立的 `writer.lock.sqlite` 上保证同一时刻只有一个索引写者，避免 App 与 CLI 抢写。
+- **deferred 不是失败**。遇到锁忙时 service 会稍后再试，不把数据库并发看成解析错误。
+- `changedPaths` 让 provider plan 尽可能只处理变化的单元；手动 rebuild 的 `force: true` 才走全量重建。
+- force 重建会先建临时数据库，复制旧库的 `memories`，成功后原子替换主数据库。因此手动重建不会因中途失败轻易毁掉当前可用索引。
 
-改动位置：
+### 5.4 heartbeat 的意义
 
-- 数据结构：
-  - `app/src/shared/session-detail-assembly.mjs`
-  - `packages/core/src/session-detail.ts`
+`writeHeartbeat()` 在 `index_state` 写入 `__app_heartbeat__` marker。它说明常驻 App 还活着、正在负责更新索引；Core/CLI 可据此避免无意义地和 daemon 竞争写入权。它不是业务数据，也不是某个真实 JSONL 的进度。
 
-- IPC 查询：
-  - `app/src/main/index.ts`
+## 6. SQLite、设置与系统能力
 
-- renderer 数据：
-  - `app/src/renderer/src/data.js`
+### 6.1 数据库位置与连接
 
-- timeline 展示：
-  - `app/src/renderer/src/views/SessionDetail.vue`
-  - `app/src/renderer/src/components/SessionTimelineRow.vue`
-  - `app/src/renderer/src/tool-renderer.js`
+默认数据库是 `~/.trajex/trajex.sqlite`；设置文件是 `~/.trajex/settings.json`。App 的 main 使用 `better-sqlite3`，配置 busy timeout 与 WAL，并在持有 writer lease 时安装 schema / 补列迁移。
 
-- 实时刷新：
-  - `app/src/shared/session-patch.mjs`
-  - `app/src/renderer/src/session-live-reload.mjs`
+Core 的 schema、表含义和 provider 解析请看 `cli&core-analysis.md`。App 主要读取：
 
-如果新增字段只是展示层需要，优先在 assembly 里挂到 assembled message/tool call 上，而不是让 renderer 自己 join 多张表。
+```text
+sessions / messages / tool_calls / tool_results
+subagents / workflows / workflow_agents / summaries
+memories / index_state
+```
+
+### 6.2 `main/provider-settings.ts`
+
+这里是纯设置转换层，不碰 Electron UI：
+
+- `resolveProviderRoots()`：把 `settings.json` 中 `providerRoots.<id>`（兼容旧的 `<id>Dir`）和 provider 默认根目录合成实际路径。
+- `setPersistedSetting()`：更新嵌套 provider root 设置，空值则删除覆盖项。
+- `buildSourceCatalog()`：把 registry descriptor、目录是否存在、每种 source 的会话统计组合成 Settings 页面可直接展示的数组。
+
+主进程的 `settings:set` 在根目录变化时会停止旧 watcher、按新设置重新打开数据库/启动 watcher；`autoRefresh` 关闭时则停掉 daemon。`settings:rebuildIndex` 负责上节的临时库重建流程。
+
+### 6.3 仅由 main 执行的本地文件操作
+
+`main/local-markdown-link.mjs` 处理 Markdown 中的本地绝对路径链接：
+
+- 去掉可选的 `:line[:column]` 后缀；
+- 只接受真实存在的绝对文件；
+- 预览最多读取 12 KiB，二进制文件不显示文本预览；
+- 真正用系统默认程序打开前弹确认框。
+
+相应 renderer 代码只能请求预览/打开，不能任意调用 `fs`。
+
+## 7. IPC：页面到底可以调用什么
+
+`app/src/preload/index.ts` 是 **API 白名单的唯一清单**。它通过：
+
+```ts
+contextBridge.exposeInMainWorld('trajex', { ... })
+```
+
+把下面能力放到 `window.trajex`。新增 renderer 能力的完整路线必须是：main handler -> preload 白名单 -> renderer 调用；不要绕过 preload。
+
+| API 分组 | preload 方法 | main 中做的事 |
+| --- | --- | --- |
+| 全局目录 | `getSessions`、`getProjects`、`getStats`、`getUsageStats` | 查询 sessions、项目聚合、统计 / token 使用量 |
+| 主会话详情 | `getSessionMessages`、`getSessionToolCalls`、`getSessionToolResults`、`getSessionSubagents`、`getSessionWorkflows`、`getSessionSummaries` | 从多张表读行；详情组装在 renderer/Core 完成 |
+| 增量详情 | `getSessionPatch` | main 组装显示快照后与 cursor 比较，返回 patch 与最新 session metadata |
+| 子代理详情 | `getSubagentMessages`、`getSubagentToolCalls`、`getSubagentToolResults`、`getSubagentSummaries` | 用 `agent_id` 查询同样的事实 |
+| 原始内容与链接 | `getMessageFullText`、`readMemoryFile`、`previewLocalMarkdownLink`、`openLocalMarkdownLink` | 通过 provider `raw()` 回读原始内容，或安全处理本地 Markdown 链接 |
+| Memory | `getMemories`、`archiveMemory`、`restoreMemory` | 列表查询；归档/恢复在 writer lease 下更新软删除字段 |
+| Settings | `getSettings`、`browseFolder`、`setSetting`、`revealPath`、`rebuildIndex` | 读写 JSON、系统对话框、显示路径、重建数据库 |
+| 订阅 | `onIndexUpdated`、`onSessionUpdated` | 监听 main 主动发送的事件，并返回取消订阅函数 |
+
+`main/index.ts` 的 `sourceWhereClause()` 统一处理 `source` 筛选：`source: 'all'` 不过滤，指定 source 只取那一类，未指定时采用 Claude 兼容默认值。所有 SQL 参数通过预编译语句传入，不把页面字符串拼成 SQL 值。
+
+### 7.1 `getMessageFullText` 为什么不只查数据库
+
+为了索引大小和性能，消息正文可能被截断。用户点击「加载完整内容」时，main 根据 message、session、subagent/workflow 元数据调用 provider registry 的 `raw()`；provider 知道如何回到该 source 的原始日志。这样 renderer 仍然不需要理解任何 provider 原始格式。
+
+## 8. 从数据库行到详情时间线
+
+会话详情不是把 `messages` 表逐行 `v-for`。它有两层投影：先在 Core 解决事实关系，再在 renderer 解决 UI 行。
+
+```text
+SQLite rows
+  messages + tool_calls + tool_results + workflows + workflow_agents + summaries
+        │
+        ▼
+packages/core/src/session-detail.ts
+  assembleSessionDetail(...)
+        │ AssembledMessage[] / workflows / summaries
+        ▼
+renderer/session-timeline-items.mjs
+        │ TimelineItem[]（真正的虚拟列表行）
+        ▼
+components/SessionTimelineRow.vue
+        │ 一行选择对应 Vue 模板、折叠与格式化
+        ▼
+浏览器 DOM
+```
+
+### 8.1 Core assembly：先解决「这些记录属于谁」
+
+`session-detail.ts` 的输出不是模糊的 `Record[]`，而是可读消息块：
+
+| 输入 | 组装规则 |
+| --- | --- |
+| `message` | 成为基础 `AssembledMessage` |
+| `tool_call` | 以 `message_uuid` 挂到 `message.tool_calls[]` |
+| `tool_result` | 以 `tool_use_id` 挂到对应 tool call 的 `result`，不会单独显示成消息 |
+| `workflow` | 以 `parent_tool_use_id` 关联到名为 `Workflow` 的工具调用 |
+| `workflow_agent` | 以 `run_id` 归入 workflow 的 `agents[]` |
+| `summary` | 留在 `summaries[]`，按时间插入 UI 时间线 |
+
+几个展示友好的归并规则也在这一层完成：连续 thinking 被合并并尽量挂到后续 assistant 消息的 `_thinking`；连续 tool use 与前面的 assistant 文本归为一次 assistant 回合；隐藏消息不进入详情。这一层是 provider 无关的，不能在 renderer 重新做一次 join。
+
+### 8.2 UI assembly：再决定「占几个时间线行」
+
+`session-timeline-items.mjs` 很薄，只将已组装的数据切成稳定 `TimelineItem`：
+
+| `kind` | 何时生成 | 为什么单独一行 |
+| --- | --- | --- |
+| `message` | 普通用户/assistant 消息 | 文本、附着的 thinking、普通工具一起显示 |
+| `thinking` | 没有可附着目标的纯 thinking | 需要单独的可折叠行 |
+| `meta` | `is_meta === 1` | 用紧凑的 System 样式 |
+| `workflow` | 有已关联 workflow 的 `Workflow` 工具 | 展示 agent、phase 和跳转 |
+| `workflow-tools` | 同一消息里 workflow 之外还有工具 | 不让普通工具被 workflow 卡片吞掉 |
+| `summary` | Core summaries | 按 timestamp 插到消息间 |
+
+特意不对所有 item 做全局排序。消息原来的 transcript 顺序是权威顺序；全局排序会让缺失或相同时间戳的消息错序，也会破坏虚拟列表的行身份。
+
+### 8.3 `SessionTimelineRow.vue` 与展示辅助文件
+
+`SessionTimelineRow.vue` 根据 `item.kind` 选择模板，负责用户可见交互：展开/收起、显示 raw、加载完整文本、跳转子代理。它不查询数据库。
+
+- `session-timeline-presentation.mjs`：把一个时间线 item 预处理成标题、HTML、工具详情、workflow 分组等展示模型。
+- `tool-renderer.js`：纯格式化器，转义 HTML、简单高亮 JSON/JavaScript、将终端/CodeAct 工具输入输出变成可读块。
+- `utils.js`：时间、项目名、文本和 Markdown 工具；Markdown 使用 `marked` 并用 `DOMPurify` 做净化。
+
+## 9. 长会话为何不会卡：数据缓存、patch 与虚拟列表
+
+### 9.1 `renderer/src/data.js`：renderer 的数据访问层
+
+组件不要到处直接调用 `window.trajex`。`data.js` 集中承担「IPC 原始数据 -> Vue 能用的数据」：
+
+| 函数 | 做什么 |
+| --- | --- |
+| `fetchInitialData()` | 并行读取 memory、session、stats、projects，但不立刻改状态 |
+| `commitInitialData()` | 转换 memory 字段，更新全局目录，同时保留已经加载的会话详情 |
+| `loadSessionDetail(id)` | 并行获取六组详情行，调用 Core assembly，建立本地 patch cursor |
+| `fetchSessionDetailPatch(id)` | 有缓存 cursor 时请求最小增量；无缓存则让上层走全量加载 |
+| `materializeSessionDetailPatch()` | 用 shared patch 算法生成新快照，并算出是否只是尾部追加 |
+| `loadSubagentDetail(id)` | 用同一 assembly 逻辑加载子代理会话 |
+| `loadFullText()` / `loadMemoryMarkdown()` | 在用户需要时才读取完整原始文本或记忆文件 |
+
+详情快照最多缓存 3 个会话，避免切换多个长会话时无限占用 renderer 内存。
+
+### 9.2 `shared/session-patch.mjs`：增量更新协议
+
+它由 main 和 renderer 共用。核心是为每张详情表选择稳定主键：
+
+```text
+messages -> uuid              toolCalls -> id
+toolResults -> tool_use_id    subagents -> agent_id
+workflows -> run_id           summaries -> id
+```
+
+`createSessionPatchCursor(snapshot)` 记录每行的「位置 + 内容 hash」。main 的 `createSessionPatch(snapshot, cursor)` 只返回变更行、删除 ID、新 hash、正确位置；renderer 的 `applySessionPatch()` 只在必要时删除、插入或重排。若只是末尾新增，它直接追加数组。
+
+这里的 patch 操作对象是**已组装的显示快照**。当前详情 IPC 返回 `messages`、`workflows`、`summaries` 三组显示数据；另外三张表的表名仍保留在共用协议中，便于完整的详情快照比较。
+
+### 9.3 `SessionDetail.vue`：实时阅读协调器
+
+这是最大的 renderer view。它不只显示消息，还把「实时更新」和「用户正阅读」协调起来：
+
+```text
+收到 trajex:session-updated
+  -> 当前会话：请求 detail patch
+  -> 用户正滚动：先保留最新快照，不移动页面
+  -> 用户停止滚动：应用最新 patch
+  -> reconcile timeline item，尽量保留未变行对象
+  -> 虚拟列表测量/恢复阅读锚点
+```
+
+相关小模块分别只做一个小问题：
+
+| 文件 | 职责 |
+| --- | --- |
+| `session-live.mjs` | 记录非当前会话是否变脏；以后打开时强制刷新 |
+| `session-live-reload.mjs` | 合并多次通知；滚动时不提交会导致跳动的快照 |
+| `session-global-refresh.mjs` | 当前在详情页时，延迟全局目录的全量提交 |
+| `session-timeline.mjs` | 全量快照 fallback 时复用未变消息对象，并识别 tail-only |
+| `session-timeline-viewport.mjs` | `@tanstack/vue-virtual` 的行高估算、可见范围、锚点恢复 |
+| `session-timeline-scroll-policy.mjs` | 用户滚动期间抑制虚拟列表的自动位置修正 |
+| `session-user-scroll.mjs` | 识别 wheel/scroll/scrollend 的连续手势 |
+| `session-reader-state.mjs` | LRU 缓存 12 个会话的锚点、折叠状态、全文展开状态 |
+| `session-disclosures.mjs` | 管理某个消息/工具/summary 的展开与 raw 开关 |
+| `session-sidechains.mjs` | Pi 默认隐藏 sidechain，可按需显示 |
+| `session-segment-navigation.mjs` | 将 conversation round 分段，支持右侧小导航 |
+
+这组代码看似多，但边界明确：它们都不懂 SQL、provider 或 Vue 页面业务，只保护长列表阅读体验。
+
+## 10. Vue 页面和组件地图
+
+### 10.1 路由
+
+`renderer/src/router.js` 使用 hash 路由（地址类似 `#/sessions/<id>`），并按需懒加载各 view：
+
+| 路径 | View | 页面作用 |
+| --- | --- | --- |
+| `/sessions` | `SessionList.vue` | 会话目录、搜索、项目/来源筛选、噪声会话折叠 |
+| `/sessions/:id` | `SessionDetail.vue` | 主会话的虚拟时间线与实时阅读 |
+| `/sessions/:id/agent/:agentId` | `SubagentDetail.vue` | 单个子代理详情 |
+| `/memory`、`/memory/:id` | `MemoryList.vue` | Memory 列表、详情、归档/恢复、撤销窗口 |
+| `/activity` | `Activity.vue` | token 用量、热力图、连续工作日、会话活动 |
+| `/settings` | `Settings.vue` | provider 根目录、自动刷新、索引重建、数据库路径 |
+
+`App.vue` 是外壳：侧边栏、顶部工具栏、来源筛选、全局快捷键、面包屑和 `<router-view>`。它不承载某页的数据库读取逻辑。
+
+### 10.2 每个 view 的职责
+
+| 文件 | 数据来源 | 核心职责 |
+| --- | --- | --- |
+| `SessionList.vue` | `state.sessions` | 按搜索、项目、来源、排序得到可见会话；跳转详情 |
+| `SessionDetail.vue` | `data.js` 的 detail snapshot + session 事件 | 增量加载、虚拟列表、阅读位置、全文、子代理跳转、字体和分段导航 |
+| `SubagentDetail.vue` | `loadSubagentDetail()` | 子代理的消息、工具、summary 与全文加载 |
+| `MemoryList.vue` | `state.memories` + `data.js` | 选择、键盘操作、详情 Markdown 懒读、归档/恢复和短时撤销 |
+| `Activity.vue` | `state.sessions` + `getUsageStats()` | 派生活动热力图、周/月趋势、连续天数，点击回到会话 |
+| `Settings.vue` | `window.trajex.getSettings()` | 修改 source 根目录和自动刷新、调用重建索引 |
+
+### 10.3 可复用组件与纯 UI 辅助
+
+| 文件 | 作用 |
+| --- | --- |
+| `components/SessionTimelineRow.vue` | 一个时间线 item 的渲染与点击交互 |
+| `components/ActivityLedger.vue` / `ActivityLedgerRow.vue` | 将活动会话按 source/项目组合成可展开 ledger |
+| `components/FlapNumber.vue` | 对数字变化使用可尊重 reduced-motion 偏好的翻牌动画 |
+| `activity-ledger.mjs` | Activity ledger 的分组与元信息格式化 |
+| `flap-number.mjs` | 翻牌队列和状态机，限制中间帧数量 |
+| `keyboard-shortcuts.mjs` | 全局与 Memory 页面快捷键规则 |
+| `sidebar-projects.mjs` | 按项目统计并生成侧边栏项目列表 |
+| `source-catalog.mjs` | source 名称/颜色的查找与 fallback |
+| `local-markdown-links.js` | renderer 侧悬停预览与点击请求；实际文件读写仍在 main |
+
+### 10.4 样式
+
+`renderer/styles/` 是按页面区域拆分的普通 CSS：`base.css`（基础变量/重置）、`sidebar.css`、`toolbar.css`、`list.css`、`detail.css`。入口 `main.js` 全局 import 它们，不使用 CSS-in-JS。
+
+## 11. 两条 UI 数据流
+
+### 11.1 普通查询流：打开一个会话
+
+```text
+点击 SessionList 的某一项
+  -> router.push({ name: 'SessionDetail', params: { id } })
+  -> SessionDetail.vue mounted
+  -> data.loadSessionDetail(id)
+  -> preload 的 6 个 db:getSession* IPC
+  -> main/index.ts 从 SQLite 读取各表
+  -> Core assembleSessionDetail(rows)
+  -> renderer 建立 snapshot + patch cursor
+  -> reconcileTimelineItems(messages, summaries)
+  -> TanStack Virtual 只渲染可见的 SessionTimelineRow
+```
+
+首次加载时 renderer 组装详情；刷新时 main 会先组装显示快照再产生 patch。两者都通过 `shared/session-detail-assembly.mjs` 复用 Core 的唯一 `assembleSessionDetail` seam，不产生两套不同的归并规则。
+
+### 11.2 实时索引流：Agent 又写了一条消息
+
+```text
+原始 JSONL 改变
+  -> watcher 调度 worker build
+  -> worker 写入 SQLite，返回 affectedSessionIds
+  -> main 向所有窗口发 index-updated，向受影响会话发 session-updated
+  -> main.js 让目录数据失效（详情页期间暂存）
+  -> 当前 SessionDetail 请求 patch，非当前 session 标脏
+  -> patch 应用后只更新改变的时间线数据
+```
+
+这两个事件刻意同时存在：`index-updated` 面向 sessions/memory/projects 等全局目录；`session-updated` 面向某一篇正在阅读的详情，避免为了尾部新增一条消息而重取整个应用目录。
+
+## 12. 修改需求时应从哪里下手
+
+先沿着数据方向改，不要从 UI 直接越层。
+
+| 想改什么 | 最小正确入口 |
+| --- | --- |
+| 新增一种 Agent/provider | Core 的 `providers/<name>.ts`、`builtins.ts`；App 通常只自动从 registry 得到 settings/watch roots |
+| 改某 provider 的原始事件解析 | Core provider adapter；不要在 Vue 或 App SQL 中识别原始 JSONL |
+| 新增数据库事实字段 | `schema.sql` + migrations + `TranscriptRecord` + persist + Core assembly；之后才考虑 App IPC/UI |
+| 给详情添加已有事实的展示 | 优先 `packages/core/src/session-detail.ts`，再按需要改 main 查询、timeline item、row 组件 |
+| 给首页添加新的统计 | `main/index.ts` 加只读 IPC handler -> preload -> `data.js` / 对应 view |
+| 改实时体验 | `session-live*` / patch / viewport；不要用整页 reload 作为常规方案 |
+| 改设置中 provider 目录 | `provider-settings.ts` 与 `settings:*` IPC；要重启 watcher 才会生效 |
+
+新增 IPC 时要检查四处是否齐全：
+
+```text
+1. main/index.ts: ipcMain.handle('xxx', ...)
+2. preload/index.ts: window.trajex.xxx = () => ipcRenderer.invoke('xxx')
+3. renderer 的 data.js 或 view：调用 window.trajex.xxx
+4. shared/：只有跨边界 payload 需要稳定类型时才新增类型
+```
+
+## 13. 测试与验证边界
+
+App 的测试不要求 UI 截图，而是验证最容易回归的机制：
+
+| 测试文件 | 守住的行为 |
+| --- | --- |
+| `tests/electron-concurrency.mjs` + child | 多进程/写锁下索引不会破坏 SQLite |
+| `tests/electron-session-virtualization.mjs` | 长时间线的虚拟列表与更新行为 |
+| `tests/electron-session-reader-state.mjs` | 切换会话后阅读锚点与展开状态恢复 |
+| `tests/local-markdown-link.test.mjs` | 本地 Markdown 路径解析和预览边界 |
+
+非 UI 逻辑变动时，优先补最小可运行测试到对应目录；纯一行样式或文案不必强行添加测试。更完整的 provider、schema、persist、query 测试在根目录和 `packages/core`，见 `cli&core-analysis.md`。
+
+## 14. Electron、Tauri、Electrobun：为什么这里是 Electron
+
+这不是当前 App 的运行机制必读内容，但保留作技术选型背景。
+
+| 框架 | 后端运行时 | 页面内核 | 取舍 |
+| --- | --- | --- | --- |
+| Electron（本项目） | Node.js | 自带 Chromium | 体积较大，但前端/Node 生态成熟，跨平台渲染一致 |
+| Tauri | Rust | 系统 WebView | 包体小，但需要 Rust，且不同系统 WebView 要额外验证 |
+| Electrobun | Bun / TypeScript | 通常系统 WebView，可选 Chromium | TypeScript 体验轻，生态仍较年轻 |
+
+Trajex 需要本地文件监听、SQLite 原生模块、Node worker thread 和成熟的桌面 API。对一个 Vue/Node 团队，Electron 的「主进程 + preload + renderer」模型直接匹配现有技术栈；代价是安装包通常比系统 WebView 方案大。
+
+## 15. 最后再记住四条原则
+
+1. **Core 管事实，App 管常驻索引和阅读体验。** Provider 原始格式不要泄漏进 Vue。
+2. **main 有权限，renderer 没权限，preload 是门卫。** 新能力走白名单 IPC。
+3. **详情先 assembly，再渲染。** 工具结果、thinking、workflow 的关联不应散落在组件里。
+4. **实时更新以 patch 为常态。** 长会话阅读中避免无差别全量 reload。
+
+理解这四条后，沿着「文件 -> worker -> SQLite -> IPC -> data.js -> Vue view」这条线读代码，就不会在 Electron、Vue 和 Core 的边界间迷路。

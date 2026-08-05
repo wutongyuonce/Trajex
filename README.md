@@ -13,8 +13,13 @@
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-数万行散落的 Claude Code、Codex 与 Pi JSONL 会话，索引至同一个 SQLite 中：<br>
-Agent 可通过 CLI /Skill 实现毫秒级查询，用户可通过 App 直观浏览。
+**[Trajex](https://github.com/wutongyuonce/Trajex)｜面向 Agent 的通用本地会话记忆平台**
+
+将来自不同 provider —— Codex、Claude Code、Pi 的 JSONL 历史解析为同一套 canonical record 并持久化至 SQLite，通过 FTS5 全文索引实现毫秒级历史检索。
+
+* 采用 **CodeAct 智能体设计范式**，提供可编程 JS Query API，让 Agent 将 **“编写可执行代码”** 作为核心行动方式 (搜索历史证据、沉淀经验记忆)；
+
+* 配套 Electron + Vue 桌面端，将同一份索引转化为可读的会话时间线，用户可通过 App 直观浏览。
 
 </div>
 
@@ -314,3 +319,12 @@ docs/adr/                     # Architecture decision records（0001–0006）
 - `packages/core/dist/` 由 `npm run build:core` 生成。它是编译后的内部 `@trajex/core` workspace：JavaScript、type declarations 和 `schema.sql`。
 - `packages/cli/dist/` 由 `npm run build:cli` 生成。它是可发布的 `@trajex-apps/cli` payload：薄命令 shell、可读的 compiled Core，以及 `schema.sql`。
 - `packages/cli/dist/` 是生成产物，不应该手动编辑。Electron app 会直接 import `packages/core/src/`，以便 electron-vite 可以 bundle Core。
+
+# Star History
+
+<a href="https://www.star-history.com/#wutongyuonce/Trajex&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=wutongyuonce%2FTrajex&type=Date&theme=dark" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=wutongyuonce%2FTrajex&type=Date" />
+  </picture>
+</a>

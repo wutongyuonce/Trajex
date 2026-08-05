@@ -13,8 +13,13 @@
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-Index scattered Claude Code, Codex, and Pi JSONL sessions into a single SQLite database:<br>
-Agents query it in milliseconds via CLI/Skill; humans browse it through the desktop app.
+**[Trajex](https://github.com/wutongyuonce/Trajex) | A general-purpose local session-memory platform for agents**
+
+Parses JSONL history from different providers — Codex, Claude Code, Pi — into one canonical record set persisted in SQLite, with millisecond-scale history retrieval via the FTS5 full-text index.
+
+* Built on the **CodeAct agent design paradigm**, with a programmable JS Query API that lets agents make **“writing executable code”** their core mode of action (searching historical evidence, distilling experience into durable memory);
+
+* Ships with an Electron + Vue desktop app that turns the same index into a readable session timeline for humans to browse.
 
 </div>
 
@@ -273,3 +278,12 @@ docs/adr/                     # Architecture decision records (0001–0006)
 - `packages/core/dist/` is produced by `npm run build:core`. It is the compiled internal `@trajex/core` workspace: JavaScript, type declarations, and `schema.sql`.
 - `packages/cli/dist/` is produced by `npm run build:cli`. It is the publishable `@trajex-apps/cli` payload: a thin command shell, readable compiled Core, and `schema.sql`.
 - `packages/cli/dist/` is generated — do not edit manually. The Electron app imports `packages/core/src/` directly so that electron-vite can bundle Core.
+
+# Star History
+
+<a href="https://www.star-history.com/#wutongyuonce/Trajex&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=wutongyuonce%2FTrajex&type=Date&theme=dark" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=wutongyuonce%2FTrajex&type=Date" />
+  </picture>
+</a>

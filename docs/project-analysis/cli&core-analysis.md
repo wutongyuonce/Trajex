@@ -1,6 +1,8 @@
 ## 项目定位
 
-Trajex 是“编码 Agent 的显式记忆基础设施”（Claude Code、Codex、Pi）：
+> CodeAct 代表了一种先进的 AI 智能体设计范式，它通过将 **“编写可执行代码”** 作为核心行动方式，极大地增强了 AI 处理复杂任务、操作数据和与外部世界交互的能力。
+
+Trajex 是“Coding Agent 的显式记忆基础设施”（Claude Code、Codex、Pi）：
 
 1. 读取本机已有的 Agent 会话历史。
 

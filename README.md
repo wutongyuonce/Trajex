@@ -320,11 +320,12 @@ docs/adr/                     # Architecture decision records（0001–0006）
 - `packages/cli/dist/` 由 `npm run build:cli` 生成。它是可发布的 `@trajex-apps/cli` payload：薄命令 shell、可读的 compiled Core，以及 `schema.sql`。
 - `packages/cli/dist/` 是生成产物，不应该手动编辑。Electron app 会直接 import `packages/core/src/`，以便 electron-vite 可以 bundle Core。
 
-# Star History
+## Star History
 
-<a href="https://www.star-history.com/#wutongyuonce/Trajex&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=wutongyuonce%2FTrajex&type=Date&theme=dark" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=wutongyuonce%2FTrajex&type=Date" />
-  </picture>
+<a href="https://www.star-history.com/?repos=wutongyuonce%2FTrajex&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&theme=dark&legend=top-left&sealed_token=qpRlulsVFcKOFiQmgRTyhJGgQE4vPVD7fjISVr2wGRJh4BaQpNv64srTB40VT-_rOVpfVJJQkdtlTqbaXLDYKmSHaVyzu0KdipfI1fwjfIdykbLIoG9gfJbkPr2spo6zOyGg7uK6i__o3UBJ5AmyCsvpDQWZte7JWsGTNHLXKiJ6TAJQvhOJUmqO1lXk" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&legend=top-left&sealed_token=qpRlulsVFcKOFiQmgRTyhJGgQE4vPVD7fjISVr2wGRJh4BaQpNv64srTB40VT-_rOVpfVJJQkdtlTqbaXLDYKmSHaVyzu0KdipfI1fwjfIdykbLIoG9gfJbkPr2spo6zOyGg7uK6i__o3UBJ5AmyCsvpDQWZte7JWsGTNHLXKiJ6TAJQvhOJUmqO1lXk" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wutongyuonce/Trajex&type=date&legend=top-left&sealed_token=qpRlulsVFcKOFiQmgRTyhJGgQE4vPVD7fjISVr2wGRJh4BaQpNv64srTB40VT-_rOVpfVJJQkdtlTqbaXLDYKmSHaVyzu0KdipfI1fwjfIdykbLIoG9gfJbkPr2spo6zOyGg7uK6i__o3UBJ5AmyCsvpDQWZte7JWsGTNHLXKiJ6TAJQvhOJUmqO1lXk" />
+ </picture>
 </a>

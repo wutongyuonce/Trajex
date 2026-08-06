@@ -99,7 +99,7 @@ test('search() hit shape matches api-reference.md', () => {
   const hit = createQueryApi(db).search('needle', { limit: 1 })[0];
 
   exactKeys(hit, ['message', 'session', 'rank', 'context'], 'search() hit');
-  exactKeys(hit.message, ['uuid', 'text', 'content_type', 'is_meta', 'role', 'timestamp', 'model', 'cwd', 'source'], 'search() hit.message');
+  exactKeys(hit.message, ['uuid', 'text', 'content_type', 'is_meta', 'visibility', 'role', 'timestamp', 'model', 'cwd', 'source'], 'search() hit.message');
   exactKeys(hit.session, ['id', 'title', 'project', 'started_at', 'source'], 'search() hit.session');
   assert.ok(Array.isArray(hit.context), 'search() hit.context is an array');
   db.close();

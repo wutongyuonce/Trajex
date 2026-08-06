@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { isTextTruncated } from '../data.js';
 import { buildSessionTimelinePresentation } from '../session-timeline-presentation.mjs';
-import { fmtClockTime } from '../utils.js';
+import { fmtClockTime, renderMarkdown } from '../utils.js';
 
 const props = defineProps({
   item: { type: Object, required: true },
@@ -16,7 +16,7 @@ const emit = defineEmits(['load-full-text', 'navigate-subagent']);
 
 const msg = computed(() => props.item.message);
 const expandedText = computed(() => props.expandedMessageText.get(msg.value.uuid));
-const summaryText = computed(() => String(props.item.summary?.content || ''));
+const summaryHtml = computed(() => renderMarkdown(props.item.summary?.content || '', { variant: 'compact' }));
 const summaryOpen = computed(() => props.disclosures.isOpen(`summary:${props.item.summary?.id}`));
 
 // The expensive HTML projection is memoized by the exact inputs that can
@@ -62,7 +62,7 @@ function navigateToSubagent(agentId, description = '') {
           <span class="meta-preview">{{ item.summary?.source || 'summary' }}</span>
         </button>
         <div v-if="summaryOpen" class="meta-body">
-          <div>{{ summaryText }}</div>
+          <div v-html="summaryHtml"></div>
         </div>
       </div>
     </div>

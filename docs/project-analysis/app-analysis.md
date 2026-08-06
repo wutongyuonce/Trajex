@@ -476,7 +476,7 @@ workflows -> run_id           summaries -> id
 | `session-user-scroll.mjs` | 识别 wheel/scroll/scrollend 的连续手势 |
 | `session-reader-state.mjs` | LRU 缓存 12 个会话的锚点、折叠状态、全文展开状态 |
 | `session-disclosures.mjs` | 管理某个消息/工具/summary 的展开与 raw 开关 |
-| `session-sidechains.mjs` | Pi 默认隐藏 sidechain，可按需显示 |
+| `session-sidechains.mjs` | 迁移为按 `visibility` 展开 Pi 的 inactive 分支；默认只展示 visible |
 | `session-segment-navigation.mjs` | 将 conversation round 分段，支持右侧小导航 |
 
 这组代码看似多，但边界明确：它们都不懂 SQL、provider 或 Vue 页面业务，只保护长列表阅读体验。

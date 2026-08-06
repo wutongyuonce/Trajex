@@ -11,8 +11,10 @@ the direct parse path to drift from the persisted path.
 stream. The adapter owns all source-specific interpretation: duplicate raw
 events, stable identities, tool relationships, message classification, and
 visibility. `visibility` is separate from `is_meta`: hidden transport context is
-omitted from session detail, while visible system evidence can remain a metadata
-card. Presentation-sensitive concepts are explicit canonical fields: tool calls
+omitted from session detail, inactive source evidence is opt-in, and visible
+system evidence can remain a metadata card. The canonical states are
+`visible | inactive | hidden`; there is no shared `is_sidechain` field.
+Presentation-sensitive concepts are explicit canonical fields: tool calls
 carry a presentation class, Skill instructions carry a content type, and
 workflows carry their parent tool-call identity.
 

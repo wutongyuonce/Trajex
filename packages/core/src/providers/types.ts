@@ -101,7 +101,7 @@ export type TranscriptRecord =
   | MessageTurnDurationRecord
   | DeleteSessionRecord;
 
-export type MessageVisibility = 'visible' | 'hidden';
+export type MessageVisibility = 'visible' | 'inactive' | 'hidden';
 
 /**
  * 单条消息记录。核心记录类型，对应 schema 的 messages 表。
@@ -120,7 +120,6 @@ export interface MessageRecord {
   /** provider 归一化的显示可见性；展示层绝不从文本内容推断。 */
   visibility: MessageVisibility;
   model: string | null;
-  is_sidechain: 0 | 1;
   agent_id: string | null;
   /** provider 归一化的总输入 token 数，包含 provider 报告的缓存输入。 */
   input_tokens: number | null;

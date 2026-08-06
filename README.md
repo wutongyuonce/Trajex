@@ -43,9 +43,9 @@ Trajex 会把每个 provider 都索引到同一个 SQLite schema 中，而不是
 
 Codex root threads 会成为普通 Trajex sessions。当 parent-thread metadata 可用时，Codex child threads 会通过同一个 `subagents` 表挂接。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。
 
-每个 Pi session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，因此 Trajex 会保存全部分支，并将不在最新叶节点路径上的消息标记为 sidechain；详情页默认折叠这些其他分支。
+每个 Pi 官方 v3 session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，Trajex 会根据 durable leaf 和 compaction（包括 retained tail）计算当前上下文：当前记录为 `visible`，已被取代但保留的分支证据为 `inactive`，来源明确隐藏的 transport context 为 `hidden`。详情页默认只展示 visible 记录，其他分支可显式展开。
 
-为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions` 和 `~/.pi/agent/sessions`。在 Settings 中修改 Pi 路径时，应填写 Pi agent root，Trajex 会读取其 `sessions` 子目录。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
+为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions` 和 Pi 默认的 `~/.pi/agent/sessions`。Pi 的 App Settings 配置的是实际 session directory，可直接填写由 `PI_CODING_AGENT_DIR` 或 `PI_CODING_AGENT_SESSION_DIR` 解析出的目录；Trajex 不读取环境变量或 CLI 参数，也不再向配置路径后面追加 `agent/sessions`。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
 
 ## App 与 CLI 的关系
 
@@ -259,7 +259,7 @@ npm i -g @trajex-apps/cli   # 本地全局更新
 
 | Layer | Source | 捕获内容 |
 |-------|--------|----------|
-| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi `sessions/<project>/*.jsonl` | Title、project、timestamps、git branch、source |
+| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi recursive official v3 `*.jsonl` | Title、project、timestamps、git branch、source |
 | **Messages** | user + assistant turns | Full text、model、token usage、parent chain |
 | **Tool calls** | every tool invocation | Tool name、input、file paths |
 | **Subagents** | Claude `subagents/agent-<id>.jsonl`; Codex child threads | Agent type、description、full conversation |
@@ -278,7 +278,7 @@ packages/core/                # @trajex/core npm workspace（TypeScript + ESM）
 │   │   ├── types.ts          # Provider + TranscriptRecord contract
 │   │   ├── claude.ts         # Claude Code adapter（行增量）
 │   │   ├── codex.ts          # Codex adapter（全量重解析）
-│   │   └── pi.ts             # Pi adapter（tree + sidechain projection）
+│   │   └── pi.ts             # Pi adapter（v3 context + visibility projection）
 │   ├── session-detail.ts     # Provider-independent transcript projection
 │   ├── persist.ts            # Binding-agnostic record writer（upsert/merge）
 │   ├── tx.ts                 # Write transaction + connection config

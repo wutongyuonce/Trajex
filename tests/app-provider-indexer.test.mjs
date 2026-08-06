@@ -42,7 +42,7 @@ test('app indexer persists every provider through one registry-driven loop', () 
         kind: 'message', uuid: 'alpha:message', session_id: unit.sessionId, type: 'user',
         parent_uuid: null, timestamp: '2026-07-20T10:00:00.000Z', role: 'user',
         text: 'registry tracer bullet', content_type: 'text', is_meta: 0, visibility: 'visible', model: null,
-        is_sidechain: 0, agent_id: null, input_tokens: null, output_tokens: null,
+        agent_id: null, input_tokens: null, output_tokens: null,
         cwd: '/tmp/alpha', skill: null, source: 'alpha',
       };
       return '10:1';

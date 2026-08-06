@@ -32,14 +32,14 @@ const maxStr = (a: string | null, b: string | null) => (a == null ? b : b == nul
 function statements(db: SqliteDb) {
   return {
     msg: db.prepare(`
-      INSERT INTO messages (uuid,session_id,type,parent_uuid,timestamp,role,text,content_type,is_meta,visibility,model,is_sidechain,agent_id,input_tokens,output_tokens,cwd,skill,source)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      INSERT INTO messages (uuid,session_id,type,parent_uuid,timestamp,role,text,content_type,is_meta,visibility,model,agent_id,input_tokens,output_tokens,cwd,skill,source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(uuid) DO UPDATE SET
         session_id=excluded.session_id, type=excluded.type, parent_uuid=excluded.parent_uuid,
         timestamp=excluded.timestamp, role=excluded.role, text=excluded.text,
         content_type=excluded.content_type, is_meta=excluded.is_meta,
         visibility=excluded.visibility, model=excluded.model,
-        is_sidechain=excluded.is_sidechain, agent_id=excluded.agent_id,
+        agent_id=excluded.agent_id,
         input_tokens=excluded.input_tokens, output_tokens=excluded.output_tokens,
         cwd=excluded.cwd, skill=excluded.skill, source=excluded.source`),
     tc: db.prepare('INSERT OR REPLACE INTO tool_calls (id,message_uuid,session_id,name,input_json,file_path) VALUES (?,?,?,?,?,?)'),
@@ -113,7 +113,7 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
   const write = (r: TranscriptRecord) => {
     switch (r.kind) {
       case 'message':
-        st.msg.run(r.uuid, r.session_id, r.type, r.parent_uuid, r.timestamp, r.role, r.text, r.content_type, r.is_meta, r.visibility, r.model, r.is_sidechain, r.agent_id, r.input_tokens, r.output_tokens, r.cwd, r.skill, r.source);
+        st.msg.run(r.uuid, r.session_id, r.type, r.parent_uuid, r.timestamp, r.role, r.text, r.content_type, r.is_meta, r.visibility, r.model, r.agent_id, r.input_tokens, r.output_tokens, r.cwd, r.skill, r.source);
         break;
       case 'tool_call':
         st.tc.run(r.id, r.message_uuid, r.session_id, r.name, r.input_json, r.file_path);

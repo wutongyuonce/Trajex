@@ -66,6 +66,38 @@ test('incremental buildIndex resumes from cursor and accumulates message_count',
   assert.equal(afterAppend.lp, 4, 'cursor advanced to 4 lines');
 });
 
+test('schema migration is not skipped by a recent build marker', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-schema-refresh-'));
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE messages (
+      uuid TEXT PRIMARY KEY, session_id TEXT, type TEXT, parent_uuid TEXT,
+      timestamp TEXT, role TEXT, text TEXT, content_type TEXT,
+      is_meta INTEGER DEFAULT 0, model TEXT, agent_id TEXT,
+      input_tokens INTEGER, output_tokens INTEGER, cwd TEXT, skill TEXT,
+      turn_duration_ms INTEGER, source TEXT DEFAULT 'claude'
+    );
+    CREATE TABLE index_state (
+      jsonl_path TEXT PRIMARY KEY, mtime REAL, lines_processed INTEGER
+    );
+  `);
+  db.prepare('INSERT INTO messages (uuid, session_id, text) VALUES (?, ?, ?)').run(
+    'legacy-message', 'legacy-session', 'legacy schema',
+  );
+  db.prepare('INSERT INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)').run(
+    '__last_build__', Date.now(),
+  );
+  db.close();
+
+  writeFileSync(join(home, 'q.mjs'), "return sql('SELECT visibility FROM messages');");
+  const result = runRuntime(['--query', join(home, 'q.mjs')], home);
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.deepEqual(JSON.parse(result.stdout), [{ visibility: 'visible' }]);
+});
+
 test('force build purges sessions for deleted files and preserves memories', () => {
   const home = mkdtempSync(join(tmpdir(), 'trajex-force-'));
   const projDir = join(home, '.claude', 'projects', '-tmp-proj');

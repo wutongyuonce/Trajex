@@ -1,8 +1,8 @@
 # Incremental indexing does not infer destructive transcript changes
 
 **Context.** Trajex treats JSONL and similar transcript files as append-oriented
-sources during ordinary indexing. Providers expose an opaque cursor (currently
-typically an mtime plus processed-line count) and emit the records that can be
+sources during ordinary indexing. Providers expose an opaque cursor, typically
+including a source fingerprint, and emit the records that can be
 reliably reconciled from the observed change. This is intentionally different
 from treating SQLite as a live mirror that must infer every filesystem
 mutation.
@@ -34,8 +34,8 @@ transcript changes. In particular:
 
 This rule has one deliberate exception: a provider may emit an explicit
 `delete-session` record when it understands the semantic retraction, such as a
-Codex guardian/auto-review thread that must not be shown. That is an explicit
-provider decision, not an inference from a missing or damaged file.
+Codex guardian/auto-review thread or a Pi provenance replacement. That is an
+explicit provider decision, not an inference from a missing or damaged file.
 
 **Operational consequence.** When transcript files have been deleted, restored,
 rewritten, or otherwise damaged outside the normal append flow, users should

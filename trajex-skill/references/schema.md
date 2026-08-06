@@ -18,7 +18,7 @@ Trajex stores Claude Code, Codex, and Pi transcripts in the same schema.
 
 - Claude rows use `source='claude'`.
 - Codex rows use `source='codex'`; root session and message IDs are prefixed with `codex:`.
-- Pi rows use `source='pi'` and `pi:`-prefixed IDs. Pi support currently covers standard top-level official v3 sessions, not deeper nested subagent run transcripts.
+- Pi rows use `source='pi'` and IDs derived from normalized `cwd` plus the v3 header `id`; official v3 session files are discovered recursively.
 - Omit `source` filters unless provider provenance matters.
 - Codex child agents are represented through `subagents`; provider workflow rows may be absent when the source has no compatible metadata.
 
@@ -51,7 +51,7 @@ One row per root session.
 
 | Column | Meaning |
 | --- | --- |
-| `id` | Provider-native session ID; Codex and Pi IDs are provider-prefixed |
+| `id` | Stable provider session ID; Pi combines normalized header `cwd` and header `id` so the same explicit ID in different projects cannot collide |
 | `title` | AI/session title |
 | `project` | Provider-normalized project slug |
 | `project_path` | Absolute project path when known |
@@ -77,7 +77,7 @@ Core evidence table.
 | `content_type` | `text`, `thinking`, `tool_use`, `tool_result`, or `unknown` |
 | `is_meta` | 1 for injected/control-plane messages |
 | `model` | Assistant model name |
-| `is_sidechain` | Retry/branch marker |
+| `visibility` | `visible` for current context, `inactive` for retained superseded context, `hidden` for source-suppressed content |
 | `agent_id` | Subagent/workflow agent ID |
 | `input_tokens`, `output_tokens` | Assistant token usage |
 | `cwd` | Working directory at message time |
@@ -204,7 +204,7 @@ Indexer progress and sentinel state.
 | --- | --- |
 | `jsonl_path` | Source path or synthetic sentinel key |
 | `mtime` | Last indexed mtime |
-| `lines_processed` | Incremental line cursor |
+| `lines_processed` | Stored line-count component of the `mtime:lines` cursor. Claude uses it for incremental resume; Codex and Pi currently record it for compatibility/inspection but full-replay the file. |
 
 Sentinel keys include `__last_build__`, `__app_heartbeat__`,
 `__app_last_successful_build__`, `__indexer_owner_app__`, and

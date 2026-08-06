@@ -269,6 +269,77 @@ test('main process watches every root declared by the built-in provider registry
   }
 });
 
+test('re-enabling auto-refresh recreates the watcher and starts a build', async () => {
+  const originalHome = process.env.HOME;
+  const home = join(tmpdir(), `trajex-main-auto-refresh-${Date.now()}`);
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
+  process.env.HOME = home;
+
+  const ipcHandlers = new Map();
+  const services = [];
+  const starts = [];
+
+  class FakeDatabase {
+    pragma() {}
+    exec() {}
+    close() {}
+    prepare() { return { get: () => null, all: () => [], run: () => ({}) }; }
+  }
+
+  class FakeBrowserWindow {
+    constructor() {
+      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+    }
+    loadFile() {}
+    loadURL() {}
+    close() {}
+    static getAllWindows() { return []; }
+    static fromWebContents() { return null; }
+  }
+
+  const restore = registerMocks([
+    [ELECTRON_URL, {
+      namedExports: electronNamespace({
+        BrowserWindow: FakeBrowserWindow,
+        ipcMain: { handle(channel, handler) { ipcHandlers.set(channel, handler); } },
+      }),
+    }],
+    [DATABASE_URL, { defaultExport: FakeDatabase }],
+    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
+    [INDEXER_SERVICE_URL, {
+      namedExports: {
+        createIndexerService: () => {
+          const service = {
+            start(options) { starts.push(options); },
+            stop() {},
+            idle: async () => {},
+            runBuildNow() { return Promise.resolve(); },
+          };
+          services.push(service);
+          return service;
+        },
+      },
+    }],
+    [INDEXER_WORKER_URL, { namedExports: { createWorkerBuildIndex: defaultIndexerWorkerClient().createWorkerBuildIndex } }],
+  ]);
+
+  try {
+    await importMain();
+    const setSetting = ipcHandlers.get('settings:set');
+    await setSetting(null, 'autoRefresh', false);
+    await setSetting(null, 'autoRefresh', true);
+
+    assert.equal(services.length, 2);
+    assert.deepEqual(starts, [{ buildOnStart: false }, { buildOnStart: true }]);
+  } finally {
+    restore();
+    process.env.HOME = originalHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('main process forwards committed IDs without reopening after a deferred build', async () => {
   const originalHome = process.env.HOME;
   const home = join(tmpdir(), `trajex-main-deferred-build-${Date.now()}`);

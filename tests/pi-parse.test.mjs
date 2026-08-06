@@ -7,8 +7,10 @@ import { createPiProvider, PI_CANONICAL_TRANSCRIPT_MARKER } from '../packages/co
 
 function drain(generator) { const records = []; for (let step = generator.next(); !step.done; step = generator.next()) records.push(step.value); return records; }
 
-test('Pi indexes every tree branch and marks non-current messages as sidechain', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v2__');
+const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
+
+test('Pi indexes every tree branch and projects current context through visibility', () => {
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v3__');
   const root = mkdtempSync(join(tmpdir(), 'trajex-pi-'));
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -25,23 +27,23 @@ test('Pi indexes every tree branch and marks non-current messages as sidechain',
     { type: 'message', id: 'current', parentId: 'n1', timestamp: '2026-07-30T10:00:07.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'kept answer' }], usage: { input: 4, output: 2 } } },
   ];
   writeFileSync(path, entries.map(JSON.stringify).join('\n') + '\n');
-  const provider = createPiProvider({ rootDir: root });
+  const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
   const unit = provider.discover({ lastCursor: () => null })[0];
-  assert.equal(unit.sessionId, 'pi:session-1');
+  assert.equal(unit.sessionId, SESSION_ID);
   const records = drain(provider.parse(unit, null));
   const messages = records.filter(record => record.kind === 'message');
   assert.deepEqual(messages.map(record => record.text), ['keep prompt', 'reason', null, 'file body', 'abandoned branch', 'kept answer']);
   assert.deepEqual(messages.at(-1).input_tokens, 4);
   assert.deepEqual(messages.at(-1).output_tokens, 2);
-  assert.equal(messages.find(record => record.text === 'abandoned branch').is_sidechain, 1);
-  assert.equal(messages.find(record => record.text === 'kept answer').is_sidechain, 0);
-  assert.deepEqual(records.filter(record => record.kind === 'tool_call').map(record => record.id), ['pi:session-1:call-1']);
-  assert.deepEqual(records.filter(record => record.kind === 'tool_result').map(record => record.tool_use_id), ['pi:session-1:call-1']);
+  assert.equal(messages.find(record => record.text === 'abandoned branch').visibility, 'inactive');
+  assert.equal(messages.find(record => record.text === 'kept answer').visibility, 'visible');
+  assert.deepEqual(records.filter(record => record.kind === 'tool_call').map(record => record.id), [`${SESSION_ID}:call-1`]);
+  assert.deepEqual(records.filter(record => record.kind === 'tool_result').map(record => record.tool_use_id), [`${SESSION_ID}:call-1`]);
   assert.deepEqual(records.filter(record => record.kind === 'summary').map(record => ({ source: record.source, content: record.content })), [
     { source: 'compaction', content: 'earlier work' },
     { source: 'branch_summary', content: 'abandoned branch summary' },
   ]);
-  assert.deepEqual(records.find(record => record.kind === 'session' && record.id === 'pi:session-1'), { kind: 'session', id: 'pi:session-1', title: 'Pi fixture', project: '-tmp-project', started_at: '2026-07-30T10:00:00.000Z', ended_at: '2026-07-30T10:00:07.000Z', git_branch: null, version: '3', message_count: 6, countMode: 'total', jsonl_path: path, source: 'pi' });
+  assert.deepEqual(records.find(record => record.kind === 'session' && record.id === SESSION_ID), { kind: 'session', id: SESSION_ID, title: 'Pi fixture', project: '-tmp-project', started_at: '2026-07-30T10:00:00.000Z', ended_at: '2026-07-30T10:00:07.000Z', git_branch: null, version: '3', message_count: 6, countMode: 'total', jsonl_path: path, source: 'pi' });
 });
 
 test('Pi discovers standard top-level v3 sessions and ignores a torn final line', () => {
@@ -53,7 +55,7 @@ test('Pi discovers standard top-level v3 sessions and ignores a torn final line'
   writeFileSync(join(projectDir, 'nested', 'subagents', 'ignored.jsonl'), `${JSON.stringify({ type: 'session', version: 3, id: 'nested' })}\n`);
   appendFileSync(path, '{"type":"message"');
 
-  const provider = createPiProvider({ rootDir: root });
+  const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
   const [unit] = provider.discover({ lastCursor: () => null });
   assert.equal(unit.key, path);
   assert.equal(provider.discover({ lastCursor: () => '9999999999999:1' }).length, 0);
@@ -71,7 +73,7 @@ test('Pi rejects a malformed complete JSONL line instead of deleting valid histo
     JSON.stringify({ type: 'message', id: 'after', parentId: null, message: { role: 'user', content: 'must not index' } }),
   ].join('\n') + '\n');
 
-  const provider = createPiProvider({ rootDir: root });
+  const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
   const unit = provider.discover({ lastCursor: () => null })[0];
   assert.throws(() => drain(provider.parse(unit, null)), /Pi session: corrupted line 2/);
 });
@@ -87,8 +89,73 @@ test('Pi treats a cyclic model parent chain as an unknown model', () => {
     JSON.stringify({ type: 'message', id: 'b', parentId: 'a', message: { role: 'user', content: 'second' } }),
   ].join('\n') + '\n');
 
-  const provider = createPiProvider({ rootDir: root });
+  const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
   const unit = provider.discover({ lastCursor: () => null })[0];
   const messages = drain(provider.parse(unit, null)).filter(record => record.kind === 'message');
   assert.deepEqual(messages.map(record => record.model), [null, null]);
+});
+
+test('Pi durable leaf selects the target branch instead of the last physical entry', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-leaf-'));
+  const dir = join(root, 'sessions', '--project--');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'leaf-session', cwd: '/tmp/project' },
+    { type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'root' } },
+    { type: 'message', id: 'active', parentId: 'root', message: { role: 'assistant', content: [{ type: 'text', text: 'active answer' }] } },
+    { type: 'message', id: 'abandoned', parentId: 'root', message: { role: 'assistant', content: [{ type: 'text', text: 'abandoned answer' }] } },
+    { type: 'leaf', id: 'leaf', parentId: 'abandoned', targetId: 'active' },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  const messages = drain(provider.parse(unit, null)).filter(record => record.kind === 'message');
+  assert.equal(messages.find(record => record.text === 'active answer').visibility, 'visible');
+  assert.equal(messages.find(record => record.text === 'abandoned answer').visibility, 'inactive');
+});
+
+test('Pi active compaction projects retainedTail messages and discards compacted ancestors', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-retained-tail-'));
+  const dir = join(root, 'sessions', '--project--');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'tail-session', cwd: '/tmp/project' },
+    { type: 'message', id: 'old', parentId: null, message: { role: 'user', content: 'old context' } },
+    { type: 'message', id: 'old-answer', parentId: 'old', message: { role: 'assistant', content: [{ type: 'text', text: 'old answer' }] } },
+    { type: 'compaction', id: 'compact', parentId: 'old-answer', summary: 'compacted context', retainedTail: [
+      { role: 'user', content: 'retained user' },
+      { role: 'assistant', content: [{ type: 'text', text: 'retained answer' }] },
+    ] },
+    { type: 'message', id: 'after', parentId: 'compact', message: { role: 'user', content: 'after compaction' } },
+    { type: 'leaf', id: 'leaf', parentId: 'after', targetId: 'after' },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  const messages = drain(provider.parse(unit, null)).filter(record => record.kind === 'message');
+  assert.deepEqual(messages.map(record => record.text), ['retained user', 'retained answer', 'after compaction']);
+  assert.equal(messages.every(record => record.visibility === 'visible'), true);
+});
+
+test('Pi legacy compaction keeps the firstKeptEntryId boundary', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-first-kept-'));
+  const dir = join(root, 'sessions', '--project--');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'first-kept-session', cwd: '/tmp/project' },
+    { type: 'message', id: 'old', parentId: null, message: { role: 'user', content: 'discarded context' } },
+    { type: 'message', id: 'kept', parentId: 'old', message: { role: 'assistant', content: [{ type: 'text', text: 'kept context' }] } },
+    { type: 'compaction', id: 'compact', parentId: 'kept', firstKeptEntryId: 'kept', summary: 'compacted context' },
+    { type: 'message', id: 'after', parentId: 'compact', message: { role: 'user', content: 'after compaction' } },
+    { type: 'leaf', id: 'leaf', parentId: 'after', targetId: 'after' },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  const messages = drain(provider.parse(unit, null)).filter(record => record.kind === 'message');
+  assert.deepEqual(messages.map(record => record.text), ['kept context', 'after compaction']);
+  assert.equal(messages[0].parent_uuid, null);
 });

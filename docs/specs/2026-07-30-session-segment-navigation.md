@@ -1,5 +1,15 @@
 # 会话右侧分段导航
 
+Hover-driven Interactive Minimap Page Navigation 悬停驱动的交互式迷你地图页面导航
+
+其中关键术语是：
+
+* Minimap Page Navigation：页面内容的缩略导航
+* Proximity-based Interaction：基于距离的交互反馈
+* Fisheye Effect：靠近指针的项目局部放大
+* Hover Reveal：悬停后显示波峰、高亮和章节标签
+* Stable Scroll State：滚动不改变导航的默认视觉状态
+
 ## 目标
 
 在 Session 详情页以固定在右侧的短横线导航，替代浏览器原生滚动条和底部消息分页器。短横线提供当前阅读位置，以及按对话轮次跳转的入口，视觉接近 Codex 的会话导航。

@@ -47,7 +47,6 @@ subagents/workflows/<run-id>/<agent-id>.jsonl
 | `timestamp` | ISO 8601 string | 条目时间；并非每种条目都有。 |
 | `sessionId` | string | 来源写入的会话 ID；Trajex 仅保留消息事实，不以它决定归属。 |
 | `agentId` | string | 子代理的原始 ID；对子代理文件，Trajex 优先使用文件名中的 agent ID。 |
-| `isSidechain` | boolean | 原始行的旁支标记。Trajex 原样映射为 `messages.is_sidechain`。 |
 | `cwd` | string | 消息产生时的工作目录，是 Trajex 推断 `sessions.project_path` 的证据。 |
 | `version` | string | Claude Code 版本。 |
 | `gitBranch` | string | 当时 Git 分支。 |
@@ -139,7 +138,7 @@ Trajex 将 Claude 的 `user` / `assistant` 消息以 `visibility: "visible"` 写
 
 若 meta 消息的正文符合 skill instruction 的结构，`content_type` 会进一步标为 `skill_instructions`。`attributionSkill` 会保存到 `messages.skill`。
 
-Trajex 的 `input_tokens` 是 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` 中所有存在数值的和；`output_tokens` 直接取来源值。`is_sidechain` 直接来自 `obj.isSidechain`，不由文件是否属于子代理推断。
+Trajex 的 `input_tokens` 是 `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` 中所有存在数值的和；`output_tokens` 直接取来源值。Claude 的 `isSidechain` 不进入 Trajex 的 canonical 或 raw 投影；子代理关系由 `agent_id` 表达。
 
 对于子代理文件，`messages.agent_id` 使用文件名中的 agent ID；对于主文件，通常为 `null`，但若某一行顶层存在 `obj.agentId`，代码会保留该值。
 

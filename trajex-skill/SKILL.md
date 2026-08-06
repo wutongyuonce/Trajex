@@ -14,14 +14,18 @@ allowed-tools:
 # trajex
 
 Search and query Claude Code, Codex, and Pi session history from their configured local transcript roots.
-Defaults are `~/.claude/`, `~/.codex/`, and Pi's resolved sessions directory.
+Defaults are `~/.claude/`, `~/.codex/`, and Pi's `~/.pi/agent/sessions`.
+Pi may additionally use a session directory selected in App Settings; the
+configured value is already the final session directory, not an agent root.
+Trajex does not use provider environment-variable or CLI path overrides.
 Trajex indexes sessions, messages, tool calls, tool results, summaries, subagents, workflows, workflow agents, parent chains, and raw JSONL lines into SQLite + FTS5.
 
 Trajex has three transcript sources. Treat all as ordinary sessions by default:
 Claude rows use `source='claude'`; Codex and Pi rows use `source='codex'` and `source='pi'`, with provider-prefixed IDs.
 Use `source` only when provenance matters or the user asks to scope to one provider.
 Codex can project child agents into `subagents`.
-Pi support covers standard top-level official v3 session files only and does not index deeper nested subagent run transcripts.
+Pi support covers official v3 session files recursively. Pi branches are projected
+through `message.visibility`; there is no canonical sidechain field.
 
 Trajex is a CodeAct memory layer: write a small JS query, run it locally, read the JSON, then answer.
 Do not turn history into a flat document or browse entire sessions by default.
@@ -120,7 +124,7 @@ messages.
 Returns:
 
 ```js
-[{ message: { uuid, text, content_type, is_meta, role, timestamp, model, cwd, source },
+[{ message: { uuid, text, content_type, is_meta, visibility, role, timestamp, model, cwd, source },
    session: { id, title, project, started_at, source },
    rank,
    context }]
@@ -142,7 +146,12 @@ Use `message.is_meta` to separate transcript control-plane material from convers
 `is_meta=1` marks injected caveats, command envelopes, or other messages that entered the transcript as user-role content but should not be treated as the user's request by default.
 `search()` and `thread()` omit meta messages unless `includeMeta: true` is passed; `context()` and `trace()` preserve the original chain and expose `is_meta` on rows.
 
-Opts: `{ limit, sessionId, project, after, before, cwd, source, includeMeta }`.
+`visibility` is `visible`, `inactive`, or `hidden`. Ordinary retrieval returns
+`visible` rows; pass `includeInactive: true` when investigating superseded Pi
+branches. `hidden` rows remain source evidence but are excluded from normal
+conversation display.
+
+Opts: `{ limit, sessionId, project, after, before, cwd, source, includeMeta, includeInactive }`.
 
 `project` is a SQL `LIKE` filter over `sessions.project`, not an exact project identity.
 Results are already ordered by FTS5 rank; lower rank sorts earlier.
@@ -202,7 +211,7 @@ filters or return fields.
 - `fileHistory(filePath, opts?)` -- Read/Edit/Write tool calls for a file, oldest first; includes many `Read` rows.
 - `failures(opts?)` -- failed tool results with tool/session context, newest first.
 - `trace(uuid)` -- parent chain from root to message.
-- `thread(sessionId, opts?)` -- session messages ordered by timestamp, omitting meta messages by default. Pass `{ includeMeta: true }` when investigating injected context or command envelopes.
+- `thread(sessionId, opts?)` -- session messages ordered by timestamp, omitting meta and inactive messages by default. Pass `{ includeMeta: true, includeInactive: true }` when investigating injected context or superseded Pi branches.
 - `raw(uuid, opts?)` -- windowed access to the original JSONL line; `offset` and
   `limit` must be finite non-negative numbers.
 - `memories(opts?)` -- recall memory layer. opts: `{ query, project, sessionId, sessions, after, before, branch, limit }`. Without `query`, returns active memory records newest first. With `query`, searches `summary`/`path` through safe FTS5 tokenization and returns `rank`; lower rank sorts earlier. Read the file at `path` for full content.

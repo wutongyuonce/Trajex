@@ -400,7 +400,7 @@ test('runtime skips Codex child threads', () => {
         messageCount: sa.messageCount
       })),
       childMessages: sql(
-        'SELECT session_id, agent_id, is_sidechain, source, text FROM messages WHERE agent_id=? ORDER BY timestamp, uuid',
+        'SELECT session_id, agent_id, visibility, source, text FROM messages WHERE agent_id=? ORDER BY timestamp, uuid',
         ${JSON.stringify(`codex:${childId}`)}
       )
     };

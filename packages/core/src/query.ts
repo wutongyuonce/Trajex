@@ -29,6 +29,7 @@ interface QueryOptions extends Record<string, any> {
   branch?: string;         // git 分支过滤
   source?: string;         // Provider 来源过滤；'all' 表示不过滤
   includeMeta?: boolean;   // 是否包含 meta（System 卡片）消息；默认剔除
+  includeInactive?: boolean; // 是否包含已被替代但保留的消息；默认剔除
   query?: string;          // FTS 检索词（memories() 用）
   projectLimit?: number;   // overview 专用：项目列表条数
   memoryLimit?: number;    // overview 专用：记忆列表条数
@@ -166,7 +167,7 @@ function createQueryApi(
 
   /** 以 FTS5 检索消息，并附带命中点附近的会话上下文。 */
   const search = (text: string, opts: QueryOptions = {}) => {
-    const { sessionId, project, after, before, cwd, source, includeMeta = false } = opts;
+    const { sessionId, project, after, before, cwd, source, includeMeta = false, includeInactive = false } = opts;
     const limit = normalizeLimit(opts.limit, 20);
     let where = 'WHERE mf.text MATCH ?';
     const filterParams: any[] = [];
@@ -177,8 +178,9 @@ function createQueryApi(
     if (cwd)       { where += ' AND m.cwd LIKE ?';     filterParams.push(cwd); }
     if (source && source !== 'all') { where += " AND COALESCE(m.source, s.source, 'claude')=?"; filterParams.push(source); }
     if (!includeMeta) where += ' AND COALESCE(m.is_meta,0)=0';
+    where += includeInactive ? " AND m.visibility != 'hidden'" : " AND m.visibility = 'visible'";
     const stmt = db.prepare(`
-      SELECT m.uuid,m.session_id,m.text,m.content_type,m.is_meta,m.role,m.timestamp,m.model,m.cwd,m.source as m_source,
+      SELECT m.uuid,m.session_id,m.text,m.content_type,m.is_meta,m.visibility,m.role,m.timestamp,m.model,m.cwd,m.source as m_source,
              s.id as s_id,s.title as s_title,s.project as s_project,s.started_at as s_started,
              s.source as s_source,
              rank
@@ -195,13 +197,13 @@ function createQueryApi(
       rows = safe ? runMatch(safe) : [];
     }
     return rows.map((r: DbRow) => {
-      const metaClause = includeMeta ? '' : 'AND COALESCE(is_meta,0)=0';
+      const metaClause = `${includeMeta ? '' : 'AND COALESCE(is_meta,0)=0'} ${includeInactive ? "AND visibility != 'hidden'" : "AND visibility = 'visible'"}`;
       const ctx = db.prepare(
-        `SELECT uuid,text,content_type,is_meta,role,timestamp,model,COALESCE(source, 'claude') as source FROM messages WHERE session_id=? AND uuid!=? ${metaClause} ORDER BY ABS(JULIANDAY(timestamp)-JULIANDAY(?)) LIMIT 6`
+        `SELECT uuid,text,content_type,is_meta,visibility,role,timestamp,model,COALESCE(source, 'claude') as source FROM messages WHERE session_id=? AND uuid!=? ${metaClause} ORDER BY ABS(JULIANDAY(timestamp)-JULIANDAY(?)) LIMIT 6`
       ).all(r.session_id, r.uuid, r.timestamp).sort((a: DbRow, b: DbRow) => a.timestamp < b.timestamp ? -1 : 1);
       const sourceValue = r.m_source || r.s_source || 'claude';
       return {
-        message: { uuid: r.uuid, text: r.text, content_type: r.content_type, is_meta: r.is_meta || 0, role: r.role, timestamp: r.timestamp, model: r.model, cwd: r.cwd, source: sourceValue },
+        message: { uuid: r.uuid, text: r.text, content_type: r.content_type, is_meta: r.is_meta || 0, visibility: r.visibility, role: r.role, timestamp: r.timestamp, model: r.model, cwd: r.cwd, source: sourceValue },
         session: { id: r.s_id, title: r.s_title, project: r.s_project, started_at: r.s_started, source: r.s_source || sourceValue },
         rank: r.rank,
         context: ctx,
@@ -249,8 +251,9 @@ function createQueryApi(
   /** 单个 session 内按时间排序的全部消息（默认剔除 meta）。 */
   const thread = (sid: string, opts: QueryOptions = {}) => {
     const includeMeta = opts?.includeMeta === true;
+    const visibilityClause = opts?.includeInactive ? "AND visibility != 'hidden'" : "AND visibility = 'visible'";
     const metaClause = includeMeta ? '' : 'AND COALESCE(is_meta,0)=0';
-    return db.prepare(`SELECT * FROM messages WHERE session_id=? ${metaClause} ORDER BY timestamp`).all(sid);
+    return db.prepare(`SELECT * FROM messages WHERE session_id=? ${metaClause} ${visibilityClause} ORDER BY timestamp`).all(sid);
   };
 
   /** 列出子代理，并附带各自的 messageCount。 */

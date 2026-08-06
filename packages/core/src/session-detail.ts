@@ -26,6 +26,7 @@ import type {
   ToolResultRecord,
   WorkflowAgentRecord,
   WorkflowRecord,
+  MessageVisibility,
 } from './providers/types.ts';
 
 /** 去掉判别字段 kind 后的记录主体。 */
@@ -40,6 +41,7 @@ export interface SessionDetailMessage {
   text: string | null;
   content_type: string | null;
   is_meta: 0 | 1;
+  visibility: MessageVisibility;
   turn_duration_ms: number | null;
 }
 
@@ -425,6 +427,7 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
           text: record.text,
           content_type: record.content_type,
           is_meta: record.is_meta,
+          visibility: record.visibility,
           // turn_duration_ms 不随 message 事件带出时保持 null，稍后由
           // message-turn-duration 事件按 uuid 回填。
           turn_duration_ms: typeof (record as MessageRecord & { turn_duration_ms?: unknown }).turn_duration_ms === 'number'
@@ -563,9 +566,8 @@ function sessionDetailRecordsFromRows(input: SessionDetailRows): TranscriptRecor
       text: typeof message.text === 'string' ? message.text : null,
       content_type: typeof message.content_type === 'string' ? message.content_type : null,
       is_meta: message.is_meta ? 1 : 0,
-      visibility: message.visibility === 'hidden' ? 'hidden' : 'visible',
+      visibility: message.visibility === 'inactive' ? 'inactive' : message.visibility === 'hidden' ? 'hidden' : 'visible',
       model: typeof message.model === 'string' ? message.model : null,
-      is_sidechain: message.is_sidechain ? 1 : 0,
       agent_id: typeof message.agent_id === 'string' ? message.agent_id : null,
       input_tokens: typeof message.input_tokens === 'number' ? message.input_tokens : null,
       output_tokens: typeof message.output_tokens === 'number' ? message.output_tokens : null,

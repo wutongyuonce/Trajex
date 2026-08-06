@@ -314,7 +314,7 @@ function buildIndex({
       }, 0);
 
       try {
-        if (force) {
+        if (providerPlan.fullRebuild) {
           runRetryableWriteTransaction(txDb, () => {
             dropMessageFtsTriggers(db);
             db.prepare("DELETE FROM index_state WHERE substr(jsonl_path, 1, 2) != '__'").run();

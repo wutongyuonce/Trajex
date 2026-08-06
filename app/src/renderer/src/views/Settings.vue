@@ -8,6 +8,7 @@ const dbPath = ref('');
 const autoRefresh = ref(true);
 const memoryCount = ref(0);
 const rebuilding = ref(false);
+const rebuildError = ref('');
 const version = ref('');
 
 onMounted(async () => {
@@ -47,11 +48,14 @@ async function saveSetting(key, value) {
 async function rebuildIndex() {
   if (rebuilding.value || !window.trajex?.rebuildIndex) return;
   rebuilding.value = true;
+  rebuildError.value = '';
   await nextTick();
   await new Promise(resolve => requestAnimationFrame(resolve));
   try {
     await window.trajex.rebuildIndex();
     await loadSettings();
+  } catch (error) {
+    rebuildError.value = error instanceof Error ? error.message : String(error);
   } finally {
     rebuilding.value = false;
   }
@@ -174,6 +178,7 @@ function fmtRelative(iso) {
             <div class="reset-hint">
               Rebuilding re-reads your coding agent session data. It does not delete memories.
             </div>
+            <div v-if="rebuildError" class="reset-error">{{ rebuildError }}</div>
           </div>
         </div>
       </section>
@@ -339,6 +344,8 @@ function fmtRelative(iso) {
 .version-text {
   font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); padding-top: 6px;
 }
+
+.reset-error { margin-top: 8px; color: #f87171; font-size: 11.5px; }
 .reset-actions { display: flex; gap: 8px; }
 .reset-hint {
   font-size: 11.5px; color: var(--muted); margin-top: 6px;

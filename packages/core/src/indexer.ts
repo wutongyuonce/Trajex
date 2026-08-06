@@ -18,6 +18,7 @@ import { nodeSqliteTransactionAdapter } from './tx.ts';
 import { acquireWriterLease, writerLockPathFor } from './writer-lease.ts';
 import { runRetryableWriteTransaction, isBeginBusyFailure, hasUnusableTransaction } from './write-coordinator.ts';
 import { createBuiltinProviderRegistry } from './providers/builtins.ts';
+import { coreSchemaNeedsMigration } from './schema-migrations.ts';
 import type { NodeSqliteDb, SqliteRow } from './sqlite-types.ts';
 
 /** 单个失败 unit 的摘要：路径 + 错误消息 + 可选 trajex 诊断。 */
@@ -91,7 +92,9 @@ function inspectBuildOwnership({ force = false }: { force?: boolean } = {}) {
   if (!existsSync(DB_PATH)) return { skip: false };
   const db = openReadDb();
   try {
-    return shouldSkipBuild(db, { ignoreRecentBuild: force });
+    const ownership = shouldSkipBuild(db, { ignoreRecentBuild: force });
+    if (!ownership.skip || ownership.reason === 'daemon_active') return ownership;
+    return coreSchemaNeedsMigration(db) ? { skip: false } : ownership;
   } catch (error) {
     // A missing table means the write path must initialize a new/legacy index.
     // Any other read failure leaves daemon ownership unknown, so fail closed.
@@ -122,9 +125,10 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
     const db = openDb();
     const txDb = nodeSqliteTransactionAdapter(db);
     const skippedFiles: SkippedFile[] = [];
+    const providerPlan = createProviderIndexPlan(db, createBuiltinProviderRegistry(), { force });
     try {
       try {
-        if (force) {
+        if (providerPlan.fullRebuild) {
           runRetryableWriteTransaction(txDb, () => {
             db.prepare("DELETE FROM index_state WHERE jsonl_path != '__last_build__'").run();
             // Clearing index_state alone re-indexes existing files but leaves rows for
@@ -144,8 +148,6 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
         throw error;
       }
 
-      const registry = createBuiltinProviderRegistry();
-      const providerPlan = createProviderIndexPlan(db, registry, { force });
       const providerResult = indexProviderPlan({
         db,
         plan: providerPlan,

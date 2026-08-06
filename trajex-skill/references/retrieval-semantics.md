@@ -41,6 +41,13 @@ Project-like fields are distinct:
 - helper `project`: SQL `LIKE` over `sessions.project`, not exact membership.
 - helper `source`: optional provider filter. Omit it unless provenance matters.
 
+Visibility is a separate evidence boundary: `visible` is the current provider
+context, `inactive` is retained superseded context (notably a Pi branch), and
+`hidden` is source-suppressed content. Search and timeline helpers should use
+visible rows by default; opt into inactive rows with `includeInactive` when the
+question is about abandoned branches or transcript structure. Do not use
+`is_sidechain` or infer branch state from `agent_id`.
+
 For exact project membership, prefer helper filters or a scoped first pass when
 they are expressive enough; use `sql()` with `s.project = ?` or
 `s.project_path = ?` when you need exact membership across a join or

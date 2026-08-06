@@ -33,16 +33,17 @@ test('app indexes configured Pi sessions through the provider registry', () => {
   const options = {
     claudeDir: join(home, 'empty-claude'),
     codexDir: join(home, 'empty-codex'),
-    providerRoots: { pi: piDir },
+    providerRoots: { pi: join(piDir, 'sessions') },
     dbPath,
     DatabaseImpl: TestDatabase,
   };
-  assert.deepEqual(buildIndex(options).affectedSessionIds, ['pi:app-pi-session']);
+  const sessionId = 'pi:app-pi-session:5b355add63649069dd69108f114465e7fd6e6949cd50bba6ceb122676cc0e2b1';
+  assert.deepEqual(buildIndex(options).affectedSessionIds, [sessionId]);
 
   const db = new TestDatabase(dbPath);
   assert.deepEqual(
     db.prepare('SELECT id,title,source,message_count FROM sessions').all().map(row => ({ ...row })),
-    [{ id: 'pi:app-pi-session', title: 'App Pi fixture', source: 'pi', message_count: 1 }],
+    [{ id: sessionId, title: 'App Pi fixture', source: 'pi', message_count: 1 }],
   );
   assert.equal(db.prepare('SELECT text FROM messages').get().text, 'app Pi index needle');
   assert.doesNotMatch(db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'").get().sql, /\bpi\b/i);

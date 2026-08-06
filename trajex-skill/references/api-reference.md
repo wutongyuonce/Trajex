@@ -62,12 +62,13 @@ Full-text search across all indexed message text using FTS5.
 | `opts.cwd` | `string` | SQL `LIKE` filter over `messages.cwd` |
 | `opts.source` | `string` | `"claude"`, `"codex"`, `"pi"`, or omitted/all |
 | `opts.includeMeta` | `boolean` | Include `is_meta=1` rows, default false |
+| `opts.includeInactive` | `boolean` | Include `visibility='inactive'` rows, default false |
 
 Returns:
 
 ```js
 Array<{
-  message: { uuid, text, content_type, is_meta, role, timestamp, model, cwd, source },
+  message: { uuid, text, content_type, is_meta, visibility, role, timestamp, model, cwd, source },
   session: { id, title, project, started_at, source },
   rank,
   context
@@ -75,6 +76,8 @@ Array<{
 ```
 
 `context` is temporal neighbor context in the same session, not a parent chain.
+By default, results include only `visibility='visible'`; pass `includeInactive`
+to inspect retained superseded Pi branch evidence. `hidden` remains excluded.
 Use `context(uuid)` or `trace(uuid)` for causal/parent-chain expansion. Lower
 FTS rank sorts earlier; prefer returned order unless deliberately inspecting
 FTS ranking.
@@ -282,6 +285,7 @@ Messages in a session ordered by timestamp.
 | --- | --- | --- |
 | `sessionId` | `string` | Session ID |
 | `opts.includeMeta` | `boolean` | Include injected/control-plane rows, default false |
+| `opts.includeInactive` | `boolean` | Include retained superseded rows, default false |
 
 Returns `Array<message>`. Use `thread()` as a last resort; prefer targeted
 search/context or compact SQL projections.

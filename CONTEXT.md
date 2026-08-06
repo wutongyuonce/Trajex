@@ -41,11 +41,20 @@ consumed by the app (whose Electron runtime has no `node:sqlite`).
 _Avoid_: parse core, parser, ingest
 
 **Pi session**:
-One JSONL file below `~/.pi/agent/sessions/`. Its entries form a tree; Trajex
-indexes every branch and marks entries outside the latest leaf path as a
-sidechain. The session reader presents the current path by default and lets a
-reader expand the other branches.
+One official Pi v3 JSONL file below the configured session directory. The
+default is `~/.pi/agent/sessions`; an App setting may point directly to another
+session directory. Its entries form a tree with a durable leaf and may contain compaction checkpoints. Trajex
+projects the source-declared active context into `visibility`: current context
+is visible, superseded branch evidence is inactive, and source-suppressed
+transport context is hidden.
 _Avoid_: Pi project, Pi directory
+
+**Visibility**:
+The canonical evidence state of a message or summary: `visible` belongs to the
+current provider context, `inactive` is retained evidence superseded by that
+context, and `hidden` is source-suppressed content omitted from the normal
+detail surface.
+_Avoid_: sidechain flag, display boolean
 
 **Transcript record**:
 One provider-normalized fact (session, message, tool call, tool result, summary,

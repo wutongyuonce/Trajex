@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.2.3]
+
+### Added
+
+- 支持官方 Pi v3 session JSONL 的递归发现、durable leaf、`firstKeptEntryId` 和 `retainedTail` compaction 重放。
+- 为查询 API 增加 `includeInactive`，可显式检索已被替代的 Pi 分支证据。
+- App 详情页支持展开 inactive 分支，并保留 hidden 内容的来源级隐藏语义。
+
+### Changed
+
+- 将 Claude、Codex、Pi 的 canonical transcript projection marker 统一升级到 v3；检测到旧 projection 时自动执行完整 canonical rebuild。
+- Pi session ID 改为由规范化 `cwd` 与 header `id` 共同确定，避免不同项目复用 session ID 时合并。
+- Pi App 配置改为直接保存最终 session directory，默认路径为 `~/.pi/agent/sessions`；Trajex 不读取 provider 环境变量或 CLI 路径参数。
+- 搜索和 thread 默认只返回 `visibility='visible'`，`hidden` 始终排除。
+- Summary 卡片支持 Markdown 渲染，并继续通过安全清洗链过滤危险 HTML。
+- 稳定 App indexer watcher 的生命周期；重新开启 auto-refresh 时立即补做一次 build，rebuild 收尾时依据最新设置恢复 watcher。
+
+### Removed
+
+- **BREAKING:** 从 Claude、Codex、Pi 的 canonical record、SQLite schema 和 App 查询中移除 `is_sidechain`，统一使用 `visibility` 表达 `visible`、`inactive` 和 `hidden`。
+- **BREAKING:** Pi 仅支持官方 v3 session 格式，不再保留旧版本统一转换语义。
+
+### Fixed
+
+- 修复 Pi active branch 取最后一条物理 entry 的问题，改为按 durable leaf 解析当前分支。
+- 修复 Pi compaction 后仍展示已压缩祖先消息的问题，并正确投影 retained tail 消息。
+- 旧数据库启动迁移时自动删除遗留的 `messages.is_sidechain` 列。
+- 修复旧数据库在 recent build marker 存在时跳过 schema migration，导致查询读取不到新列的问题。
+- Settings 页面现在会显示 rebuild 失败原因，避免索引重建失败后无反馈。
+
 ## [0.2.2]
 
 ### Added

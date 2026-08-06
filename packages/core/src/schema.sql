@@ -33,9 +33,8 @@ CREATE TABLE IF NOT EXISTS messages (
   text TEXT,                       -- 消息文本内容（FTS 搜索列）
   content_type TEXT,               -- text / thinking / tool_use / unknown / skill_instructions
   is_meta INTEGER DEFAULT 0,       -- 1 = 系统生成的 meta 消息（如 system-reminder）
-  visibility TEXT DEFAULT 'visible', -- visible / hidden（hidden 的消息仅在原始文件可见）
+  visibility TEXT DEFAULT 'visible', -- visible / inactive / hidden
   model TEXT,                      -- 使用的 AI 模型名
-  is_sidechain INTEGER DEFAULT 0,  -- 1 = 子代理线程的消息（非主会话）
   agent_id TEXT,                   -- 所属子代理 ID（非空时表示是子代理消息）
   input_tokens INTEGER,            -- 该消息的输入 token 数（含 cache）
   output_tokens INTEGER,           -- 该消息的输出 token 数

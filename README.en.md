@@ -43,9 +43,9 @@ Trajex indexes every provider into the same SQLite schema rather than maintainin
 
 Codex root threads become regular Trajex sessions. When parent-thread metadata is available, Codex child threads attach through the same `subagents` table. Codex does not emit Claude-style workflow metadata, so workflow-related tables may be empty when only Codex history is present.
 
-Each Pi session JSONL file becomes a Trajex session. Pi session entries form a tree, so Trajex preserves all branches and marks messages not on the latest leaf path as sidechains; the detail view collapses these other branches by default.
+Each official Pi v3 session JSONL file becomes a Trajex session. Pi entries form a tree, so Trajex resolves the durable leaf and compaction forms, including retained tails: current context is `visible`, superseded branch evidence is `inactive`, and source-suppressed transport context is `hidden`. The detail view shows visible records by default and lets readers explicitly expand inactive evidence.
 
-To support live app refresh, Trajex watches each registered provider's declared roots, including `~/.claude/projects`, `~/.codex/sessions`, and `~/.pi/agent/sessions`. When changing the Pi path in Settings, provide the Pi agent root; Trajex reads its `sessions` subdirectory. Codex's `session_index.jsonl` is used only as lightweight title/update metadata during indexing, not as a message transcript source.
+To support live app refresh, Trajex watches each registered provider's declared roots, including `~/.claude/projects`, `~/.codex/sessions`, and Pi's default `~/.pi/agent/sessions`. The Pi App Setting stores the actual session directory; it may point to the directory resolved from `PI_CODING_AGENT_DIR` or `PI_CODING_AGENT_SESSION_DIR`. Trajex does not read environment variables or CLI arguments, and does not append `agent/sessions` to the configured path. Codex's `session_index.jsonl` is used only as lightweight title/update metadata during indexing, not as a message transcript source.
 
 ## App and CLI Relationship
 
@@ -218,7 +218,7 @@ the artifacts are unsigned.
 
 | Layer | Source | Capture Content |
 |-------|--------|----------------|
-| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi `sessions/<project>/*.jsonl` | Title, project, timestamps, git branch, source |
+| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi recursive official v3 `*.jsonl` | Title, project, timestamps, git branch, source |
 | **Messages** | user + assistant turns | Full text, model, token usage, parent chain |
 | **Tool calls** | every tool invocation | Tool name, input, file paths |
 | **Subagents** | Claude `subagents/agent-<id>.jsonl`; Codex child threads | Agent type, description, full conversation |
@@ -237,7 +237,7 @@ packages/core/                # @trajex/core npm workspace (TypeScript + ESM)
 │   │   ├── types.ts          # Provider + TranscriptRecord contract
 │   │   ├── claude.ts         # Claude Code adapter (line-incremental)
 │   │   ├── codex.ts          # Codex adapter (full reparse)
-│   │   └── pi.ts             # Pi adapter (tree + sidechain projection)
+│   │   └── pi.ts             # Pi adapter (v3 context + visibility projection)
 │   ├── session-detail.ts     # Provider-independent transcript projection
 │   ├── persist.ts            # Binding-agnostic record writer (upsert/merge)
 │   ├── tx.ts                 # Write transaction + connection config

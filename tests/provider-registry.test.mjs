@@ -72,6 +72,6 @@ test('built-in provider registry exposes every source without caller-side branch
     '/sources/claude/projects',
     '/sources/codex/sessions',
     '/sources/codex/session_index.jsonl',
-    '/sources/pi/sessions',
+    '/sources/pi',
   ]);
 });

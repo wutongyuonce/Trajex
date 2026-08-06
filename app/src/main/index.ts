@@ -210,8 +210,9 @@ function appendWhere(sql, params, clause) {
 }
 
 function startIndexerService({ buildOnStart = false } = {}) {
+  if (indexerService) return indexerService;
   const paths = getRuntimePaths();
-  indexerService = createIndexerService({
+  const service = createIndexerService({
     projectsDir: paths.projectsDir,
     watchDirs: paths.providerRegistry.watchRoots(paths.providerRoots),
     buildIndex: async ({ reason, changedPaths }) => {
@@ -236,8 +237,9 @@ function startIndexerService({ buildOnStart = false } = {}) {
     },
     writeHeartbeat: () => writeHeartbeat({ dbPath: paths.dbPath }),
   });
-  indexerService.start({ buildOnStart });
-  return indexerService;
+  service.start({ buildOnStart });
+  indexerService = service;
+  return service;
 }
 
 function startBackgroundResources({ runStartupBuild = false } = {}) {
@@ -353,7 +355,7 @@ function querySessionMessages(sessionId: string): SessionMessageRow[] {
   if (!db) return [];
   return db.prepare(`
     SELECT m.uuid, m.session_id, m.type, m.parent_uuid, m.timestamp, m.role, m.text, m.model,
-           m.is_sidechain, m.agent_id, m.input_tokens, m.output_tokens, m.cwd, m.skill, m.turn_duration_ms,
+           m.agent_id, m.input_tokens, m.output_tokens, m.cwd, m.skill, m.turn_duration_ms,
            m.content_type, m.is_meta, m.visibility, m.source
     FROM messages m WHERE m.session_id = ? AND m.agent_id IS NULL ORDER BY m.timestamp, m.uuid
   `).all(sessionId) as SessionMessageRow[];
@@ -485,7 +487,7 @@ ipcMain.handle('db:getSubagentMessages', (_, agentId) => {
   if (!db) return [];
   return db.prepare(`
     SELECT m.uuid, m.session_id, m.type, m.parent_uuid, m.timestamp, m.role, m.text, m.model,
-           m.is_sidechain, m.agent_id, m.input_tokens, m.output_tokens, m.cwd, m.skill, m.turn_duration_ms,
+           m.agent_id, m.input_tokens, m.output_tokens, m.cwd, m.skill, m.turn_duration_ms,
            m.content_type, m.is_meta, m.visibility, m.source
     FROM messages m WHERE m.agent_id = ? ORDER BY m.timestamp, m.uuid
   `).all(agentId);
@@ -732,9 +734,9 @@ ipcMain.handle('settings:set', async (_, key, value) => {
   if (key === 'autoRefresh') {
     if (value === false && indexerService) {
       await stopIndexerServiceAndWait();
-    } else if (value !== false && indexerService) {
-      await stopIndexerServiceAndWait();
-      startIndexerService({ buildOnStart: false });
+    } else if (value !== false) {
+      if (indexerService) await stopIndexerServiceAndWait();
+      startIndexerService({ buildOnStart: true });
     }
   }
 
@@ -774,7 +776,6 @@ ipcMain.handle('settings:rebuildIndex', async () => {
   const persisted = loadPersistedSettings();
   const paths = getRuntimePaths(persisted);
   const tempDbPath = rebuildTempDbPath(paths.dbPath);
-  const shouldRestartWatcher = persisted.autoRefresh !== false;
   await stopIndexerServiceAndWait({ waitForIdle: false });
   if (indexerWorker) {
     await Promise.resolve(indexerWorker.stop());
@@ -833,7 +834,9 @@ ipcMain.handle('settings:rebuildIndex', async () => {
       }
     } finally {
       writerLease?.release();
-      if (shouldRestartWatcher) startIndexerService({ buildOnStart: false });
+      if (loadPersistedSettings().autoRefresh !== false) {
+        startIndexerService({ buildOnStart: false });
+      }
     }
   }
 });

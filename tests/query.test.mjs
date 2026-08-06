@@ -42,7 +42,7 @@ function searchDb() {
     CREATE TABLE messages (
       uuid TEXT PRIMARY KEY, session_id TEXT, text TEXT, role TEXT,
       timestamp TEXT, model TEXT, cwd TEXT, content_type TEXT,
-      is_meta INTEGER DEFAULT 0, source TEXT DEFAULT 'claude'
+      is_meta INTEGER DEFAULT 0, visibility TEXT DEFAULT 'visible', source TEXT DEFAULT 'claude'
     );
     CREATE VIRTUAL TABLE messages_fts USING fts5(
       uuid UNINDEXED, session_id UNINDEXED, text,
@@ -54,13 +54,14 @@ function searchDb() {
     VALUES (?, ?, ?, ?)
   `).run('sid-search', 'Search session', 'quiet-zero', '2026-06-10T10:00:00Z');
   const insert = db.prepare(`
-    INSERT INTO messages (uuid, session_id, text, role, timestamp, model, cwd, content_type, is_meta)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (uuid, session_id, text, role, timestamp, model, cwd, content_type, is_meta, visibility)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
-  insert.run('msg-meta', 'sid-search', 'needle injected caveat', 'user', '2026-06-10T10:00:30Z', null, '/tmp/quiet-zero', 'text', 1);
-  insert.run('msg-text', 'sid-search', 'needle visible reply', 'assistant', '2026-06-10T10:01:00Z', 'claude-opus', '/tmp/quiet-zero', 'text', 0);
-  insert.run('msg-meta-near', 'sid-search', '<command-name>/exit</command-name>', 'user', '2026-06-10T10:01:30Z', null, '/tmp/quiet-zero', 'text', 1);
-  insert.run('msg-thinking', 'sid-search', 'nearby reasoning trace', 'assistant', '2026-06-10T10:02:00Z', 'claude-opus', '/tmp/quiet-zero', 'thinking', 0);
+  insert.run('msg-meta', 'sid-search', 'needle injected caveat', 'user', '2026-06-10T10:00:30Z', null, '/tmp/quiet-zero', 'text', 1, 'visible');
+  insert.run('msg-text', 'sid-search', 'needle visible reply', 'assistant', '2026-06-10T10:01:00Z', 'claude-opus', '/tmp/quiet-zero', 'text', 0, 'visible');
+  insert.run('msg-meta-near', 'sid-search', '<command-name>/exit</command-name>', 'user', '2026-06-10T10:01:30Z', null, '/tmp/quiet-zero', 'text', 1, 'visible');
+  insert.run('msg-inactive', 'sid-search', 'needle superseded branch', 'assistant', '2026-06-10T10:01:45Z', 'claude-opus', '/tmp/quiet-zero', 'text', 0, 'inactive');
+  insert.run('msg-thinking', 'sid-search', 'nearby reasoning trace', 'assistant', '2026-06-10T10:02:00Z', 'claude-opus', '/tmp/quiet-zero', 'thinking', 0, 'visible');
   db.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
   return db;
 }
@@ -87,6 +88,7 @@ test('search exposes content_type on hits and temporal context', () => {
   assert.equal(rows[0].message.uuid, 'msg-text');
   assert.equal(rows[0].message.content_type, 'text');
   assert.equal(rows[0].message.is_meta, 0);
+  assert.equal(rows[0].message.visibility, 'visible');
   assert.equal(rows[0].context[0].uuid, 'msg-thinking');
   assert.equal(rows[0].context[0].content_type, 'thinking');
   assert.equal(rows[0].context[0].is_meta, 0);
@@ -104,9 +106,15 @@ test('search and thread omit meta messages by default and expose them on request
   assert.equal(withMeta[0].message.is_meta, 1);
 
   assert.deepEqual(api.thread('sid-search').map(m => m.uuid), ['msg-text', 'msg-thinking']);
+  assert.deepEqual(api.search('superseded', { limit: 5 }), []);
+  assert.deepEqual(api.search('superseded', { includeInactive: true, limit: 5 }).map(r => r.message.uuid), ['msg-inactive']);
   assert.deepEqual(
     api.thread('sid-search', { includeMeta: true }).map(m => m.uuid),
     ['msg-meta', 'msg-text', 'msg-meta-near', 'msg-thinking'],
+  );
+  assert.deepEqual(
+    api.thread('sid-search', { includeMeta: true, includeInactive: true }).map(m => m.uuid),
+    ['msg-meta', 'msg-text', 'msg-meta-near', 'msg-inactive', 'msg-thinking'],
   );
 
   db.close();

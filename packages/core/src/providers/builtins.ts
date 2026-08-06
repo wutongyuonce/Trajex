@@ -12,13 +12,13 @@ import { createProviderRegistry, type ProviderRegistry } from './registry.ts';
 export type BuiltinProviderRoots = Readonly<Record<string, string | undefined>>;
 
 /**
- * 创建默认 registry，并允许调用方替换各 Provider 根目录，主要服务测试、设置页和
- * 多环境部署；不改变 Provider 的解析语义。
+ * 创建默认 registry，并允许调用方替换各 Provider 数据目录，主要服务测试和设置页；
+ * Pi 的值是最终 session directory，Claude/Codex 的值是各自 provider root。
  */
 export function createBuiltinProviderRegistry(roots: BuiltinProviderRoots = {}): ProviderRegistry {
   return createProviderRegistry([
     createClaudeProvider({ rootDir: roots['claude'] }),
     createCodexProvider({ rootDir: roots['codex'] }),
-    createPiProvider({ rootDir: roots['pi'] }),
+    createPiProvider({ sessionDir: roots['pi'] }),
   ]);
 }

@@ -41,7 +41,7 @@ import type {
 } from './types.ts';
 
 export const name = 'codex';
-const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v2__';
+export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v3__';
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
 
@@ -193,7 +193,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       timestamp: timestamp || null, role, text: trunc(text),
       content_type: skillInstructions ? 'skill_instructions' : contentType,
       is_meta: visibility === 'hidden' || skillInstructions ? 1 : (isMeta || extractMessageIsMeta({}, text)), visibility,
-      model: currentModel, is_sidechain: 0, agent_id: null,
+      model: currentModel, agent_id: null,
       input_tokens: null, output_tokens: null, cwd: currentCwd, skill: null, source: 'codex',
     };
     out.push(rec);

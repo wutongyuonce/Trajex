@@ -1,12 +1,12 @@
 /**
  * SQLite schema 增量迁移模块。
  *
- * 模块定位：为已存在的 Trajex 索引补充新列，不重建数据表。openDb() 在执行完整
- * schema 前后调用它，使旧版本数据库能渐进升级。
+ * 模块定位：为已存在的 Trajex 索引补充新列并移除已废弃的 canonical 列。openDb()
+ * 在执行完整 schema 前后调用它，使旧版本数据库能渐进升级。
  */
 import type { SqliteDb } from './sqlite-types.ts';
 
-// 各表新增列的声明清单：[表名, 列名, 列定义]。只做加法迁移，不删除列、不改类型。
+// 各表新增列的声明清单：[表名, 列名, 列定义]。
 const COLUMN_MIGRATIONS = [
   ['sessions', 'source', "TEXT DEFAULT 'claude'"],
   ['messages', 'content_type', 'TEXT'],
@@ -20,9 +20,32 @@ const COLUMN_MIGRATIONS = [
   ['summaries', 'agent_id', 'TEXT'],
 ] as const;
 
+const OBSOLETE_COLUMNS = [
+  ['messages', 'is_sidechain'],
+] as const;
+
 /** 判断表是否已存在，避免对不存在的表执行 ALTER 报错。 */
 function tableExists(db: SqliteDb, table: string): boolean {
   return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table));
+}
+
+export function coreSchemaNeedsMigration(db: SqliteDb): boolean {
+  const columnsByTable = new Map<string, Set<string>>();
+  for (const [table, column] of COLUMN_MIGRATIONS) {
+    if (!tableExists(db, table)) return true;
+    let columns = columnsByTable.get(table);
+    if (!columns) {
+      columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => String(row.name)));
+      columnsByTable.set(table, columns);
+    }
+    if (!columns.has(column)) return true;
+  }
+  for (const [table, column] of OBSOLETE_COLUMNS) {
+    if (!tableExists(db, table)) continue;
+    const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => String(row.name)));
+    if (columns.has(column)) return true;
+  }
+  return false;
 }
 
 /**
@@ -41,5 +64,10 @@ export function migrateCoreSchemaColumns(db: SqliteDb): void {
     if (columns.has(column)) continue;
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     columns.add(column);
+  }
+  for (const [table, column] of OBSOLETE_COLUMNS) {
+    if (!tableExists(db, table)) continue;
+    const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => String(row.name)));
+    if (columns.has(column)) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
   }
 }

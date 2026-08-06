@@ -21,7 +21,7 @@ binding-agnostic and does not need a per-binding implementation.
 **Decision.** Split indexing along two orthogonal axes.
 
 - **Provider axis — a registry of pure adapters.** Each source (Claude Code,
-  Codex, Kimi Code, later Pi, …) is a provider adapter implementing one complete
+  Codex, Pi, and later sources) is a provider adapter implementing one complete
   boundary: serializable descriptor metadata, `watchRoots(root)`,
   `discover(context) → IndexUnit[]`, `parse(unit, cursor) → Iterable<Record>`,
   and `raw(lookup)`. An `IndexUnit` is deliberately not a file abstraction: Kimi
@@ -32,8 +32,9 @@ binding-agnostic and does not need a per-binding implementation.
   the provider semantics permit it. An adapter may buffer one complete
   `IndexUnit` when correctness requires whole-unit semantics — for example,
   Codex duplicate reconciliation or Kimi `context.undo` / `context.clear`
-  replay. Each adapter maps its own resume/change semantics onto the existing
-  `mtime` and `lines_processed` cursor pair in `index_state`. The emitted
+  replay. Each adapter maps its own resume/change semantics onto an opaque
+  provider cursor in `index_state`; a cursor may include fingerprints and
+  processed-line state when the provider supports incremental parsing. The emitted
   `TranscriptRecord` stream is also the input to provider-independent session
   detail assembly; see ADR-0007.
 - **Persist axis — one shared orchestration.** A single provider-agnostic,
@@ -43,6 +44,13 @@ binding-agnostic and does not need a per-binding implementation.
   drift on 2026-07-08. The database handle is *injected*, so `node:sqlite`
   (CLI) and `better-sqlite3` (app) run the same code — there is no
   per-binding persist layer.
+
+Provider adapters also own source-specific context projection. The canonical
+visibility states are `visible`, `inactive`, and `hidden`; providers emit the
+state before persistence, and shared layers do not infer it from message text
+or provider-specific branch flags. Pi is a v3-only full-replay provider: its
+durable leaf and compaction forms determine active context before records are
+emitted.
 
 **Two indexing modes** share all of the above and differ only in trigger:
 **daemon mode** (the app, and potentially a future CLI daemon, watches and keeps
@@ -62,7 +70,7 @@ The normalized `TranscriptRecord` union is the stable center of the design, and
 SQLite is one serialization adapter for it. Provider-only concepts are either
 projected lossily into that language or ignored. The registry,
 not provider switches, drives both indexers, watcher roots, persisted source
-roots, source catalog/UI labels and colors, and raw-record routing. Adding Pi
-therefore changes the Pi adapter, its registration, and its conformance tests;
-the shared schema, persist layer, indexers, settings, query API, and renderer do
-not acquire Pi-specific branches.
+  roots, source catalog/UI labels and colors, and raw-record routing. Adding or
+  hardening Pi therefore changes the Pi adapter, its registration, and its
+  conformance tests; the shared layers consume canonical visibility rather than
+  acquiring Pi-specific branch fields.

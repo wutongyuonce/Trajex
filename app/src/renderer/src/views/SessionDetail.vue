@@ -17,7 +17,7 @@ import { createSessionLiveReloadCoordinator } from '../session-live-reload.mjs';
 import { createSessionUserScroll } from '../session-user-scroll.mjs';
 import { useSessionTimelineViewport } from '../session-timeline-viewport.mjs';
 import { sessionReaderStateCache } from '../session-reader-state.mjs';
-import { sidechainMessageCount, visibleSessionMessages } from '../session-sidechains.mjs';
+import { inactiveMessageCount, visibleSessionMessages } from '../session-sidechains.mjs';
 import {
   createSessionSegments,
   findCurrentSessionSegment,
@@ -44,7 +44,7 @@ const session = computed(() => (
 const messages = shallowRef([]);
 const summaries = shallowRef([]);
 const timelineItems = shallowRef([]);
-const showSidechain = ref(false);
+const showInactive = ref(false);
 const loading = ref(false);
 const timelineReady = ref(false);
 const active = ref(false);
@@ -371,14 +371,14 @@ async function commitSessionSnapshot(latest) {
 }
 
 function visibleMessages(source = messages.value) {
-  return visibleSessionMessages(source, session.value?.source, showSidechain.value);
+  return visibleSessionMessages(source, showInactive.value);
 }
 
-const sidechainCount = computed(() => (
-  sidechainMessageCount(messages.value, session.value?.source)
+const inactiveCount = computed(() => (
+  inactiveMessageCount(messages.value)
 ));
 
-watch(showSidechain, () => {
+watch(showInactive, () => {
   timelineItems.value = reconcileTimelineItems(timelineItems.value, visibleMessages(), summaries.value);
   void nextTick().then(syncTimelineScrollMargin);
 });
@@ -610,11 +610,11 @@ function navigateToSubagent(agentId) {
             </template>
           </div>
           <button
-            v-if="sidechainCount"
+            v-if="inactiveCount"
             class="sidechain-toggle"
-            :aria-expanded="showSidechain"
-            @click="showSidechain = !showSidechain"
-          >{{ showSidechain ? 'Hide other branches' : `Show ${sidechainCount} messages from other branches` }}</button>
+            :aria-expanded="showInactive"
+            @click="showInactive = !showInactive"
+          >{{ showInactive ? 'Hide inactive branches' : `Show ${inactiveCount} inactive branch messages` }}</button>
         </div>
 
         <!-- Message timeline -->

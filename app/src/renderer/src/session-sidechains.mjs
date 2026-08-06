@@ -1,11 +1,11 @@
-export function visibleSessionMessages(messages = [], source, showSidechain = false) {
-  return source === 'pi' && !showSidechain
-    ? messages.filter(message => message.is_sidechain !== 1)
-    : messages;
+export function visibleSessionMessages(messages = [], showInactive = false) {
+  return messages.filter(message => (
+    message.visibility === 'hidden'
+      ? false
+      : showInactive || message.visibility !== 'inactive'
+  ));
 }
 
-export function sidechainMessageCount(messages = [], source) {
-  return source === 'pi'
-    ? messages.filter(message => message.is_sidechain === 1).length
-    : 0;
+export function inactiveMessageCount(messages = []) {
+  return messages.filter(message => message.visibility === 'inactive').length;
 }

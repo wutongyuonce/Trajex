@@ -31,6 +31,8 @@ test('SessionDetail renders a measured virtual window instead of the complete ti
   assert.match(sessionDetail, /:ref="measureElement"/);
   assert.match(sessionDetail, /<SessionTimelineRow/);
   assert.match(timelineRow, /buildSessionTimelinePresentation/);
+  assert.match(timelineRow, /renderMarkdown\(props\.item\.summary\?\.content/);
+  assert.match(timelineRow, /v-html="summaryHtml"/);
   assert.doesNotMatch(sessionDetail, /renderMarkdown|renderPrettyTool/);
   assert.doesNotMatch(sessionDetail, /querySelectorAll/);
   assert.doesNotMatch(sessionDetail + timelineRow, /v-memo/);

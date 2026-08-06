@@ -520,7 +520,7 @@ provider.parse(unit, oldCursor)
 
 `persist.ts` 一边迭代 generator，一边将每条 record 写入当前 SQLite 事务；generator 正常结束后，它才取得 `return` 的 `newCursor` 并写进 `index_state`。这样一个超长 transcript 不必先在内存里堆成数组，并且“事实已写入”和“进度已经前移”位于同一个 unit 的原子事务内。
 
-这里的“写进”有一项现状限制：`Cursor` 的类型是 `string | null`，但当前 `persist.ts` 会把非空值按 `mtime:lines` 拆成 `index_state.mtime` 和 `index_state.lines_processed`；`storedProviderCursor()` 再按同一格式拼回。因此内置 adapter 的 cursor 必须是两个可转数字的冒号分隔字段，尚不支持任意 provider 私有字符串或 rowid/时间戳编码。
+这里的“写进”有一项现状限制：`Cursor` 的类型是 `string | null`，但当前 `persist.ts` 会把非空值按 `mtime:lines` 拆成 `index_state.mtime` 和 `index_state.lines_processed`；`storedProviderCursor()` 再按同一格式拼回。因此存储层强制所有内置 adapter 的 cursor 外形都符合两个可转数字的冒号分隔字段。实际消费方式仍由 provider 决定：Claude 用 mtime 判断变化、用 lines 跳过已处理行；Codex 和 Pi 都是全量重放，只真正使用 mtime，lines 目前只是兼容字段和索引检查信息。当前实现尚不支持任意 provider 私有字符串或 rowid/时间戳编码。
 
 ### 索引调度契约：`Cursor`、`IndexUnit`、`DiscoverContext`
 
@@ -530,14 +530,15 @@ provider.parse(unit, oldCursor)
 type Cursor = string | null;
 ```
 
-它在 `Provider` 接口上是进度水位；不过当前 Core 的存储实现为：把非空 cursor 解释为 `"mtime:lines"`，存入 `index_state` 的两个数值列并在下次拼回。故现有 adapter 必须遵守这个编码；任意字符串 cursor、rowid 或纯时间戳目前不能正确持久化。
+它在 `Provider` 接口上是进度水位；不过当前 Core 的存储实现仍把非空 cursor 解释为 `"mtime:lines"`，存入 `index_state` 的两个数值列并在下次拼回。也就是说，存储格式对所有 provider 都是统一的 `mtime:lines` 外形，但消费语义并不统一：Claude 用两部分做增量恢复，Codex/Pi 全量重放且只用 mtime，lines 只是兼容/检查字段。任意字符串 cursor、rowid 或纯时间戳目前不能正确持久化。
 
 ```text
 index_state 的 key = unit.key
 index_state 的 value = Cursor
        │
-       ├─ Claude 使用 "mtime:已处理行数"
-       ├─ Codex 当前也使用同一文件游标格式
+       ├─ Claude 使用 "mtime:已处理行数"，两者都参与增量恢复
+       ├─ Codex 使用 "mtime:总行数"，实际只用 mtime，整文件重放
+       ├─ Pi 使用 "mtime:总行数"，实际只用 mtime，整文件重放
        └─ 新 provider 也必须先适配该格式，或先扩展持久化协议
 ```
 
@@ -552,7 +553,7 @@ index_state 的 value = Cursor
 | `key: string`          | unit 的稳定身份，也是 `index_state` 查询/写回 cursor 的 key。它必须在同一来源下稳定；路径、内部 ID 或二者组合都可以。 |
 | `sessionId: string`    | 这个 unit 归属的规范化 session ID。它由 Provider 在 `parse()` 中用于生成 `SessionRecord`、`MessageRecord` 等关联键。 |
 | `project?: string`     | 来源已经能识别出的项目 slug。可缺失；真正的 `sessions.project_path` 不由它直接决定，而是在所有消息写完后用 `cwd` 全局推断。 |
-| `isSubagent?: boolean` | 表示此 unit 是子 Agent transcript，而非主线会话。它指导解析器把消息标成 sidechain / 关联 agent，而不是把它当作独立顶层会话。 |
+| `isSubagent?: boolean` | 表示此 unit 是子 Agent transcript，而非主线会话。它指导解析器关联 agent，而不是把它当作独立顶层会话。 |
 | `agentId?: string`     | 子 Agent 的规范 ID。`isSubagent` 是布尔语义，`agentId` 是可关联的具体身份；解析出的 `messages.agent_id` 与 `subagents.agent_id` 用它相连。 |
 | `meta?: unknown`       | Provider 私有负载，例如扫描时已取得的辅助路径、线程 metadata 或解析提示。编排层绝不读取或序列化解释它，只把原对象传给 `parse()`。 |
 
@@ -564,7 +565,7 @@ index_state 的 value = Cursor
 
 | 成员                      | 含义                                                         |
 | ------------------------- | ------------------------------------------------------------ |
-| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的 cursor。当前内置 Provider 用它比较 mtime 与已处理行数，决定忽略、增量解析或全量 replay。 |
+| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的 cursor。当前内置 Provider 用它比较 mtime 决定是否变化；Claude 另外用已处理行数增量恢复，Codex/Pi 则忽略行数并全量 replay。 |
 | `changedPaths?: string[]` | Electron daemon 监听到文件变化时提供的路径缩小范围。它是优化提示，不是事实来源；Provider 仍要保证漏传或没有它时的完整 discover 正确。 |
 
 所以发现阶段不是“索引”。`discover()` 只回答“有哪些 unit 值得处理”；真正读取原始内容从 `parse()` 开始，真正改变数据库从 `persist()` 开始。
@@ -602,7 +603,7 @@ type TranscriptRecord =
 
 2、**`MessageRecord` -> `messages`，并由触发器同步 `messages_fts`**
 
-`MessageRecord` 是整个模型最核心的事实。`MessageVisibility` 的取值只允许 `'visible' | 'hidden'`：可见性是在 Provider 解析时规范化的，展示层不会靠文本内容再次猜测系统上下文是否应显示。
+`MessageRecord` 是整个模型最核心的事实。`MessageVisibility` 的取值只允许 `'visible' | 'inactive' | 'hidden'`：可见性是在 Provider 解析时规范化的，展示层不会靠文本内容或 provider 分支标记再次猜测当前上下文。
 
 | 字段                             | 含义                                                         |
 | -------------------------------- | ------------------------------------------------------------ |
@@ -616,9 +617,8 @@ type TranscriptRecord =
 | `text`                           | 可检索、可展示的文本投影；可能截断、可能为 `null`。原始完整内容应通过 `raw()` 回源。 |
 | `content_type`                   | 内容性质，如 text、thinking、tool_use、tool_result、skill_instructions、unknown。它帮助详情层决定怎样组合/渲染。 |
 | `is_meta`                        | `0 | 1`，系统自动插入、命令包装、环境提示、skill 指令等“元消息”。整数而非 boolean 是 SQLite 友好表示。 |
-| `visibility`                     | `visible` / `hidden`；hidden 可仍入库供证据和关联使用，但默认展示会排除。 |
+| `visibility`                     | `visible` / `inactive` / `hidden`；inactive 是保留但不在当前上下文的分支证据，hidden 是来源明确抑制展示的内容；二者默认展示都会排除。 |
 | `model`                          | 模型名称；来源未报告时为 `null`。                            |
-| `is_sidechain`                   | `0 | 1`，是否子 Agent / 旁支消息。它与 `agent_id` 一起区分主会话和子线程。 |
 | `agent_id`                       | 所属子 Agent ID；主线消息为 `null`。关联 `subagents.agent_id` 或 workflow agent 身份。 |
 | `input_tokens` / `output_tokens` | 归一化 token 用量；输入包含 Provider 报告的缓存输入。没有可靠数字时为 `null`，不能伪造 0。 |
 | `cwd`                            | 消息产生时的工作目录，是最终推断 `sessions.project_path` 的主要证据。 |
@@ -732,7 +732,7 @@ type TranscriptRecord =
 { kind: 'delete-session', sessionId }
 ```
 
-同样不是表行。目前有两种使用语义：Codex 在识别到 guardian / auto-review thread 时发出它，撤回不应展示的 thread；Pi 在每次全量重放分支树前发出它，先移除旧分支投影，再写入当前活动路径。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent、全部摘要，以及 `memories.session_id` 匹配的人工记忆；其他 session 或未关联 session 的记忆不会受影响。
+同样不是表行。目前有两种使用语义：Codex 在识别到 guardian / auto-review thread 时发出它，撤回不应展示的 thread；Pi 在每次全量重放分支树前发出它，先移除旧投影，再写入带 `visible` / `inactive` 语义的完整 session。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent、全部摘要，以及 `memories.session_id` 匹配的人工记忆；其他 session 或未关联 session 的记忆不会受影响。
 
 ### 描述、监视、原文回源：`ProviderDescriptor`、`RawLookup`、`RawRecord`、`ProviderAdapter`
 
@@ -804,7 +804,7 @@ interface ProviderAdapter extends Provider {
 | 成员                         | 用途                                                         |
 | ---------------------------- | ------------------------------------------------------------ |
 | `descriptor`                 | 让 `providers/builtins.ts` / registry 将 adapter 暴露给设置页、CLI/App 配置和 UI。 |
-| `indexVersionMarker?`        | Provider 的投影规则版本。它本身是 `index_state` 中的特殊 key；换成新字符串会使新 key 缺失。若库中已有该 source 的 session，`createProviderIndexPlan()` 才会安排该 Provider 全量 replay；全部 unit 成功后才写入 marker。可选是为了兼容尚未定义版本语义的 adapter。 |
+| `indexVersionMarker?`        | Provider 的投影规则版本。它本身是 `index_state` 中的特殊 key；换成新字符串会使新 key 缺失。若库中已有任一 provider 的旧 projection，`createProviderIndexPlan()` 会安排全库 canonical rebuild，全部 unit 成功后才写入待定 markers。可选是为了兼容尚未定义版本语义的 adapter。 |
 | `watchRoots(configuredRoot)` | 根据用户配置根目录给 Electron watcher 返回实际需要监听的目录；一个 Provider 可监听主 transcript、history、session index 等多个根。 |
 | `raw(input)`                 | 根据规范 lookup 回读原始消息。找不到、来源不支持或已删除时返回 `null`，而不是抛出“数据库记录必然存在原文”的错误。 |
 
@@ -820,7 +820,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | -------------- | ------------------------------------- | ----------------------------------------- |
 | 默认根         | `~/.claude`                           | `~/.codex`                                |
 | 索引单位       | 主/子代理 JSONL 与 workflow JSON      | 一个 rollout JSONL                        |
-| cursor/策略    | mtime + 已处理行；流式逐行            | 全文件重放                                |
+| cursor/策略    | mtime + 已处理行；流式逐行            | mtime 判断变化；全文件重放，lines 仅记录 |
 | 必须全量的原因 | 不需要；仅续读新增行                  | event_msg 与 response_item 双向去重       |
 | 特殊关系       | history 标题、Workflow、subagent meta | guardian 删除、父/子 thread、collab spawn |
 | raw 定位       | session/subagent JSONL 内 UUID        | `codex:<thread>:<line>`                   |
@@ -892,7 +892,7 @@ Workflow JSON Unit（Workflow JSON 由 discoverAt() 自己发现）
 ]
 ```
 
-普通主会话、subagent 与 workflow 子代理 JSONL 的 cursor 形状为 `mtimeMs:linesProcessed`，发现阶段先比较文件 mtime 决定是否重解析。不逐行增量，mtime 变化即触发重解析。
+普通主会话与 subagent JSONL 的 cursor 形状为 `mtimeMs:linesProcessed`。发现阶段先比较文件 mtime；解析阶段再用 `linesProcessed` 跳过已消费行，只处理新增尾部。
 
 文件监听提供 `changedPaths` 时，`discoverAt()` 会只安排受影响的 unit（由 Electron daemon 通过 chokidar 传入，属优化提示）：
 
@@ -1040,7 +1040,6 @@ workflow 子会话 <agent-id>.jsonl
   is_meta: 0 | 1,
   visibility: "visible",
   model: obj.message.model || null,
-  is_sidechain: 0,
   agent_id: null,
   input_tokens: ...,
   output_tokens: ...,
@@ -1050,7 +1049,7 @@ workflow 子会话 <agent-id>.jsonl
 }
 ```
 
-* 保留 `uuid`、`parent_uuid`、`type`、`timestamp` 时间、`role` 角色、`text` 文本 、`cwd`、`model`、`token`、`skill` 和 `is_sidechain` 标记；
+* 保留 `uuid`、`parent_uuid`、`type`、`timestamp` 时间、`role` 角色、`text` 文本 、`cwd`、`model`、`token` 和 `skill`；
 
   > 主会话 unit 通常没有 `agent_id`；若原始行顶层带有 `obj.agentId`，代码会原样保留该值，而不是强制改为 `null`。子代理 unit 则始终优先使用文件路径推导出的 `unit.agentId`。
 
@@ -1358,7 +1357,7 @@ sm.title
 <session-id>/subagents/<agent-id>.jsonl
 ```
 
-可以把它理解成：父 session 下的 sidechain / subagent 消息
+可以把它理解成：父 session 下的 agent 关联消息
 
 产出方式与主 Agent 相同，用的是同一套 parser：
 
@@ -1397,13 +1396,7 @@ agent_id: "<agent-id>" // 主 agent 为 null
 session_id: "<parent-session-id>" // 和主 agent 一样都是父 session id
 ```
 
-`is_sidechain` 不由 `isSubagent` 推导，而是直接保留当前原始 JSONL 行的标记：
-
-```ts
-is_sidechain: obj.isSidechain ? 1 : 0
-```
-
-因此子代理通常是 sidechain，但代码不强制；`isSubagent` 负责决定是否读取 `.meta.json`、是否产出 `session` 记录，以及 `agent_id` 的来源。当前 App 只对 Pi 使用 `is_sidechain` 隐藏非当前分支消息；Claude 子代理和 workflow 子代理由 `agent_id` 单独展示。
+`isSubagent` 负责决定是否读取 `.meta.json`、是否产出 `session` 记录，以及 `agent_id` 的来源；Claude 子代理和 workflow 子代理由 `agent_id` 单独展示。
 
 9、**子代理 `.meta.json`**
 
@@ -1754,15 +1747,15 @@ Codex 的 message UUID 由 Trajex 按原线程 ID 与 JSONL 行号构造：`code
 
 这一路径选择依赖 `RawLookup` 提供的 `session.jsonl_path` 与 `agentId`，但用于精确定位的主键仍是 UUID 内的 thread ID 和行号。
 
-### Pi：一份具有分支树的 session JSONL
+### Pi：一份具有分支树的 v3 session JSONL
 
-Pi 文件第一行是 `{type:"session",version:3,id,cwd,…}`；其余条目有 `id` 和 `parentId`，形成分支树。解析器全量 replay，沿末尾条目反向追溯 active path；所有分支仍会投影，非 active path 消息标记 `is_sidechain: 1`，让 UI 决定是否展示。
+Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",version:3,id,cwd,…}`；其余条目有 `id` 和 `parentId`，并通过 durable `leaf` 指向当前上下文。解析器全量 replay，结合 leaf、compaction 的 `firstKeptEntryId` 与 `retainedTail` 重建 active context；当前上下文投影为 `visible`，仍保留但已被分支替代的证据投影为 `inactive`，来源明确不展示的 custom message 投影为 `hidden`。
 
 | 原始条目或字段                                               | 产出的 record                                                | 设计细节 / 不产出情况                                        |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | session header                                               | 最后的 `session`                                             | 提供 session ID、cwd、version、起止时间；自身不产出 message。 |
 | `{type:"session_info",name}` / `{type:"model_change",modelId}` | 无独立 record                                                | 前者更新最后的 session title；后者只参与后续 message 的 model 继承。 |
-| `{type:"compaction"|"branch_summary",summary}`               | `summary`                                                    | `source: 'pi'`，保留来源提供的摘要正文。                     |
+| `{type:"compaction"|"branch_summary",summary}`               | `summary` + retained tail messages                         | `source: 'pi'`；compaction 的保留尾部也投影为 canonical message，避免 active context 丢失。 |
 | `{type:"custom_message",content,display}`                    | `message`                                                    | role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
 | `{type:"message",message:{role:"user",content}}`             | user `message`                                               | 仅文本 content 产生消息。                                    |
 | assistant 的 `content[]` text / thinking / toolCall part     | 每个 part 各产生 assistant `message`；toolCall 另有 `tool_call` | 以 `:partIndex` 后缀生成稳定 message ID，并串成 parent chain；usage 只附到最后一个可导航 part。 |
@@ -1806,15 +1799,15 @@ export function createProviderRegistry(providers: readonly ProviderAdapter[]): P
 `builtins.ts` 提供装配函数调用 registry 接口构建函数，被 `indexer.ts` 使用：
 
 ```ts
-createBuiltinProviderRegistry(roots = {}) → createProviderRegistry([
-  createClaudeProvider({ rootDir: roots['claude'] }),
-  createCodexProvider({ rootDir: roots['codex'] }),
-  createPiProvider({ rootDir: roots['pi'] }),
+createBuiltinProviderRegistry({ claudeRoot, codexRoot, piSessionDir } = {}) → createProviderRegistry([
+  createClaudeProvider({ rootDir: claudeRoot }),
+  createCodexProvider({ rootDir: codexRoot }),
+  createPiProvider({ sessionDir: piSessionDir }),
 ])
 ```
 
-- **零参调用** = 用各 adapter 的默认根目录（`~/.claude`、`~/.codex`、Pi 的 sessions 目录）
-- **传 `roots` 覆盖** = 换根目录，不改解析语义（测试、设置页、多环境部署用）
+- **零参调用** = 用各 adapter 的默认根目录（`~/.claude`、`~/.codex`、Pi 的 `~/.pi/agent/sessions`）
+- **Pi 路径覆盖** = App Settings 直接保存最终 session directory；不接受环境变量、CLI 参数或任意额外路径
 
 **设计意图总结：**
 
@@ -1889,9 +1882,8 @@ persist()
 | `text`             | TEXT                   | 消息内容（FTS 索引列）                                       |
 | `content_type`     | TEXT                   | `text` / `thinking` / `tool_use` / `unknown` / `skill_instructions` |
 | `is_meta`          | INTEGER                | 是否系统消息                                                 |
-| `visibility`       | TEXT DEFAULT 'visible' | `visible` / `hidden`                                         |
+| `visibility`       | TEXT DEFAULT 'visible' | `visible` / `inactive` / `hidden`                            |
 | `model`            | TEXT                   | 模型名                                                       |
-| `is_sidechain`     | INTEGER                | 是否子代理消息                                               |
 | `agent_id`         | TEXT                   | 所属子代理 ID                                                |
 | `input_tokens`     | INTEGER                | 输入 token 数                                                |
 | `output_tokens`    | INTEGER                | 输出 token 数                                                |
@@ -2009,7 +2001,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__codex_canonical_transcript_v2__" / "__claude_canonical_transcript_v2__" / "__kimi_canonical_transcript_v2__" / "__pi_canonical_transcript_v2__"
+jsonl_path = "__claude_canonical_transcript_v3__" / "__codex_canonical_transcript_v3__" / "__pi_canonical_transcript_v3__"
               ↑ 不是路径，而是状态 key
 ```
 
@@ -2033,7 +2025,6 @@ jsonl_path = "__codex_canonical_transcript_v2__" / "__claude_canonical_transcrip
 | `message_start`  | TEXT    | 起始消息 UUID          |
 | `message_end`    | TEXT    | 结束消息 UUID          |
 | `path`           | TEXT    | 引用的文件路径         |
-| `anchors`        | TEXT    | Legacy JSON 锚点列，现已不再使用 |
 | `summary`        | TEXT    | 记忆摘要（FTS 索引列） |
 | `created_at`     | TEXT    | 创建时间               |
 | `deleted_at`     | TEXT    | 删除时间（软删除）     |
@@ -2464,9 +2455,9 @@ function statements(db: SqliteDb) {
 ```sql
 INSERT INTO messages
   (uuid, session_id, type, parent_uuid, timestamp, role, text, content_type,
-   is_meta, visibility, model, is_sidechain, agent_id, input_tokens,
+   is_meta, visibility, model, agent_id, input_tokens,
    output_tokens, cwd, skill, source)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(uuid) DO UPDATE SET
   session_id=excluded.session_id,
   type=excluded.type,
@@ -2478,7 +2469,6 @@ ON CONFLICT(uuid) DO UPDATE SET
   is_meta=excluded.is_meta,
   visibility=excluded.visibility,
   model=excluded.model,
-  is_sidechain=excluded.is_sidechain,
   agent_id=excluded.agent_id,
   input_tokens=excluded.input_tokens,
   output_tokens=excluded.output_tokens,
@@ -2658,7 +2648,7 @@ executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
 
 **契约类型**（query.ts 顶部四个 interface，定义沙箱 API 的参数形状）：
 
-- `QueryOptions extends Record<string, any>`：统一过滤/选项对象，几乎每个方法都接收。字段即沙箱公开参数名：`limit`（条数）、`sessionId`/`sessions[]`（单/多会话）、`project`（LIKE 模糊）、`after`/`before`（时间窗口）、`cwd`/`branch`（目录/分支）、`source`（Provider 来源，'all' 不过滤）、`includeMeta`（是否含 System 卡片）、`query`（FTS 检索词）、`projectLimit`/`memoryLimit`（overview 专用）。`extends Record<string, any>` 保留**宽松索引签名**：脚本可能传任意键进来，编译期不卡死，各方法只读自己关心的字段。
+- `QueryOptions extends Record<string, any>`：统一过滤/选项对象，几乎每个方法都接收。字段即沙箱公开参数名：`limit`（条数）、`sessionId`/`sessions[]`（单/多会话）、`project`（LIKE 模糊）、`after`/`before`（时间窗口）、`cwd`/`branch`（目录/分支）、`source`（Provider 来源，'all' 不过滤）、`includeMeta`（是否含 System 卡片）、`includeInactive`（是否含已被替代的分支证据）、`query`（FTS 检索词）、`projectLimit`/`memoryLimit`（overview 专用）。`extends Record<string, any>` 保留**宽松索引签名**：脚本可能传任意键进来，编译期不卡死，各方法只读自己关心的字段。
 - `ColumnAliases`：`buildWhere` 的白名单列名映射（sessionId/project/timestamp/branch/source）——**过滤条件里出现的列名只可能来自这里，绝不来自用户输入**。
 - `RememberInput` / `ForgetInput`：remember/forget 的参数契约；必填字段的校验在函数内抛错。
 

@@ -41,7 +41,7 @@ function cursorToSkip(cursor: Cursor): number {
 }
 
 export const name = 'claude';
-export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v2__';
+export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v3__';
 
 interface ClaudeWorkflowUnitMeta {
   readonly kind: 'workflow';
@@ -314,7 +314,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
         parent_uuid: obj.parentUuid || null, timestamp: ts, role: msg.role || obj.type,
         text, content_type: contentType, is_meta: (isMeta ? 1 : 0), visibility: 'visible',
         model: msg.model || null,
-        is_sidechain: obj.isSidechain ? 1 : 0, agent_id: aid,
+        agent_id: aid,
         input_tokens: totalInputTokens(usage), output_tokens: usage.output_tokens || null,
         cwd: obj.cwd || null, skill: obj.attributionSkill || null, source: 'claude',
       });

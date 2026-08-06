@@ -20,6 +20,7 @@ export interface ProviderIndexItem {
 export interface ProviderIndexPlan {
   readonly items: ProviderIndexItem[];
   readonly pendingMarkers: ReadonlyMap<string, string>;
+  readonly fullRebuild: boolean;
 }
 
 /** 执行结果：已提交项、失败 Provider 集合；stopped 表示数据库忙等原因中途停止的位置。 */
@@ -29,7 +30,7 @@ export interface ProviderIndexResult {
   readonly stopped?: { item: ProviderIndexItem; error: unknown };
 }
 
-/** 从 index_state 还原 adapter 私有 cursor，Core 不解释其编码。 */
+/** 从 index_state 还原当前的 mtime:lines cursor；provider 决定如何消费两部分。 */
 export function storedProviderCursor(db: SqliteDb, key: string): Cursor {
   const row = db.prepare('SELECT mtime, lines_processed FROM index_state WHERE jsonl_path = ?').get(key);
   return row ? `${String(row.mtime)}:${String(row.lines_processed)}` : null;
@@ -51,13 +52,21 @@ export function createProviderIndexPlan(
 ): ProviderIndexPlan {
   const items: ProviderIndexItem[] = [];
   const pendingMarkers = new Map<string, string>();
-  for (const provider of registry.list()) {
+  const providers = registry.list();
+  const markerMissing = new Map<string, boolean>();
+  for (const provider of providers) {
     const marker = provider.indexVersionMarker;
-    const markerMissing = marker !== undefined && !db.prepare(
+    const missing = marker !== undefined && !db.prepare(
       'SELECT jsonl_path FROM index_state WHERE jsonl_path = ?',
     ).get(marker);
-    if (markerMissing) pendingMarkers.set(provider.name, marker);
-    const fullReindex = force || (markerMissing && sourceAlreadyIndexed(db, provider.name));
+    markerMissing.set(provider.name, missing);
+    if (missing) pendingMarkers.set(provider.name, marker);
+  }
+  const fullRebuild = force || providers.some(provider => (
+    markerMissing.get(provider.name) === true && sourceAlreadyIndexed(db, provider.name)
+  ));
+  for (const provider of providers) {
+    const fullReindex = fullRebuild;
     const units = provider.discover({
       lastCursor: fullReindex ? () => null : (key) => storedProviderCursor(db, key),
       changedPaths: fullReindex ? undefined : changedPaths,
@@ -70,7 +79,7 @@ export function createProviderIndexPlan(
       });
     }
   }
-  return { items, pendingMarkers };
+  return { items, pendingMarkers, fullRebuild };
 }
 
 /**

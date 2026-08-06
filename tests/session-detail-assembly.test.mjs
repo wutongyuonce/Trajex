@@ -99,13 +99,13 @@ test('canonical ordering is stable across provider and SQLite iteration order', 
     {
       kind: 'message', uuid: 'b', session_id: 'session', type: 'user', parent_uuid: null,
       timestamp: '2026-06-10T10:00:00Z', role: 'user', text: 'second', content_type: 'text',
-      is_meta: 0, visibility: 'visible', model: null, is_sidechain: 0, agent_id: null,
+      is_meta: 0, visibility: 'visible', model: null, agent_id: null,
       input_tokens: null, output_tokens: null, cwd: null, skill: null, source: 'test',
     },
     {
       kind: 'message', uuid: 'a', session_id: 'session', type: 'user', parent_uuid: null,
       timestamp: '2026-06-10T10:00:00Z', role: 'user', text: 'first', content_type: 'text',
-      is_meta: 0, visibility: 'visible', model: null, is_sidechain: 0, agent_id: null,
+      is_meta: 0, visibility: 'visible', model: null, agent_id: null,
       input_tokens: null, output_tokens: null, cwd: null, skill: null, source: 'test',
     },
   ]);

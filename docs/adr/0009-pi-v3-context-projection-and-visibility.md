@@ -18,7 +18,10 @@ directory selected in App Settings. The App setting stores the session
 directory itself; it does not store `~/.pi` or an agent root and the adapter
 does not append `agent/sessions`. This also covers users whose Pi environment
 resolves `PI_CODING_AGENT_DIR` or `PI_CODING_AGENT_SESSION_DIR` to a custom
-session directory, without making Trajex read those environment variables.
+directory: `PI_CODING_AGENT_SESSION_DIR` points at the session directory
+directly, while `PI_CODING_AGENT_DIR` points at the agent root whose
+`sessions` subdirectory holds the sessions — without making Trajex read those
+environment variables.
 Provider CLI path overrides and arbitrary additional roots are out of scope.
 Discovery uses provider-owned source fingerprints and explicit retraction only
 when Pi can prove the replacement or move, while a full rebuild remains the

@@ -114,7 +114,7 @@ test('persist round-trips canonical workflow records and their tool relationship
   db.close();
 });
 
-test('delete-session cascades across tables', () => {
+test('delete-session clears transcript tables but preserves memories', () => {
   const db = freshDb();
   const unit = fixtureUnit();
   persist(db, unit, parse(unit, null));
@@ -134,6 +134,6 @@ test('delete-session cascades across tables', () => {
   assert.equal(db.prepare('SELECT COUNT(*) c FROM workflows WHERE session_id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM workflow_agents WHERE session_id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM summaries WHERE session_id=?').get('sid-p').c, 0);
-  assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE session_id=?').get('sid-p').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE session_id=?').get('sid-p').c, 1);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE session_id=?').get('other-session').c, 1);
 });

@@ -246,8 +246,8 @@ export interface MessageTurnDurationRecord {
 }
 
 /**
- * 撤回操作记录（不对应表）。adapter 在需要移除已索引的会话时发出此记录——
- * 例如 Codex 的 guardian / auto-review 线程。persist 执行级联删除该会话下所有表数据。
+ * 会话替换操作记录（不对应表）。全量重放 adapter 在写入当前快照前发出此记录；
+ * persist 清理该会话的 transcript 派生表，但保留 durable memories。
  */
 export interface DeleteSessionRecord {
   kind: 'delete-session';

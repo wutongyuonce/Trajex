@@ -292,10 +292,18 @@ function codexCallId(threadId: unknown, callId: unknown): string | null {
 /** 从 meta 提取父线程 id：subagent spawn 或 fork 场景。 */
 function codexParentThreadId(meta: JsonRecord): string | null {
   const subagent = meta?.source?.subagent;
-  return subagent?.thread_spawn?.parent_thread_id
+  return meta?.parent_thread_id
+    || subagent?.thread_spawn?.parent_thread_id
     || meta?.forked_from_id
     || subagent?.parent_thread_id
     || null;
+}
+
+/** 判断 Codex rollout 是否为不应独立索引的 child/fork/subagent thread。 */
+function codexIsChildThread(meta: JsonRecord): boolean {
+  return meta?.thread_source === 'subagent'
+    || meta?.source?.subagent != null
+    || codexParentThreadId(meta) !== null;
 }
 
 /** 判断是否为 guardian/auto-review 线程（其消息不应在详情中展示）。 */
@@ -304,37 +312,6 @@ function codexIsGuardianThread(meta: JsonRecord, records: CodexLineRecord[] = []
   if (subagent?.other === 'guardian') return true;
   if (meta?.thread_source !== 'subagent') return false;
   return records.some(({ obj }) => obj?.payload?.model === 'codex-auto-review' || obj?.model === 'codex-auto-review');
-}
-
-/**
- * 读取足量 Codex 行以判断 guardian/auto-review thread，并返回可用于撤回的
- * 原始 thread ID；不能仅凭文件路径判断，因为标记存在于 session 元数据和模型事件。
- */
-function readCodexGuardianThreadInfo(filePath: string): { threadRawId: string; lineNum: number } | null {
-  const records: CodexLineRecord[] = [];
-  let metaRecord: CodexLineRecord | null = null;
-  let lineNum = 0;
-  readLines(filePath, (line) => {
-    lineNum++;
-    let obj: JsonRecord;
-    try {
-      obj = JSON.parse(line);
-    } catch {
-      return;
-    }
-    records.push({ lineNum, obj });
-    if (obj?.type === 'session_meta' && obj.payload?.id) {
-      metaRecord = { lineNum, obj };
-      if (obj.payload?.source?.subagent?.other === 'guardian') return false;
-      if (obj.payload?.thread_source !== 'subagent') return false;
-    }
-    if (metaRecord && codexIsGuardianThread(metaRecord.obj.payload, records)) return false;
-  });
-  const capturedMeta = metaRecord as CodexLineRecord | null;
-  const meta = capturedMeta?.obj?.payload;
-  if (!meta || !codexIsGuardianThread(meta, records)) return null;
-  const threadRawId = codexRawId(meta.id);
-  return threadRawId ? { threadRawId, lineNum } : null;
 }
 
 /** 字符串先 JSON.parse 成对象；解析失败或非字符串则保持原值。 */
@@ -434,7 +411,7 @@ export {
   trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, isSkillInstructions, filePath, isDir, readLines,
   legacyProjectPathFromSlug, normalizeObservedCwd, projectSlugFromPath, inferProjectPath,
   discoverJsonlFiles, discoverCodexJsonlFiles,
-  codexDbId, codexRawId, codexLineUuid, codexCallId, codexParentThreadId, codexIsGuardianThread,
-  readCodexGuardianThreadInfo, parseCodexJsonInput,
+  codexDbId, codexRawId, codexLineUuid, codexCallId, codexParentThreadId, codexIsChildThread, codexIsGuardianThread,
+  parseCodexJsonInput,
   codexUsage, codexEventText, codexMessagePayloadText, codexVisibleMessageKey, codexToolInput, codexToolOutput,
 };

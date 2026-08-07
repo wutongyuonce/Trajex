@@ -426,7 +426,7 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
   assert.equal(session.project_path, '/tmp/trajex-app');
   assert.equal(session.git_branch, 'feat/codex');
   assert.equal(session.version, '0.135.0-alpha.1');
-  assert.equal(session.message_count, 3);
+  assert.equal(session.message_count, 4);
   assert.deepEqual(result.affectedSessionIds, [`codex:${codexId}`]);
 
   const messages = db.prepare('SELECT role, text, source, content_type, turn_duration_ms FROM messages WHERE session_id=? ORDER BY timestamp, uuid').all(`codex:${codexId}`);
@@ -434,6 +434,7 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
     ['user', 'codex user asks for indexing', 'codex', 'text'],
     ['assistant', 'codex assistant replies', 'codex', 'text'],
     ['assistant', null, 'codex', 'tool_use'],
+    ['user', '/tmp/trajex-app', 'codex', 'tool_result'],
   ]);
   assert.equal(messages[1].turn_duration_ms, 4321);
 
@@ -443,7 +444,7 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
   assert.equal(tool.name, 'exec_command');
   assert.equal(tool.message_uuid, `codex:${codexId}:000004`);
   const toolResult = db.prepare('SELECT message_uuid, content FROM tool_results WHERE tool_use_id=?').get(toolId);
-  assert.equal(toolResult.message_uuid, `codex:${codexId}:000004`);
+  assert.equal(toolResult.message_uuid, `codex:${codexId}:000005`);
   assert.equal(toolResult.content, '/tmp/trajex-app');
   db.close();
 });
@@ -618,7 +619,7 @@ test('app indexer skips Codex guardian review threads', () => {
   db.close();
 });
 
-test('app indexer removes stale Codex guardian rows when the JSONL was already indexed', () => {
+test('app indexer ignores Codex guardian rows without emitting cleanup', () => {
   const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-guardian-stale-'));
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
@@ -669,12 +670,12 @@ test('app indexer removes stale Codex guardian rows when the JSONL was already i
   buildIndex({ claudeDir, codexDir, dbPath, DatabaseImpl: TestDatabase });
 
   const cleanedDb = new TestDatabase(dbPath);
-  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(guardianSessionId).c, 0);
-  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(guardianSessionId).c, 0);
-  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM tool_calls WHERE session_id=?').get(guardianSessionId).c, 0);
-  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM tool_results WHERE session_id=?').get(guardianSessionId).c, 0);
-  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM subagents WHERE agent_id=?').get(guardianSessionId).c, 0);
-  assert.equal(cleanedDb.prepare("SELECT COUNT(*) AS c FROM messages_fts WHERE messages_fts MATCH 'stale'").get().c, 0);
+  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(guardianSessionId).c, 1);
+  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(guardianSessionId).c, 1);
+  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM tool_calls WHERE session_id=?').get(guardianSessionId).c, 1);
+  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM tool_results WHERE session_id=?').get(guardianSessionId).c, 1);
+  assert.equal(cleanedDb.prepare('SELECT COUNT(*) AS c FROM subagents WHERE agent_id=?').get(guardianSessionId).c, 1);
+  assert.equal(cleanedDb.prepare("SELECT COUNT(*) AS c FROM messages_fts WHERE messages_fts MATCH 'stale'").get().c, 1);
   cleanedDb.close();
 });
 

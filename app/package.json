@@ -1,6 +1,6 @@
 {
   "name": "trajex",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Browse and manage indexed Claude Code, Codex, and Pi session memory",
   "homepage": "https://github.com/wutongyuonce/trajex",
   "author": {

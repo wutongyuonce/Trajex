@@ -75,7 +75,7 @@ test('schema migration is not skipped by a recent build marker', () => {
     CREATE TABLE messages (
       uuid TEXT PRIMARY KEY, session_id TEXT, type TEXT, parent_uuid TEXT,
       timestamp TEXT, role TEXT, text TEXT, content_type TEXT,
-      is_meta INTEGER DEFAULT 0, model TEXT, agent_id TEXT,
+      is_meta INTEGER DEFAULT 0, is_sidechain INTEGER DEFAULT 0, model TEXT, agent_id TEXT,
       input_tokens INTEGER, output_tokens INTEGER, cwd TEXT, skill TEXT,
       turn_duration_ms INTEGER, source TEXT DEFAULT 'claude'
     );
@@ -91,11 +91,11 @@ test('schema migration is not skipped by a recent build marker', () => {
   );
   db.close();
 
-  writeFileSync(join(home, 'q.mjs'), "return sql('SELECT visibility FROM messages');");
+  writeFileSync(join(home, 'q.mjs'), "return sql('SELECT visibility, is_sidechain FROM messages');");
   const result = runRuntime(['--query', join(home, 'q.mjs')], home);
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.deepEqual(JSON.parse(result.stdout), [{ visibility: 'visible' }]);
+  assert.deepEqual(JSON.parse(result.stdout), [{ visibility: 'visible', is_sidechain: 0 }]);
 });
 
 test('force build purges sessions for deleted files and preserves memories', () => {

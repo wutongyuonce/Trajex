@@ -1,7 +1,7 @@
 // Phase 5c: exercises the full codex buildIndex path (discover → codex.parse →
 // persist) for both a fresh full build and an incremental rebuild after append.
 // Codex is full-reparse with countMode 'total', so growth must REPLACE the count
-// (not accumulate) and upsert messages (no duplicates).
+// (not accumulate) and replace the session projection (no stale rows).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -72,4 +72,31 @@ test('codex full build then incremental rebuild replaces the total count without
   assert.equal(c.mc, 3, 'message_count replaced with the new total');
   assert.equal(c.msgs, 3, 'exactly three messages, upserted (no duplicates)');
   assert.equal(c.hits, 1, 'the appended message is searchable');
+});
+
+test('codex full replay removes rows absent from the current rollout and preserves memories', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-codex-replace-'));
+  const dir = join(home, '.codex', 'sessions', '2026', '06', '15');
+  mkdirSync(dir, { recursive: true });
+  const jsonl = join(dir, `rollout-2026-06-15T10-00-00-${ID}.jsonl`);
+
+  writeFileSync(jsonl, [metaLine(), evt('user_message', 'keep this', '2026-06-15T10:00:01Z'), evt('user_message', 'remove this', '2026-06-15T10:00:02Z')].join('\n') + '\n');
+  assert.equal(runRuntime(['--build'], home).status, 0);
+
+  const db = new DatabaseSync(join(home, '.trajex', 'trajex.sqlite'));
+  db.prepare("INSERT INTO memories (id, session_id, summary, created_at) VALUES ('mem-keep', ?, 'durable note', '2026-06-15T10:00:00Z')").run(`codex:${ID}`);
+  db.close();
+
+  writeFileSync(jsonl, [metaLine(), evt('user_message', 'keep this', '2026-06-15T10:00:01Z')].join('\n') + '\n');
+  const t = statSync(jsonl).mtimeMs / 1000 + 10;
+  utimesSync(jsonl, t, t);
+  clearDebounce(home);
+
+  const c = codexCounts(home);
+  assert.equal(c.mc, 1);
+  assert.equal(c.msgs, 1);
+
+  const verify = new DatabaseSync(join(home, '.trajex', 'trajex.sqlite'));
+  assert.equal(verify.prepare("SELECT COUNT(*) c FROM memories WHERE id='mem-keep'").get().c, 1);
+  verify.close();
 });

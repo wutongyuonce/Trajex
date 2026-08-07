@@ -8,12 +8,12 @@
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trajex-wordmark-d.svg">
   <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="540">
 </picture>
-
 <a href="https://github.com/wutongyuonce/Trajex/stargazers"><img src="https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square" alt="stars"></a>
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
 **[Trajex](https://github.com/wutongyuonce/Trajex)｜面向 Agent 的通用本地会话记忆平台**
+
 
 将来自不同 provider —— Codex、Claude Code、Pi 的 JSONL 历史解析为同一套 canonical record 并持久化至 SQLite，通过 FTS5 全文索引实现毫秒级历史检索。
 
@@ -39,13 +39,24 @@ Trajex 有两面，它们共享同一个 SQLite 索引：
 
 ## 多 Provider 支持
 
+Codex 和 Claude Code 根据当前真实文件测试得出的 schema 进行处理，官方没有提供格式规范。
+
 Trajex 会把每个 provider 都索引到同一个 SQLite schema 中，而不是维护彼此分离的数据库。数据行会带有 `source` 值；非 Claude 的 ID 会带 provider 前缀，因此不会冲突。
 
-Codex root threads 会成为普通 Trajex sessions。当 parent-thread metadata 可用时，Codex child threads 会通过同一个 `subagents` 表挂接。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。
+| Provider | 内部 id 形态 | 原因 |
+|---|---|---|
+| Claude | `e9d4f0a1-…`（原样） | 原生格式 |
+| Codex | `codex:6f3c2a9e-…` | 避免与 Claude 的 UUID 撞主键 |
+| Pi | `pi:<原始id>:<cwd哈希>` | 树状会话，带 scope 区分项目/分支 |
+
+> * Claude / Codex：它们的 id 是"会话级全局唯一"的;
+> * Pi：默认 id 也是全局唯一的（uuidv7），但 Pi 支持显式传入 --session-id 这类项目局部 id（不校验唯一性），且同一份会话文件可能出现在多个项目目录下。所以只靠原始 id 跨项目可能撞，把 cwd 哈希并进主键是防御性兜底（同时让文件移动后身份保持稳定）。
+
+Codex 只索引根 thread 为普通 Trajex session。带有 `parent_thread_id`、`forked_from_id` 或其他 parent-thread metadata 的 child/fork/subagent thread（包括 guardian/auto-review thread）全部忽略，不挂接到 `subagents` 表。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。Codex 和 Pi 一样对变更文件做全量重放：先删除该 session 的旧派生投影，再从当前 JSONL 全量重建。
 
 每个 Pi 官方 v3 session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，Trajex 会根据 durable leaf 和 compaction（包括 retained tail）计算当前上下文：当前记录为 `visible`，已被取代但保留的分支证据为 `inactive`，来源明确隐藏的 transport context 为 `hidden`。详情页默认只展示 visible 记录，其他分支可显式展开。
 
-为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots，包括 `~/.claude/projects`、`~/.codex/sessions` 和 Pi 默认的 `~/.pi/agent/sessions`。Pi 的 App Settings 配置的是实际 session directory，可直接填写由 `PI_CODING_AGENT_DIR` 或 `PI_CODING_AGENT_SESSION_DIR` 解析出的目录；Trajex 不读取环境变量或 CLI 参数，也不再向配置路径后面追加 `agent/sessions`。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
+为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots：Claude 的 `~/.claude/projects`、Codex 的 `~/.codex/sessions`（外加 `session_index.jsonl`）和 Pi 默认的 `~/.pi/agent/sessions`。App Settings 中 Claude 与 Codex 配置的是各自的 provider root（默认 `~/.claude` / `~/.codex`），Trajex 会在此基础上追加 `projects` / `sessions` 进行发现和监听；Pi 配置的则是最终 session directory，Trajex 不再追加任何路径，可直接填写由 `PI_CODING_AGENT_SESSION_DIR` 解析出的目录，或由 `PI_CODING_AGENT_DIR` 解析出的目录下的 `sessions` 子目录（即 `$PI_CODING_AGENT_DIR/sessions`）。Trajex 不读取环境变量或 CLI 参数。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
 
 ## App 与 CLI 的关系
 
@@ -57,7 +68,7 @@ Codex root threads 会成为普通 Trajex sessions。当 parent-thread metadata 
 
 第一次打开 App 或者第一次运行 CLI 查询 `/trajex --build` 会构建索引，其中一方已完成后，另一方复用同一份索引，通常只做增量检查/更新。100 个 sessions 通常需要约 5 秒。之后会进行增量重建。
 
-只有新增或修改过的 JSONL 文件会被重新解析。当可选 app 正在运行时，它就是 active indexer：它监听 project files，并在 worker thread 中构建索引。仅凭新鲜的 `__app_heartbeat__` 就意味着 daemon 拥有写入职责，因此 CLI 调用会保持只读；另有一个独立的 SQLite writer lease 防止跨进程写入重叠。`__app_last_successful_build__` marker 不参与写入判断，记录的是 App 索引新鲜度，仅用于观测记录。
+只有新增或修改过的 JSONL 文件会被重新解析。增量索引只做 upsert，不会清理失效内容：被删除或损坏的 transcript 对应的派生行会保留在 SQLite 中。只有 rebuild（强制全量重建）才能删除失效的内容，但 CLI 和 App 的 rebuild 层级不同：CLI 的 `/trajex --build` 只清空 sessions、messages 等派生表，并从当前磁盘文件重新索引（record 级重建），不会重建 SQLite 文件本身，需要彻底重建文件时得先删除 `~/.trajex/trajex.sqlite` 再重新构建；App 的手动重建则相反，它会先构建一个全新的临时数据库、复制旧库的 memories，成功后原子替换主数据库文件，等于重建 SQLite 文件并套用当前 schema。两种 rebuild 都会保留人工确认的 memories 层。另外，schema 列的新增由打开数据库时的迁移（schema-migrations）幂等处理；迁移只增加新列，不删除旧列。旧列只有在 rebuild 生成新数据库时才会消失。当可选 app 正在运行时，它就是 active indexer：它监听 project files，并在 worker thread 中构建索引。仅凭新鲜的 `__app_heartbeat__` 就意味着 daemon 拥有写入职责，因此 CLI 调用会保持只读；另有一个独立的 SQLite writer lease 防止跨进程写入重叠。`__app_last_successful_build__` marker 不参与写入判断，记录的是 App 索引新鲜度，仅用于观测记录。
 
 ## App：给人使用的界面
 
@@ -262,7 +273,7 @@ npm i -g @trajex-apps/cli   # 本地全局更新
 | **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi recursive official v3 `*.jsonl` | Title、project、timestamps、git branch、source |
 | **Messages** | user + assistant turns | Full text、model、token usage、parent chain |
 | **Tool calls** | every tool invocation | Tool name、input、file paths |
-| **Subagents** | Claude `subagents/agent-<id>.jsonl`; Codex child threads | Agent type、description、full conversation |
+| **Subagents** | Claude `subagents/agent-<id>.jsonl` | Agent type、description、full conversation |
 | **Workflows** | Claude `workflows/wf_<runId>.json` | Script、result、agent count |
 | **Workflow agents** | Claude `subagents/workflows/wf_<runId>/` | Per-agent transcripts |
 | **Memories** | registered markdown files | Conclusions linked to source sessions |

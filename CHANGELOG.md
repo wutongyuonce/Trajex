@@ -1,6 +1,22 @@
 # Changelog
 
-## [0.2.3]
+## [0.2.4]
+
+### Changed
+
+- Schema migration 只为旧数据库增加新列；已废弃的旧列保留到 rebuild 生成新数据库时再移除。
+- Codex 根 thread 改为与 Pi 一致的“删除该 session 的 transcript 派生投影后全量重建”流程，避免依赖增量 upsert 推断历史重写。
+- Codex 工具调用结果统一产出 `tool_result` message，让 Codex 工具结果进入统一的 messages 表和 FTS 索引；普通函数、自定义工具、工具搜索和网络搜索调用继续使用统一的工具记录模型。
+- Codex session 发现改为依据 `session_meta.payload.parent_thread_id`、`forked_from_id` 及 subagent 元数据识别派生 thread；普通 child/fork/subagent 和 guardian/auto-review thread 不再进入解析与索引。
+- `delete-session` 仅替换 transcript 派生数据，保留人工确认的 durable memories；Pi 与 Codex 的全量重放语义保持一致。
+- 补充 Codex、Pi JSONL 结构以及 CLI/Core 的索引、投影和查询行为文档。
+
+### Fixed
+
+- 旧数据库启动迁移时不再删除遗留的 `messages.is_sidechain` 列。
+- 修复 Codex 工具结果无法作为独立消息查询、全文搜索和详情时间线内容的问题。
+
+## [0.2.4]
 
 ### Added
 

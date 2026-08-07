@@ -1,4 +1,4 @@
-# Incremental indexing does not infer destructive transcript changes
+# Incremental discovery and full session replacement
 
 **Context.** Trajex treats JSONL and similar transcript files as append-oriented
 sources during ordinary indexing. Providers expose an opaque cursor, typically
@@ -16,8 +16,8 @@ require every provider to define a reliable mapping from an absent/rewritten
 unit back to all derived rows, including subagents, workflows, summaries,
 tool calls, and tool results.
 
-**Decision.** Ordinary incremental indexing does **not** infer destructive
-transcript changes. In particular:
+**Decision.** Discovery remains incremental, but providers with a full-replay
+session projection use explicit session replacement. In particular:
 
 - A deleted or otherwise missing source file does not automatically delete its
   existing SQLite session and derived rows.
@@ -25,17 +25,19 @@ transcript changes. In particular:
   of the previously indexed session. Provider-specific incremental parsing may
   continue from its stored cursor when the change is not explicitly recognized
   as a semantic retraction.
-- SQLite is a derived, incrementally maintained search index, not a destructive
-  filesystem mirror. Upserts and explicit provider records remain the normal
-  synchronization mechanism.
+- SQLite is a derived search index, not a destructive filesystem mirror. Claude
+  may continue incrementally from its cursor; Pi and Codex root threads fully
+  replay changed files and explicitly replace the affected session projection.
 - A full rebuild is the authoritative reconciliation operation. It clears
   regenerable transcript tables, discovers the currently existing source files,
   and re-imports them from scratch. The durable `memories` layer is preserved.
 
-This rule has one deliberate exception: a provider may emit an explicit
-`delete-session` record when it understands the semantic retraction, such as a
-Codex guardian/auto-review thread or a Pi provenance replacement. That is an
-explicit provider decision, not an inference from a missing or damaged file.
+Pi and Codex use `delete-session` as the first record of a changed full-replay
+session. `persist` removes the old transcript-derived rows for that session,
+preserves durable `memories`, then consumes the complete record stream and
+writes the replacement projection. Codex
+child/fork/subagent/guardian rollouts are filtered out before parsing, so they
+do not emit `delete-session` or any other indexed records.
 
 **Operational consequence.** When transcript files have been deleted, restored,
 rewritten, or otherwise damaged outside the normal append flow, users should
@@ -44,9 +46,9 @@ derived rows by design. Incremental indexing remains optimized for safe,
 append-oriented updates; rebuild is the recovery path for source history
 reconciliation.
 
-**Consequences.** Normal indexing avoids destructive guesses and remains safe
-around partial filesystem updates, at the cost of temporary stale rows after
-destructive source changes. The cost is explicit and bounded: rebuild provides
-the authoritative result. Future providers may implement stronger replacement
-semantics, but only when they can prove the source unit is complete and can
-identify every derived row that must be removed.
+**Consequences.** Full replay keeps each changed Pi/Codex session projection
+exactly aligned with the records emitted from the current complete file, at the
+cost of deleting and rebuilding that session inside the write transaction.
+Source-file deletion or partial filesystem updates still do not trigger a
+session delete automatically; rebuild remains the recovery path for those
+cases.

@@ -243,7 +243,7 @@ test('runtime skips Codex guardian review threads', () => {
   });
 });
 
-test('runtime removes stale Codex guardian rows when the JSONL was already indexed', () => {
+test('runtime ignores Codex guardian rows without removing stale projections', () => {
   const home = tempHome();
   const codexSessionDir = join(home, '.codex', 'sessions', '2026', '06', '15');
   mkdirSync(codexSessionDir, { recursive: true });
@@ -308,13 +308,13 @@ test('runtime removes stale Codex guardian rows when the JSONL was already index
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.deepEqual(JSON.parse(result.stdout), {
-    sessions: [],
-    searchCount: 0,
-    sessionRows: 0,
-    messageRows: 0,
-    toolRows: 0,
-    resultRows: 0,
-    subagentRows: 0,
+    sessions: [guardianSessionId],
+    searchCount: 1,
+    sessionRows: 1,
+    messageRows: 1,
+    toolRows: 1,
+    resultRows: 1,
+    subagentRows: 1,
   });
 });
 

@@ -39,13 +39,24 @@ Both read the same `~/.trajex/trajex.sqlite` database. The indexer consumes Clau
 
 ## Multi-Provider Support
 
+Codex and Claude Code are processed according to schemas derived from testing real files; neither vendor publishes a format specification.
+
 Trajex indexes every provider into the same SQLite schema rather than maintaining separate databases. Rows carry a `source` value; non-Claude IDs are provider-prefixed to avoid collisions.
 
-Codex root threads become regular Trajex sessions. When parent-thread metadata is available, Codex child threads attach through the same `subagents` table. Codex does not emit Claude-style workflow metadata, so workflow-related tables may be empty when only Codex history is present.
+| Provider | Internal id shape | Reason |
+|---|---|---|
+| Claude | `e9d4f0a1-…` (as-is) | Native format |
+| Codex | `codex:6f3c2a9e-…` | Avoid primary-key collisions with Claude's UUIDs |
+| Pi | `pi:<raw-id>:<cwd-hash>` | Tree-shaped sessions, scoped per project/branch |
+
+> * Claude / Codex: their ids are globally unique at the session level;
+> * Pi: the default id is also globally unique (uuidv7), but Pi supports explicitly passing project-local ids such as `--session-id` (uniqueness is not enforced), and the same session file may appear under multiple project directories. So relying on the raw id alone can collide across projects; folding the cwd hash into the primary key is a defensive fallback (and keeps identity stable when files move).
+
+Only Codex root threads become regular Trajex sessions. Codex child/fork/subagent threads, including guardian/auto-review threads, are ignored when parent-thread metadata or `thread_source: "subagent"` identifies them; they are not attached to `subagents`. Codex does not emit Claude-style workflow metadata, so workflow-related tables may be empty when only Codex history is present. Like Pi, Codex fully replays changed files: it first deletes the session's old derived projection, then rebuilds it entirely from the current JSONL.
 
 Each official Pi v3 session JSONL file becomes a Trajex session. Pi entries form a tree, so Trajex resolves the durable leaf and compaction forms, including retained tails: current context is `visible`, superseded branch evidence is `inactive`, and source-suppressed transport context is `hidden`. The detail view shows visible records by default and lets readers explicitly expand inactive evidence.
 
-To support live app refresh, Trajex watches each registered provider's declared roots, including `~/.claude/projects`, `~/.codex/sessions`, and Pi's default `~/.pi/agent/sessions`. The Pi App Setting stores the actual session directory; it may point to the directory resolved from `PI_CODING_AGENT_DIR` or `PI_CODING_AGENT_SESSION_DIR`. Trajex does not read environment variables or CLI arguments, and does not append `agent/sessions` to the configured path. Codex's `session_index.jsonl` is used only as lightweight title/update metadata during indexing, not as a message transcript source.
+To support live app refresh, Trajex watches each registered provider's declared roots: Claude's `~/.claude/projects`, Codex's `~/.codex/sessions` (plus `session_index.jsonl`), and Pi's default `~/.pi/agent/sessions`. In App Settings, Claude and Codex take the provider root (default `~/.claude` / `~/.codex`), and Trajex appends `projects` / `sessions` to it for discovery and watching; Pi takes the final session directory and Trajex appends nothing to it, so you can fill in the directory resolved from `PI_CODING_AGENT_SESSION_DIR` directly, or the `sessions` subdirectory under the directory resolved from `PI_CODING_AGENT_DIR` (i.e. `$PI_CODING_AGENT_DIR/sessions`). Trajex does not read environment variables or CLI arguments. Codex's `session_index.jsonl` is used only as lightweight title/update metadata during indexing, not as a message transcript source.
 
 ## App and CLI Relationship
 
@@ -57,7 +68,7 @@ The desktop app and CLI install independently: installing the app does not requi
 
 The first time you open the app or run a CLI query with `/trajex --build`, the index is built. Once either side has built it, the other reuses the same index, typically only doing incremental checks/updates. 100 sessions usually takes about 5 seconds. Subsequent runs use incremental rebuilds.
 
-Only new or modified JSONL files are re-parsed. When the optional app is running, it acts as the active indexer: it watches project files and builds the index in a worker thread. The presence of a fresh `__app_heartbeat__` means the daemon holds write responsibility, so CLI calls remain read-only; a separate SQLite writer lease prevents cross-process write overlap. The `__app_last_successful_build__` marker does not participate in write arbitration — it records app index freshness for observability only.
+Only new or modified JSONL files are re-parsed. Incremental indexing only upserts and never cleans up stale content: derived rows for deleted or corrupted transcripts remain in SQLite. Only a rebuild (forced full re-index) can remove stale content, but the CLI and App rebuild at different levels: the CLI's `/trajex --build` only clears derived tables such as sessions and messages and re-indexes from the current on-disk files (record-level rebuild); it does not rebuild the SQLite file itself — to rebuild the file from scratch you must first delete `~/.trajex/trajex.sqlite` and rebuild. The App's manual rebuild is the opposite: it first builds a brand-new temporary database, copies the old database's memories, and atomically replaces the main database file on success — equivalent to rebuilding the SQLite file and applying the current schema. Both rebuilds preserve the human-confirmed memories layer. New schema columns are applied idempotently by migrations (schema-migrations) on database open; migrations only add new columns, never drop old ones. Old columns disappear only when a rebuild produces a new database. When the optional app is running, it acts as the active indexer: it watches project files and builds the index in a worker thread. The presence of a fresh `__app_heartbeat__` means the daemon holds write responsibility, so CLI calls remain read-only; a separate SQLite writer lease prevents cross-process write overlap. The `__app_last_successful_build__` marker does not participate in write arbitration — it records app index freshness for observability only.
 
 ## App: A Human Interface
 
@@ -193,7 +204,9 @@ npm run dev
 Run these commands from `app/`:
 
 ```bash
-# Compile main, preload, and renderer only
+# Compile main, preload, and renderer and package (electron-builder produces
+# installers for the current platform; on macOS this is equivalent to dist:mac).
+# Run npx electron-vite build if you only want compiled output.
 npm run build
 
 # Generate an unpacked app directory
@@ -208,7 +221,55 @@ The flow first compiles Electron's main/preload/renderer processes with
 assemble the app, and generate installers. Artifacts are written to
 `app/release/`; `npm run pack` generates `release/mac-arm64/Trajex.app`, while
 `npm run dist:mac` generates the DMG and ZIP. Without an Apple Developer ID,
-the artifacts are unsigned.
+the artifacts are unsigned. When compiling only, `electron-vite` writes its
+output to `app/out/`.
+
+## Publishing the npm Package
+
+Only `@trajex-apps/cli` is published to npm; `@trajex/core` is a private
+workspace that is compiled directly into the CLI at build time and is not
+published separately.
+
+### Prerequisites
+
+- Logged in to npm, with an account that is a member of the organization owning
+  the `@trajex-apps` scope and has publish permissions (Owner/Admin);
+- The account has 2FA enabled (npm requires it for publishers). Publishing uses
+  the session token generated by `npm login`, or an access token with
+  bypass-2FA permission.
+
+### Publishing Steps
+
+```bash
+# 1. Log in (one-time)
+npm login
+
+# 2. Bump the version: must bump before every publish; npm does not allow
+#    overwriting an already-published version
+npm version patch -w @trajex-apps/cli
+# or a specific version (--no-git-tag-version: changes files only, no git tag/commit):
+npm version 0.2.1 -w @trajex-apps/cli --no-git-tag-version
+
+# 3. Publish (the prepack hook automatically runs build:cli before uploading)
+npm publish --workspace @trajex-apps/cli
+
+# 4. Verify
+npm view @trajex-apps/cli version
+npm i -g @trajex-apps/cli   # update globally locally
+```
+
+### Notes
+
+- `packages/cli`'s `prepack: "npm run build"` guarantees the published payload
+  is always a fresh build;
+- `files: ["dist", "README.md"]` determines the tarball contents, and
+  `publishConfig.access: "public"` allows the org-scoped package to be published
+  as public;
+- If you bump the version by mistake, you can roll back at any time with
+  `npm version <version> -w @trajex-apps/cli --no-git-tag-version` as long as
+  you have **not published** yet;
+- `npm view` may briefly return 404 immediately after publishing (registry CDN
+  propagation delay); wait a moment and retry.
 
 ## SQLite Schema
 
@@ -221,7 +282,7 @@ the artifacts are unsigned.
 | **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi recursive official v3 `*.jsonl` | Title, project, timestamps, git branch, source |
 | **Messages** | user + assistant turns | Full text, model, token usage, parent chain |
 | **Tool calls** | every tool invocation | Tool name, input, file paths |
-| **Subagents** | Claude `subagents/agent-<id>.jsonl`; Codex child threads | Agent type, description, full conversation |
+| **Subagents** | Claude `subagents/agent-<id>.jsonl` | Agent type, description, full conversation |
 | **Workflows** | Claude `workflows/wf_<runId>.json` | Script, result, agent count |
 | **Workflow agents** | Claude `subagents/workflows/wf_<runId>/` | Per-agent transcripts |
 | **Memories** | registered markdown files | Conclusions linked to source sessions |

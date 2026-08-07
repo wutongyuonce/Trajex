@@ -15,7 +15,8 @@
 // Write semantics are the canonical ones reconciled from the drift: messages
 // upsert via ON CONFLICT; sessions merge with any existing row (started_at MIN,
 // ended_at MAX, message_count reset-or-accumulate, fill-if-null for the rest);
-// turn-duration is a targeted UPDATE; delete-session cascades. The generator's
+// turn-duration is a targeted UPDATE; delete-session replaces transcript-derived
+// rows but preserves durable memories. The generator's
 // return value is the new cursor, persisted verbatim into index_state.
 
 import type { Cursor, TranscriptRecord, IndexUnit } from './providers/types.ts';
@@ -81,10 +82,10 @@ function statements(db: SqliteDb) {
   };
 }
 
-// Cascade-delete every row belonging to a session/thread (guardian retraction).
+// Replace every transcript-derived row belonging to a session/thread.
 /**
- * 级联删除 session 或 Codex guardian/child thread 的全部派生行。adapter 使用
- * delete-session 主动撤回旧版本已索引、当前应隐藏的 thread。
+ * 删除 session 的 transcript 派生行，为全量重放腾出干净投影；人工确认的
+ * memories 是 durable 层，不随 session replacement 删除。
  */
 function deleteSession(db: SqliteDb, sessionId: string) {
   db.prepare('DELETE FROM tool_results WHERE session_id=? OR message_uuid IN (SELECT uuid FROM messages WHERE session_id=? OR agent_id=?)').run(sessionId, sessionId, sessionId);
@@ -94,7 +95,6 @@ function deleteSession(db: SqliteDb, sessionId: string) {
   db.prepare('DELETE FROM workflow_agents WHERE session_id=?').run(sessionId);
   db.prepare('DELETE FROM workflows WHERE session_id=?').run(sessionId);
   db.prepare('DELETE FROM summaries WHERE session_id=?').run(sessionId);
-  db.prepare('DELETE FROM memories WHERE session_id=?').run(sessionId);
   db.prepare('DELETE FROM sessions WHERE id=?').run(sessionId);
 }
 

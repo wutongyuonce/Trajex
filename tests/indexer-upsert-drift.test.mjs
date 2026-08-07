@@ -52,3 +52,22 @@ test('re-indexing upserts messages (stable rowid) and replaces message_count', (
 
   db.close();
 });
+
+test('delete-session removes transcript projection but preserves memories', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMA);
+  db.prepare("INSERT INTO sessions (id, source) VALUES ('sid-delete', 'codex')").run();
+  db.prepare("INSERT INTO messages (uuid, session_id, text) VALUES ('msg-delete', 'sid-delete', 'old')").run();
+  db.prepare("INSERT INTO memories (id, session_id, summary, created_at) VALUES ('mem-delete', 'sid-delete', 'keep', '2026-06-10T10:00:00Z')").run();
+
+  const unit = { key: 'delete-session.jsonl', sessionId: 'sid-delete' };
+  persist(db, unit, (function* () {
+    yield { kind: 'delete-session', sessionId: 'sid-delete' };
+    return '1:1';
+  })());
+
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM sessions WHERE id='sid-delete'").get().c, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM messages WHERE session_id='sid-delete'").get().c, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) c FROM memories WHERE id='mem-delete'").get().c, 1);
+  db.close();
+});

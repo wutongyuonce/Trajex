@@ -29,7 +29,7 @@ function writeRollout(path, meta, source) {
   ].map(line => JSON.stringify(line)).join('\n') + '\n');
 }
 
-test('Codex replay rollouts remain independent sessions', () => {
+test('Codex root replay is indexed while fork rollout is ignored', () => {
   const dir = mkdtempSync(join(tmpdir(), 'trajex-codex-replay-'));
   const parentPath = join(dir, 'parent.jsonl');
   const replayPath = join(dir, 'replay.jsonl');
@@ -64,12 +64,12 @@ test('Codex replay rollouts remain independent sessions', () => {
   const replayToolResults = db.prepare('SELECT * FROM tool_results WHERE session_id=?').all(replaySessionId);
   const assembled = assembleSessionDetail({ messages, toolCalls, toolResults, subagents: [], workflows: [] }).messages;
 
-  assert.equal(messages.length, 1, 'the replay remains outside the visible session timeline');
+  assert.equal(messages.length, 2, 'the root includes the tool result message in its canonical timeline');
   assert.equal(toolCalls.length, 1);
   assert.equal(toolResults.length, 1);
-  assert.equal(replayMessages.length, 1);
-  assert.equal(replayToolCalls.length, 1);
-  assert.equal(replayToolResults.length, 1);
+  assert.equal(replayMessages.length, 0);
+  assert.equal(replayToolCalls.length, 0);
+  assert.equal(replayToolResults.length, 0);
   assert.deepEqual(assembled[0].tool_calls?.map(call => call.input_json), ['"text(\\"parent\\")"']);
   assert.equal(assembled[0].tool_calls?.[0].result?.content, 'done');
   db.close();

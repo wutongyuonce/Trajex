@@ -65,7 +65,7 @@ Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有
 1. provider adapter 边界
    - 每个 provider 自己理解原始日志。
    - 输出统一 `TranscriptRecord`。
-   - Codex 的去重、guardian 删除、child thread 映射都在这里完成。
+   - Codex 的去重、root-thread 筛选和全量重建都在这里完成。
 
 2. persist 写入/query 检索边界
    - persist 是唯一写库语义。
@@ -732,7 +732,7 @@ type TranscriptRecord =
 { kind: 'delete-session', sessionId }
 ```
 
-同样不是表行。目前有两种使用语义：Codex 在识别到 guardian / auto-review thread 时发出它，撤回不应展示的 thread；Pi 在每次全量重放分支树前发出它，先移除旧投影，再写入带 `visible` / `inactive` 语义的完整 session。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent、全部摘要，以及 `memories.session_id` 匹配的人工记忆；其他 session 或未关联 session 的记忆不会受影响。
+同样不是表行。Pi 和 Codex 根 thread 都在全量重放前发出它，先移除旧投影，再写入当前完整 session；Codex 不再把它作为 guardian / auto-review 的特殊撤回协议。child/fork/guardian 在发现阶段直接忽略，因此不会进入 `parse`，也不会产生 `delete-session`。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent 和全部摘要，但保留 `memories`；其他 session 或未关联 session 的记忆也不会受影响。
 
 ### 描述、监视、原文回源：`ProviderDescriptor`、`RawLookup`、`RawRecord`、`ProviderAdapter`
 
@@ -822,7 +822,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | 索引单位       | 主/子代理 JSONL 与 workflow JSON      | 一个 rollout JSONL                        |
 | cursor/策略    | mtime + 已处理行；流式逐行            | mtime 判断变化；全文件重放，lines 仅记录 |
 | 必须全量的原因 | 不需要；仅续读新增行                  | event_msg 与 response_item 双向去重       |
-| 特殊关系       | history 标题、Workflow、subagent meta | guardian 删除、父/子 thread、collab spawn |
+| 特殊关系       | history 标题、Workflow、subagent meta | root-thread 筛选、父/子 thread、collab spawn |
 | raw 定位       | session/subagent JSONL 内 UUID        | `codex:<thread>:<line>`                   |
 
 它负责：
@@ -847,6 +847,8 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
   - 负责告诉 app 监听哪里：`watchRoots()` 告诉 app daemon 应该监听哪些目录
 
 ### Claude Code：主会话、子会话与 Workflow 的 JSONL/JSON 映射 `claude.ts`
+
+> [Claude Code JSONL 格式参考文档](./claude-code-jsonl.md)
 
 #### 增量发现 `discoverAt()`
 
@@ -1242,9 +1244,21 @@ message 是承载 Claude 工具调用的锚点，Claude 的工具调用不是单
 }
 ```
 
-> 总结一下，**一次完整的工具调用**会产出 `content_type: "tool_use"/"unknown"` 的 assistant `message` — 工具 `tool_call` — `content_type = "tool_result"` 的 user `message` — `tool_result` 记录。后两条 tool-result 记录可能不存在，因为工具可能尚未返回或原始日志缺少结果。
+> 总结一下，**一次完整的工具调用**会产出 `content_type: "tool_use"/"unknown"` 的 assistant `message` → 工具 `tool_call` → `content_type = "tool_result"` 的 user `message` → `tool_result` 记录。后两条 tool-result 记录可能不存在，因为工具可能尚未返回或原始日志缺少结果。
 >
-> Claude Code 的 Skill 本质也是 `Skill` 工具调用，并且没有工具结果，按顺序产出 `content_type: "tool_use"/"unknown"` 的 `assistant message` — `Skill tool_call` — `content_type: skill_instructions` 的 `assistant message` 记录。
+> Claude Code 的 Skill 本质也是 `Skill` 工具调用，并且没有工具结果，按顺序产出 `content_type: "tool_use"/"unknown"` 的 `assistant message` → `Skill tool_call` → `content_type: skill_instructions` 的 `assistant message` 记录。
+
+> 可以发现，除了 `tool_result` 记录之外，工具结果还会保存一条 `content_type = "tool_result"` 的 user `message`，目的是：
+>
+> 1. 进全文索引（最关键） FTS 只挂在 messages 和 memories 上， schema.sql 的 messages_fts 只索引 messages.text ， tool_results 没有任何 FTS 索引 。工具输出里往往藏着最关键的证据——Bash 报错、Read 的文件内容、lint 结果。如果只存 tool_results ，这些内容就永远搜不到；存成 message 后，"Exit code 1" 或某段报错文本就能命中检索。
+>
+> 2. 保留会话链/时间线位置 messages 行带 timestamp 、 session_id 、 parent_uuid 、 cwd 、 model 。原文链是 assistant(tool_use) → user(tool_result) ，保留 message 行才能维持 parent_uuid 链完整，让 query.ts 的 context() / trace() 能回溯"这次工具调用之后发生了什么"。 tool_results 表只有 content + tool_use_id，没有这些元数据。
+>
+> 3. 统一检索语义 search() / thread() 都只读 messages ，Agent 脚本写 search(...) 就能命中工具输出，或直接过滤 content_type='tool_result' 查"某次任务的失败输出"，不需要感知 tool_results 表的存在。
+>
+> 4. 统计计数 message_count 等聚合统计依赖 message 行计数。
+>
+> 一个容易误解的点：详情展示层 session-detail.ts 会 continue 跳过 content_type === 'tool_result' 的消息，不把它们独立渲染——因为内容已经挂在对应 tool call 的 result 上了。 所以存这条 message 不是为了展示，而是为了"可被搜索 + 链完整 + 可过滤" ，展示由 tool_results 那份承担。
 
 4、**user 消息行中 `"isCompactSummary": true,`**
 
@@ -1600,6 +1614,8 @@ Claude 的消息 UUID 来自原始 JSONL 行本身，而不含行号；`rawClaud
 
 ### Codex：主 rollout、子线程与顶层 JSONL 行的映射 `codex.ts`
 
+> [Codex JSONL 格式参考文档](./codex-jsonl.md)
+
 Codex 的原始转录以一份 rollout JSONL 表示一个 thread。`discoverAt()` 先读取 `~/.codex/session_index.jsonl`，取得 thread 标题和最近更新时间；随后递归枚举 `~/.codex/sessions/**/*.jsonl`。每个根 thread 的 rollout 都会成为一个统一的 `IndexUnit`：
 
 ```ts
@@ -1649,7 +1665,7 @@ forked_from_id
 source.subagent.parent_thread_id
 ```
 
-但这不是 Claude Code 那种“主 session + 独立 subagent transcript 均索引”的实现：当前 `discoverAt()` 会跳过任何带父 ID 的 thread。因此根 rollout 会产生 `session`，普通 child/fork/subagent rollout 暂不产生 `subagent`、消息或工具记录。guardian/auto-review child 是例外：即使文件 mtime 未变也会重新检查；一旦识别为 guardian，解析器只发出 `delete-session`，以移除可能遗留的旧索引。
+但这不是 Claude Code 那种“主 session + 独立 subagent transcript 均索引”的实现：当前 `discoverAt()` 会跳过任何带父 ID 或 `thread_source === "subagent"` 的 thread。因此根 rollout 会产生 `session`，普通 child/fork/subagent/guardian rollout 都不产生 `subagent`、消息、工具或删除记录。根 rollout 进入 parse 后先发 `delete-session`，再全量写入当前完整投影。
 
 ```text
 根 rollout JSONL
@@ -1720,23 +1736,19 @@ source.subagent.parent_thread_id
 {"type":"response_item","payload":{"type":"tool_search_output","call_id":"…","output":"…","is_error":false}}
 ```
 
-每一行只产生 `tool_result`，并以 namespaced call ID 关联前述 `tool_call`；若输出先于调用被读取，`message_uuid` 可为空，关联主键仍保持正确。没有 `web_search_output` 的专门映射。
+每一行产生一条 `content_type: 'tool_result'` 的 user `message` 和一条 `tool_result`；后者以 namespaced call ID 关联前述 `tool_call`，`message_uuid` 指向这条结果 message。若输出先于调用被读取，结果 message 仍会产生，tool call 可稍后通过 call ID 关联。没有 `web_search_output` 的专门映射。
 
 与 Claude 的工具行相同，Trajex 把一次原始调用拆成时间线锚点和工具事实：
 
 ```text
 response_item.*_call
-  ├── message(content_type: 'tool_use')  ← 时间、顺序、parent chain、UI 位置
-  └── tool_call                          ← 名称、输入、与 tool_result 的关联
+  ├── message(content_type: 'tool_use')       ← 时间、顺序、parent chain、UI 位置
+  └── tool_call                                ← 名称、输入、与 tool_result 的关联
 ```
 
-`tool_result` 不另造对话 message，而是回挂到 `tool_call`。这样详情页可按 `message_uuid` 把工具块附回对应 assistant 时间线行，同时仍能独立查询调用与结果。
+`tool_result` 同时保留规范结果记录，并投影为 user `message`，与 Claude 的查询和 FTS 语义统一。
 
 #### 原文回查 `rawCodex()`：从规范 UUID 精确回读 JSONL 行
-
-`rawCodex()` 从 message UUID 中解析 thread ID 和行号，再从 session 的 `jsonl_path`（或递归查找匹配 rollout）读回原始行。对 `event_msg`，它返回 `payload.message` / `payload.text`；对 `response_item.message`，返回拼接后的 content text，供界面展开被索引时截断的正文。
-
-
 
 Codex 的 message UUID 由 Trajex 按原线程 ID 与 JSONL 行号构造：`codex:<threadId>:<lineNumber>`，例如 `codex:019e8951-xxx:37`。因此 `rawCodex()` 不需要扫描消息正文来猜测目标：
 
@@ -1749,18 +1761,74 @@ Codex 的 message UUID 由 Trajex 按原线程 ID 与 JSONL 行号构造：`code
 
 ### Pi：一份具有分支树的 v3 session JSONL
 
+> [Pi JSONL 格式参考文档](./pi-jsonl.md)
+
 Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",version:3,id,cwd,…}`；其余条目有 `id` 和 `parentId`，并通过 durable `leaf` 指向当前上下文。解析器全量 replay，结合 leaf、compaction 的 `firstKeptEntryId` 与 `retainedTail` 重建 active context；当前上下文投影为 `visible`，仍保留但已被分支替代的证据投影为 `inactive`，来源明确不展示的 custom message 投影为 `hidden`。
 
 | 原始条目或字段                                               | 产出的 record                                                | 设计细节 / 不产出情况                                        |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | session header                                               | 最后的 `session`                                             | 提供 session ID、cwd、version、起止时间；自身不产出 message。 |
 | `{type:"session_info",name}` / `{type:"model_change",modelId}` | 无独立 record                                                | 前者更新最后的 session title；后者只参与后续 message 的 model 继承。 |
-| `{type:"compaction"|"branch_summary",summary}`               | `summary` + retained tail messages                         | `source: 'pi'`；compaction 的保留尾部也投影为 canonical message，避免 active context 丢失。 |
-| `{type:"custom_message",content,display}`                    | `message`                                                    | role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
+| `{type:"compaction"|"branch_summary",summary}`               | `summary` + retained tail messages                           | `source: 'pi'`；compaction 的保留尾部也投影为 canonical message，避免 active context 丢失。 |
+| `{type:"custom_message",content,display}`                    | custom `message`                                             | 扩展插入的 Entry，role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
 | `{type:"message",message:{role:"user",content}}`             | user `message`                                               | 仅文本 content 产生消息。                                    |
 | assistant 的 `content[]` text / thinking / toolCall part     | 每个 part 各产生 assistant `message`；toolCall 另有 `tool_call` | 以 `:partIndex` 后缀生成稳定 message ID，并串成 parent chain；usage 只附到最后一个可导航 part。 |
 | `message.role === "toolResult"`                              | tool-result `message` + `tool_result`                        | `toolCallId` 关联前述工具；错误状态写入 result。             |
-| `message.role === "bashExecution"`                           | `message`                                                    | 形成 `content_type: 'bash'` 的文本投影；不另造 `tool_result`。未知条目和无可投影文本的条目不产出。 |
+| `message.role === "bashExecution"`                           | bash `message`                                               | 形成 `content_type: 'bash'` 的文本投影；不另造 `tool_result`。未知条目和无可投影文本的条目不产出。 |
+
+#### 增量发现 `discoverAt()`
+
+Pi 的 session 文件按工作目录分层存放：
+
+```text
+~/.pi/agent/sessions/
+└── --<project-path>--/                 ← 目录名 = cwd 的 / 换成 -
+    ├── <timestamp>_<uuid>.jsonl        ← 一份 v3 session
+    └── ...
+```
+
+`discoverAt()` 用 `sessionFiles()` 递归枚举 session 目录下的全部 `*.jsonl`（Pi 支持任意子目录嵌套，不像 Claude 固定两级结构）。每个文件经过三重过滤，全部通过才产出 `IndexUnit`：
+
+1. **changedPaths 优化**（Electron daemon 通过 chokidar 传入，属优化提示）：只保留命中 changedPaths 中"该文件本身"或"sessionDir 本身"的候选。命中 sessionDir 本身是兜底——新增目录等只产生目录级事件时，也能把目录内文件重新纳入检查；
+2. **mtime 增量过滤**：读取 `index_state` 中保存的 cursor（`mtimeMs:lines`），cursor 非空且文件当前 mtime ≤ cursor 的 mtime 时跳过，认为没有变化；
+3. **header 校验**：读取文件第一行，必须是 `{"type":"session","version":3,"id":…}` 才接受；版本不是 3、第一行解析失败或 id 缺失的文件直接跳过（不报错，视为非 Pi 文件）。
+
+```ts
+{
+  key: '~/.pi/agent/sessions/--home-user-proj--/20260228_143022_abc123.jsonl',
+  sessionId: 'pi:abc123:…',             // pi:<encodeURIComponent(rawId)>:<sha256(cwd)>
+  project: 'home-user-proj',            // 由 header.cwd 推导
+  meta: {
+    sessionId: 'abc123',                // 原始 session id（不保证跨项目唯一）
+    cwd: '/home/user/proj'
+  }
+}
+```
+
+数据库级 session id 是 `pi:<rawId>:<cwd 哈希>`。raw id 可能按项目局部生成（如显式传入 `--session-id`），且同一份 session 文件可能出现在多个项目目录下，只靠 raw id 会跨项目撞主键；把 cwd 哈希并进主键是防御性兜底，同时让文件移动后身份保持稳定。
+
+cursor 形状同为 `mtimeMs:lines`，但与 Claude 的"行增量续读"不同：Pi 的 `parse(unit, _cursor)` 忽略 cursor 里的行数，总是**全量重放**整份文件——active context 由 durable leaf、compaction 的 `firstKeptEntryId` / `retainedTail` 从整棵树推导，无法从某个行号恢复。lines 只是记录文件当前总行数。因此 Pi 每次产出的 `session.countMode` 恒为 `'total'`，并在记录流开头发出 `delete-session`，让 persist 清理旧投影，避免全量重放叠加出重复行。
+
+`watchRoots(configuredRoot)` 直接返回配置的 session 目录本身（递归监听），不做任何路径拼接——App Settings 里填的就是最终 session directory，这也与 README 中"Pi 不再追加路径"的约定一致。
+
+#### 原文回查 `rawPi()`
+
+Pi 的 message UUID 由 Trajex 构造：`pi:<rawId>:<cwdHash>:<entryId>`（assistant 的多 part 消息会再拼 `:<partIndex>` 后缀）。因此 `rawPi()` 不需要扫描正文猜测目标：
+
+* 用 `input.session.jsonl_path` 定位文件，并防御性校验它必须位于 session 目录内，防止越界读任意路径；
+* 把 message UUID 按 `:` 切分，取 `parts[3]` 作为 entry id（part 后缀在 `parts[4]`，不影响定位）；
+* 逐行 `JSON.parse` 比对 `entry.id`，命中即返回该行原文。
+
+```ts
+// uuid = "pi:<rawId>:<cwdHash>:<entryId>[:<partIndex>]"
+const parts = input.messageUuid.split(':');
+const entryId = parts[3];
+```
+
+与 `rawClaude()` / `rawCodex()` 的两个差异：
+
+* **不提取 messageText**：`rawPi()` 的返回值只有原始行 `text`。分页字段呈一次性直读形态——`totalLength` = 行长度、`offset: 0`、`limit` = 行长度、`hasMore: false`，即把整行当作一段返回，不像 `rawClaude()` 那样顺带解析出可展示的完整文本（`messageText`）。App 在详情页展开被截断的消息时，对 Pi 只能回落到数据库里已 `trunc` 截断的 `msg.text`，拿不到原始完整行；
+* **按 entry id 定位，而非按消息定位**：同一 entry 投影出的多条消息（assistant 的 text / thinking / toolCall part，以及 toolResult 消息与它附带的 `tool_result` 记录）共享同一个 entry id，回查都会返回同一行原始 entry；compaction `retainedTail` 合成的消息 UUID 指向 compaction entry id，回查实际命中 compaction 行本身，无法还原合成消息的"原文"。
 
 ### `registry.ts`、 `builtins.ts`
 
@@ -2398,8 +2466,8 @@ persist(db, unit, generator)
   → generator.next() 循环
     → write(record.kind) 按 record.kind 执行 INSERT / UPSERT / UPDATE / DELETE
       → message/tool/result/... 的预编译 statement
-      → session：读取旧行、merge 时间与字段、按 countMode 计数
-      → delete-session：显式级联删除
+      → delete-session：先显式级联删除旧投影
+      → session/message/tool/result/...：全量写入当前投影
   → generator 完成后 return cursor
   → cursor 非 null → 更新 index_state(unit.key, mtime, lines_processed)
   → return cursor
@@ -2441,7 +2509,7 @@ function statements(db: SqliteDb) {
 
 | 语义 | 表 / record | 冲突时行为 | 原因 |
 | --- | --- | --- | --- |
-| 精确 upsert | `messages` / `message` | 更新指定列 | 同 UUID 的 message 是同一事实；Codex full-reparse 必须安全重放。 |
+| 精确 upsert | `messages` / `message` | 更新指定列 | 适用于不先删除的增量 Provider；Codex/Pi 在 session 级重建前仍要求记录写入幂等。 |
 | replace 完整行 | `tool_calls`、`tool_results`、`summaries`、`sessions`、`workflows`、`index_state` | 删除旧行再插入新行 | 每次 record 已提供该行所需的完整列；`sessions` 的“新行”会先在 TS 中合并。 |
 | 字段级合并 | `subagents`、`workflow_agents` | 只用非 `NULL` 新字段覆盖旧字段 | 同一实体的信息由不同来源、不同时间到达。 |
 | 定点更新 / 删除 | `message-turn-duration`、`delete-session` | `UPDATE` / 多表 `DELETE` | 它们不是独立行的完整快照。 |
@@ -2562,7 +2630,7 @@ ON CONFLICT(agent_id) DO UPDATE SET
 **5、非“插入行”的 record**
 
 - `message-turn-duration`：执行 `UPDATE messages SET turn_duration_ms=? WHERE uuid=?`，因为 duration 晚于 message 才出现，不创建新 message。
-- `delete-session`：显式删除该 session 及其关联的 `tool_results`、`tool_calls`、`messages`、`subagents`、`workflow_agents`、`workflows`、`summaries`、`memories` 和 `sessions` 行。没有数据库级外键级联，删除顺序由 persist 维护。
+- `delete-session`：显式删除该 session 及其关联的 `tool_results`、`tool_calls`、`messages`、`subagents`、`workflow_agents`、`workflows`、`summaries` 和 `sessions` 行，但保留 `memories`。没有数据库级外键级联，删除顺序由 persist 维护；Pi 与 Codex 根 thread 都在全量重放前使用它。
 - generator 正常结束且 cursor 非 `null`：把 `"mtime:lines"` 拆成数值，`INSERT OR REPLACE` 写入 `index_state(jsonl_path, mtime, lines_processed)`；下次 `discover()` 以此判断文件是否变化、Claude 是否能跳过已消费行。
 
 未被 `switch (r.kind)` 覆盖的 record 会抛错，避免新增 Provider record 后静默丢数据。

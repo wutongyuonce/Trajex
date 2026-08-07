@@ -21,12 +21,11 @@ import { isAbsolute, join, normalize, relative } from 'node:path';
 import {
   trunc, truncJson, readLines,
   discoverCodexJsonlFiles, normalizeObservedCwd, projectSlugFromPath,
-  codexRawId, codexDbId, codexCallId, codexLineUuid, codexParentThreadId,
+  codexRawId, codexDbId, codexCallId, codexLineUuid, codexIsChildThread,
   codexIsGuardianThread, codexUsage,
   codexEventText, codexMessagePayloadText, codexVisibleMessageKey,
   codexToolInput, codexToolOutput,
   extractMessageIsMeta, isSkillInstructions,
-  readCodexGuardianThreadInfo,
 } from '../parsing.ts';
 
 import type {
@@ -85,8 +84,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   return discoverCodexJsonlFiles(sessionsDir).flatMap((file) => {
     if (ctx.changedPaths !== undefined && !sessionIndexChanged && !changedFiles.has(normalize(file.path))) return [];
     const cursor = ctx.lastCursor(file.path);
-    const guardian = readCodexGuardianThreadInfo(file.path);
-    if (!sessionIndexChanged && cursor !== null && Number(cursor.split(':')[0]) >= statSync(file.path).mtimeMs && guardian === null) {
+    if (!sessionIndexChanged && cursor !== null && Number(cursor.split(':')[0]) >= statSync(file.path).mtimeMs) {
       return [];
     }
     let meta: any = null;
@@ -100,15 +98,13 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
       } catch { /* malformed source line */ }
     });
     const rawId = meta ? codexRawId(meta.id) : null;
-    const parentId = meta ? codexParentThreadId(meta) : null;
     const indexed = rawId ? sessionIndex.get(rawId) : undefined;
-    if (guardian === null && parentId !== null) return [];
+    if (meta && codexIsChildThread(meta)) return [];
     return [{
       key: file.path,
-      sessionId: guardian === null ? codexDbId(rawId) ?? '' : '',
+      sessionId: codexDbId(rawId) ?? '',
       meta: {
         source: 'codex',
-        guardian: guardian !== null,
         indexedTitle: indexed?.title,
         indexedUpdatedAt: indexed?.updatedAt,
       },
@@ -143,16 +139,13 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
 
   const meta = metaRecord.obj.payload;
   const threadRawId = codexRawId(meta.id) as string;
-  if (codexIsGuardianThread(meta, records)) {
-    yield { kind: 'delete-session', sessionId: codexDbId(threadRawId) as string };
-    return outCursor;
-  }
+  if (codexIsChildThread(meta) || codexIsGuardianThread(meta, records)) return outCursor;
 
   const sessionId = codexDbId(threadRawId) as string;
   const project = projectSlugFromPath(normalizeObservedCwd(meta.cwd));
   const lineUuid = (n: number): string => codexLineUuid(threadRawId, n) as string;
 
-  const out: TranscriptRecord[] = [];
+  const out: TranscriptRecord[] = [{ kind: 'delete-session', sessionId }];
   const msgByUuid = new Map<string, MessageRecord>();
   const indexedMeta = unit.meta as { indexedTitle?: string; indexedUpdatedAt?: string | null } | undefined;
   const initialTimestamp = (meta.timestamp || metaRecord.obj.timestamp || null) as string | null;
@@ -175,7 +168,6 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   let currentCwd = normalizeObservedCwd(meta.cwd);
   let currentModel: string | null = null;
   const eventMessageKeys = new Set<string>();
-  const callMessageUuids = new Map<string, string>();
 
   const updateBounds = (ts: string | null) => {
     if (!ts) return;
@@ -284,12 +276,13 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       const name = payload.name || payload.tool || payload.type.replace(/_call$/, '');
       const toolId = codexCallId(threadRawId, payload.call_id) as string;
       out.push({ kind: 'tool_call', id: toolId, message_uuid: uuid, session_id: sessionId, name, input_json: truncJson(codexToolInput(payload)) as string, file_path: null });
-      callMessageUuids.set(toolId, uuid);
       continue;
     }
     if (['function_call_output', 'custom_tool_call_output', 'tool_search_output'].includes(payload.type) && payload.call_id) {
       const toolId = codexCallId(threadRawId, payload.call_id) as string;
-      out.push({ kind: 'tool_result', tool_use_id: toolId, message_uuid: callMessageUuids.get(toolId) || '', session_id: sessionId, content: trunc(codexToolOutput(payload) || ''), file_path: null, is_error: payload.is_error ? 1 : 0 });
+      const content = trunc(codexToolOutput(payload) || '');
+      const resultUuid = insertMessage({ uuid: lineUuid(currentLine), type: 'user', role: 'user', text: content, contentType: 'tool_result', timestamp: ts });
+      out.push({ kind: 'tool_result', tool_use_id: toolId, message_uuid: resultUuid, session_id: sessionId, content, file_path: null, is_error: payload.is_error ? 1 : 0 });
     }
   }
 

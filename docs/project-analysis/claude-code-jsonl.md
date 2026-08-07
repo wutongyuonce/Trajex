@@ -211,22 +211,3 @@ JSONL 与主会话按同一规则产出 message、tool call、tool result、summ
 workflow 子代理 JSONL 按普通子代理消息规则解析，但同名 `.meta.json` 只补充 `workflow_agent.agent_type` 和 `description`。workflow JSON 提供该 agent 的阶段、模型、状态、耗时、token 和工具调用数。两路记录按相同 `agent_id` upsert 合并。
 
 Trajex 会回扫主 transcript：先找名为 `Workflow` 的 assistant `tool_use`，再在对应 user `tool_result` 的文本中匹配 `runId` 或 workflow 名称，从而写入 `workflows.parent_tool_use_id`。匹配不到并不阻止 workflow 入库，只会得到 `null`。
-
-## 7. 增量、变更与原文回源
-
-普通 JSONL unit 的 cursor 是 `mtimeMs:linesProcessed`。文件 mtime 变化时，解析器会顺序读取文件、跳过已消费行，只为新增尾部产出 record。主会话首次完整读取的 `session.countMode` 为 `total`；有 cursor 的尾部读取为 `delta`。
-
-监听器传入变更路径时：
-
-- JSONL 变更重解析该 JSONL；
-- `.meta.json` 变更强制重解析同名 JSONL，即使 JSONL mtime 未变；
-- workflow JSON 变更重解析该 workflow；主 transcript 变更也会使该 session 的 workflow JSON 重跑，以刷新其父工具调用关联。
-
-`rawClaude()` 用已索引 session 的主 transcript 路径定位文件；有 `agent_id` 时，再依据是否关联 `workflow_agents.run_id` 选择普通或 workflow 子代理目录。它以消息 UUID 匹配原始 JSONL 行，并返回原始行和完整 `messageText`；桌面 App 用 `messageText` 展开入库时因长度限制而截断的消息。
-
-## 8. 使用边界
-
-- 这是本地实现格式，不是稳定 API；解析器必须容忍缺字段、未知 block 和未知顶层 type。
-- `uuid`、`parentUuid`、`sessionId` 等来源字段不等于数据库外键；Trajex 的归属关系以发现到的文件路径和规范化 ID 为准。
-- JSONL 可能包含历史、压缩前内容和不可展示事件；是否展示由上层的 `visibility`、`agent_id`、source 专用规则决定。
-- 若要获取完整原文，应通过 provider 的 raw 回源能力，而不是把截断后的 SQLite 文本当作归档。

@@ -1,7 +1,7 @@
 // Phase 5c-2 golden test: pins the codex adapter's parse() record stream.
 // Binding-independent (no database). Covers the event_msg↔response_item dedup,
 // tool call/result, token patching, turn-duration, the 'total' session count,
-// and guardian-thread → delete-session.
+// root-thread replacement and child/guardian filtering.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,10 +44,14 @@ test('codex parse() yields a deduped, tool-aware record stream with a total sess
   const { values } = drain(parse({ key: path, sessionId: '' }, null));
   const byKind = k => values.filter(r => r.kind === k);
 
-  // Three messages: user, assistant text, assistant tool_use. The duplicate
+  assert.equal(values[0].kind, 'delete-session', 'root full replay starts by clearing its old projection');
+  assert.equal(values[0].sessionId, `codex:${META.id}`);
+
+  // Four messages: user, assistant text, assistant tool_use, tool result user.
+  // The duplicate
   // response_item 'hi there' was deduped.
   const msgs = byKind('message');
-  assert.equal(msgs.length, 3);
+  assert.equal(msgs.length, 4);
   assert.equal(msgs.filter(m => m.text === 'hi there').length, 1, 'agent_message deduped against response_item');
   assert.equal(msgs.every(m => m.source === 'codex'), true);
 
@@ -60,6 +64,10 @@ test('codex parse() yields a deduped, tool-aware record stream with a total sess
   assert.deepEqual(byKind('tool_call').map(t => ({ id: t.id, name: t.name })), [{ id: `codex:${META.id}:call_1`, name: 'shell' }]);
   assert.equal(byKind('tool_result').length, 1);
   assert.equal(byKind('tool_result')[0].tool_use_id, `codex:${META.id}:call_1`);
+  const toolResultMessage = msgs.find(m => m.content_type === 'tool_result');
+  assert.equal(toolResultMessage.role, 'user');
+  assert.equal(toolResultMessage.text, 'file listing');
+  assert.equal(byKind('tool_result')[0].message_uuid, toolResultMessage.uuid);
 
   assert.deepEqual(byKind('summary').map(s => ({ source: s.source, content: s.content })), [{ source: 'codex', content: '已 compact' }]);
 
@@ -71,11 +79,11 @@ test('codex parse() yields a deduped, tool-aware record stream with a total sess
   assert.equal(sessions.length, 1);
   assert.equal(sessions[0].source, 'codex');
   assert.equal(sessions[0].countMode, 'total');
-  assert.equal(sessions[0].message_count, 3);
+  assert.equal(sessions[0].message_count, 4);
   assert.equal(sessions[0].git_branch, 'main');
 });
 
-test('codex parse() retracts a guardian thread via delete-session and emits nothing else', () => {
+test('codex parse() ignores a guardian thread and emits nothing', () => {
   const path = writeFixture([
     { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: { ...META, source: { subagent: { other: 'guardian' } } } },
     { type: 'event_msg', timestamp: '2026-06-10T10:00:01Z', payload: { type: 'user_message', message: 'ignored' } },
@@ -83,9 +91,38 @@ test('codex parse() retracts a guardian thread via delete-session and emits noth
 
   const { values } = drain(parse({ key: path, sessionId: '' }, null));
 
-  assert.equal(values.length, 1);
-  assert.equal(values[0].kind, 'delete-session');
-  assert.match(values[0].sessionId, /^codex:/);
+  assert.deepEqual(values, []);
+});
+
+test('codex parse() ignores child and fork threads regardless of parent metadata shape', () => {
+  for (const relation of [
+    { parent_thread_id: 'parent-1' },
+    { forked_from_id: 'parent-2' },
+    { source: { subagent: { thread_spawn: { parent_thread_id: 'parent-3' } } } },
+    { thread_source: 'subagent' },
+  ]) {
+    const path = writeFixture([
+      { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: { ...META, ...relation } },
+      { type: 'event_msg', payload: { type: 'user_message', message: 'ignored' } },
+    ]);
+    const { values } = drain(parse({ key: path, sessionId: '' }, null));
+    assert.deepEqual(values, [], JSON.stringify(relation));
+  }
+});
+
+test('codex discover() returns only root rollout units', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-codex-discover-'));
+  const dir = join(root, 'sessions', '2026', '06', '10');
+  mkdirSync(dir, { recursive: true });
+  const write = (name, payload) => writeFileSync(join(dir, name), `${JSON.stringify({ type: 'session_meta', payload })}\n`);
+
+  write('rollout-root.jsonl', { ...META, thread_source: 'user' });
+  write('rollout-child.jsonl', { ...META, id: 'child-1', parent_thread_id: META.id });
+  write('rollout-guardian.jsonl', { ...META, id: 'guardian-1', source: { subagent: { other: 'guardian' } }, thread_source: 'subagent' });
+
+  const provider = createCodexProvider({ rootDir: root });
+  const units = provider.discover({ lastCursor: () => null });
+  assert.deepEqual(units.map(unit => unit.key), [join(dir, 'rollout-root.jsonl')]);
 });
 
 test('codex provider folds session_index metadata into its canonical session record', () => {

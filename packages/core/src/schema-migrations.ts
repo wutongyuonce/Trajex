@@ -1,7 +1,7 @@
 /**
  * SQLite schema 增量迁移模块。
  *
- * 模块定位：为已存在的 Trajex 索引补充新列并移除已废弃的 canonical 列。openDb()
+ * 模块定位：为已存在的 Trajex 索引补充新列。openDb()
  * 在执行完整 schema 前后调用它，使旧版本数据库能渐进升级。
  */
 import type { SqliteDb } from './sqlite-types.ts';
@@ -20,10 +20,6 @@ const COLUMN_MIGRATIONS = [
   ['summaries', 'agent_id', 'TEXT'],
 ] as const;
 
-const OBSOLETE_COLUMNS = [
-  ['messages', 'is_sidechain'],
-] as const;
-
 /** 判断表是否已存在，避免对不存在的表执行 ALTER 报错。 */
 function tableExists(db: SqliteDb, table: string): boolean {
   return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table));
@@ -39,11 +35,6 @@ export function coreSchemaNeedsMigration(db: SqliteDb): boolean {
       columnsByTable.set(table, columns);
     }
     if (!columns.has(column)) return true;
-  }
-  for (const [table, column] of OBSOLETE_COLUMNS) {
-    if (!tableExists(db, table)) continue;
-    const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => String(row.name)));
-    if (columns.has(column)) return true;
   }
   return false;
 }
@@ -64,10 +55,5 @@ export function migrateCoreSchemaColumns(db: SqliteDb): void {
     if (columns.has(column)) continue;
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     columns.add(column);
-  }
-  for (const [table, column] of OBSOLETE_COLUMNS) {
-    if (!tableExists(db, table)) continue;
-    const columns = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => String(row.name)));
-    if (columns.has(column)) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
   }
 }

@@ -17,7 +17,7 @@
 
 Parses JSONL history from different providers — Codex, Claude Code, Pi — into one canonical record set persisted in SQLite, with millisecond-scale history retrieval via the FTS5 full-text index.
 
-* Built on the **CodeAct agent design paradigm**, with a programmable JS Query API that lets agents make **“writing executable code”** their core mode of action (searching historical evidence, distilling experience into durable memory)
+* Built on the **CodeAct agent design paradigm**, with a programmable JS Query API that lets agents make **“writing executable code”** their core mode of action
 * Ships with an Electron + Vue desktop app that turns the same index into a readable session timeline for humans to browse
 
 </div>

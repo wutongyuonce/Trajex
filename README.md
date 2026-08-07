@@ -17,7 +17,7 @@
 
 将来自不同 provider —— Codex、Claude Code、Pi 的 JSONL 历史解析为同一套 canonical record 并持久化至 SQLite，通过 FTS5 全文索引实现毫秒级历史检索。
 
-* 采用 **CodeAct 智能体设计范式**，提供可编程 JS Query API，让 Agent 将 **“编写可执行代码”** 作为核心行动方式（搜索历史证据、沉淀经验记忆）
+* 采用 **CodeAct 智能体设计范式**，提供可编程 JS Query API，让 Agent 将 **“编写可执行代码”** 作为核心行动方式
 * 配套 Electron + Vue 桌面端，将同一份索引转化为可读的会话时间线，用户可通过 App 直观浏览
 
 </div>

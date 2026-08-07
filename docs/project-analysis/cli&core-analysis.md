@@ -2781,6 +2781,20 @@ executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
 
 这层是"原始索引事实 → 详情展示模型"的纯转换层：不碰数据库、不重新解析文本、不检查 Provider 来源。它把规范 `TranscriptRecord`（或持久化表行）投影成 renderer 直接消费的 `SessionDetailSnapshot`。
 
+> *为什么需要 assembly ？*
+>
+> 数据库是规范化存储：messages / tool_calls / tool_results / subagents / workflows 各自一张表；但 UI 需要的是嵌套结构：
+>
+> ```text
+> message
+>   tool_calls[]
+>     result
+>     subagent
+>     workflow
+> ```
+>
+> 并且需要合并连续 thinking、相邻 tool_use，让人读起来像一条自然时间线。
+
 ### 输出契约 `SessionDetailSnapshot`
 
 ```ts
@@ -2798,7 +2812,7 @@ interface SessionDetailSnapshot {
 - `AssembledToolCall = { id, name, input_json, result, workflow?, subagent? }`——一个 tool call 可同时挂 result、workflow、subagent 三类附属物；
 - `SessionDetailWorkflow = { run_id, parent_tool_use_id, ..., agents: SessionDetailWorkflowAgent[] }`。
 
-### 6.1 两条输入，唯一展示语义
+### 两条输入，唯一展示语义
 
 `assembleSessionDetail(input)` 只认两种形态：
 
@@ -2807,21 +2821,11 @@ interface SessionDetailSnapshot {
 
 用 `Symbol.iterator in input` 判据区分两种输入；之后统一进 `assembleTranscriptRecords()`。它不检查 `source`，也不再解析文本来恢复 Provider 语义——Provider 的线协议差异必须在调用这个 seam 之前已经解决。
 
-### 6.2 为什么需要 assembly
+> *为什么要支持多表行集合的输入 ？*
+>
+> 打开一个 **已经索引过** 的 session 详情页时，app 不去重新解析 JSONL，而是直接从 SQLite 读行、逆投影、再走同一套展示逻辑。
 
-数据库是规范化存储：messages / tool_calls / tool_results / subagents / workflows 各自一张表；但 UI 需要的是嵌套结构：
-
-```text
-message
-  tool_calls[]
-    result
-    subagent
-    workflow
-```
-
-并且需要合并连续 thinking、相邻 tool_use，让人读起来像一条自然时间线。
-
-### 6.3 `assembleTranscriptRecords(records)`
+### `assembleTranscriptRecords(records)`
 
 遍历记录流，按 `record.kind` 分桶处理：
 
@@ -2841,7 +2845,7 @@ message
 3. **排序**：按 `timestamp` 升序，相同再按 `uuid` 字典序。
 4. 调 `assembleMessages(...)` 做最后的合并装配，产出 `SessionDetailSnapshot`。
 
-### 6.4 `assembleMessages(...)`：UI 可读性的核心
+### `assembleMessages(...)`：UI 可读性的核心
 
 先把扁平记录转成三个索引，再按 message_uuid 挂回：
 

@@ -164,12 +164,13 @@ test('runtime indexes Codex root sessions into the shared query helpers', () => 
     project_path: normalize('/tmp/trajex-runtime'),
     git_branch: 'feat/codex',
     version: '0.135.0-alpha.1',
-    message_count: 3,
+    message_count: 4,
   }]);
   assert.deepEqual(payload.messages.map(m => [m.role, m.text, m.source, m.content_type]), [
     ['user', 'codex user asks for runtime indexing', 'codex', 'text'],
     ['assistant', 'codex assistant replies from runtime', 'codex', 'text'],
     ['assistant', null, 'codex', 'tool_use'],
+    ['user', '/tmp/trajex-runtime', 'codex', 'tool_result'],
   ]);
   assert.equal(payload.search[0].message_source, 'codex');
   assert.equal(payload.search[0].session_source, 'codex');
@@ -177,7 +178,7 @@ test('runtime indexes Codex root sessions into the shared query helpers', () => 
   assert.equal(payload.rawHasEventLine, true);
   assert.equal(payload.tool.session_id, `codex:${codexId}`);
   assert.equal(payload.tool.message_uuid, `codex:${codexId}:000005`);
-  assert.equal(payload.toolResult.message_uuid, `codex:${codexId}:000005`);
+  assert.equal(payload.toolResult.message_uuid, `codex:${codexId}:000006`);
   assert.equal(payload.toolResult.content, '/tmp/trajex-runtime');
   assert.ok(payload.overviewSources.some(s => s.source === 'codex' && s.session_count === 1));
 });

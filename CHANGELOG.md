@@ -4,6 +4,7 @@
 
 ### Changed
 
+- 统一普通 agent 与 workflow agent 详情页的消息渲染，复用主 session 时间线组件；thinking、summary、meta、tool call、workflow agent 和展开状态保持一致。
 - Schema migration 只为旧数据库增加新列；已废弃的旧列保留到 rebuild 生成新数据库时再移除。
 - Codex 根 thread 改为与 Pi 一致的“删除该 session 的 transcript 派生投影后全量重建”流程，避免依赖增量 upsert 推断历史重写。
 - Codex 工具调用结果统一产出 `tool_result` message，让 Codex 工具结果进入统一的 messages 表和 FTS 索引；普通函数、自定义工具、工具搜索和网络搜索调用继续使用统一的工具记录模型。

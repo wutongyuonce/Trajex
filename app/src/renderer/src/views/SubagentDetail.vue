@@ -1,15 +1,22 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue';
-import { loadSubagentDetail, isTextTruncated, loadFullText } from '../data.js';
-import { fmtClockTime, renderMarkdown } from '../utils.js';
+import { ref, reactive, onMounted, watch } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
+import { loadSubagentDetail, loadFullText } from '../data.js';
+import { reconcileTimelineItems } from '../session-timeline-items.mjs';
+import { createSessionDisclosureState } from '../session-disclosures.mjs';
+import SessionTimelineRow from '../components/SessionTimelineRow.vue';
 
 defineOptions({ name: 'SubagentDetail' });
-const props = defineProps({ agentId: String });
+const props = defineProps({ id: String, agentId: String });
+const router = useRouter();
+const route = useRoute();
 
 const messages = ref([]);
 const summaries = ref([]);
-const openSummaries = ref(new Set());
-const expandedMessageText = ref(new Map());
+const timelineItems = ref([]);
+const expandedMessageText = reactive(new Map());
+const fullTextLoading = reactive(new Set());
+const disclosures = createSessionDisclosureState();
 const loading = ref(false);
 let revision = 0;
 
@@ -19,8 +26,9 @@ watch(() => props.agentId, async (n, o) => {
   revision += 1;
   messages.value = [];
   summaries.value = [];
-  openSummaries.value = new Set();
-  expandedMessageText.value = new Map();
+  timelineItems.value = [];
+  expandedMessageText.clear();
+  disclosures.restore([]);
   await load(revision, n);
 });
 
@@ -32,15 +40,10 @@ async function load(requestRevision, agentId) {
     if (revision !== requestRevision || props.agentId !== agentId) return;
     messages.value = detail.messages;
     summaries.value = detail.summaries;
+    timelineItems.value = reconcileTimelineItems([], detail.messages, detail.summaries);
   } finally {
     if (revision === requestRevision && props.agentId === agentId) loading.value = false;
   }
-}
-
-function toggleSummary(id) {
-  const next = new Set(openSummaries.value);
-  if (next.has(id)) next.delete(id); else next.add(id);
-  openSummaries.value = next;
 }
 
 async function handleLoadFull(uuid) {
@@ -49,9 +52,24 @@ async function handleLoadFull(uuid) {
   const full = await loadFullText(uuid);
   if (!full || revision !== requestRevision || props.agentId !== agentId) return;
   if (!messages.value.some(message => message.uuid === uuid)) return;
-  const next = new Map(expandedMessageText.value);
-  next.set(uuid, full);
-  expandedMessageText.value = next;
+  expandedMessageText.set(uuid, full);
+}
+
+async function handleLoadFullText(uuid) {
+  if (fullTextLoading.has(uuid)) return;
+  fullTextLoading.add(uuid);
+  try {
+    await handleLoadFull(uuid);
+  } finally {
+    fullTextLoading.delete(uuid);
+  }
+}
+
+function navigateToSubagent(agentId) {
+  router.push({
+    name: 'SubagentDetail',
+    params: { id: props.id || route.params.id, agentId },
+  });
 }
 </script>
 
@@ -70,97 +88,18 @@ async function handleLoadFull(uuid) {
 
       <div v-if="loading" class="empty">Loading…</div>
 
-      <div v-if="summaries.length" class="timeline">
-        <div v-for="summary in summaries" :key="summary.id" class="msg meta summary">
-          <div class="msg-meta-collapsed" :class="{ open: openSummaries.has(summary.id) }">
-            <button class="meta-toggle" @click="toggleSummary(summary.id)"><span class="meta-label">Summary</span><span class="meta-preview">{{ summary.source || 'summary' }}</span></button>
-            <div v-if="openSummaries.has(summary.id)" class="meta-body" v-html="renderMarkdown(summary.content, { variant: 'compact' })"></div>
-          </div>
-        </div>
-      </div>
       <div v-if="!loading" class="timeline">
-        <div
-          v-for="msg in messages"
-          :key="msg.uuid"
-          class="msg"
-          :class="[msg.type === 'user' ? 'user' : 'assistant']"
-          :data-uuid="msg.uuid"
-        >
-          <!-- Thinking -->
-          <template v-if="msg.content_type === 'thinking'">
-            <div class="msg-thinking">
-              <button class="thinking-toggle" @click="$event.currentTarget.closest('.msg-thinking').classList.toggle('open')">
-                <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-                <span class="thinking-label">Thinking</span>
-              </button>
-              <div class="thinking-body" v-html="renderMarkdown(msg.text, { variant: 'msg', cwd: msg.cwd })"></div>
-            </div>
-          </template>
-
-          <!-- Meta -->
-          <template v-else-if="msg.is_meta">
-            <div class="msg-meta-collapsed">
-              <button class="meta-toggle" @click="$event.currentTarget.closest('.msg-meta-collapsed').classList.toggle('open')">
-                <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-                <span class="meta-label">System</span>
-                <span class="meta-preview">{{ (msg.text || '').replace(/<[^>]+>/g, '').slice(0, 80) }}</span>
-              </button>
-              <div class="meta-body" v-html="renderMarkdown(msg.text, { variant: 'compact', cwd: msg.cwd })"></div>
-            </div>
-          </template>
-
-          <!-- Normal message -->
-          <template v-else>
-            <div class="msg-head">
-              <span class="role">{{ msg.type === 'user' ? 'Prompt' : 'Assistant' }}</span>
-              <span class="when">{{ msg.timestamp ? fmtClockTime(msg.timestamp) : '' }}</span>
-            </div>
-            <div v-if="msg._thinking" class="msg-thinking">
-              <button class="thinking-toggle" @click="$event.currentTarget.closest('.msg-thinking').classList.toggle('open')">
-                <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-                <span class="thinking-label">Thinking</span>
-              </button>
-              <div class="thinking-body" v-html="renderMarkdown(msg._thinking, { variant: 'msg', cwd: msg.cwd })"></div>
-            </div>
-            <div v-if="expandedMessageText.has(msg.uuid) || msg.text" v-html="renderMarkdown(expandedMessageText.get(msg.uuid) ?? msg.text, { variant: 'msg', cwd: msg.cwd })"></div>
-            <div v-else-if="!msg.tool_calls?.length" class="msg-text empty-text">(no text content)</div>
-            <button
-              v-if="isTextTruncated(msg.text) && !expandedMessageText.has(msg.uuid)"
-              class="truncated-btn"
-              @click="handleLoadFull(msg.uuid)"
-            >Message truncated — click to load full text</button>
-
-            <!-- Tool calls -->
-            <div v-if="msg.tool_calls?.length" class="msg-tools">
-              <div v-for="tc in msg.tool_calls" :key="tc.id" class="msg-tool" :class="{ 'is-error': tc.result?.is_error }">
-                <button class="toolcall-toggle" @click="$event.currentTarget.closest('.msg-tool').classList.toggle('open')">
-                  <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-                  <span class="tool-name">{{ tc.name }}</span>
-                  <span class="tool-arg">{{ getToolArgPreview(tc) }}</span>
-                  <span v-if="tc.result?.is_error" class="tool-error">error</span>
-                </button>
-                <div class="toolcall-body">
-                  <div class="tc-section">Input</div>
-                  <pre>{{ tc.input_json }}</pre>
-                  <template v-if="tc.result">
-                    <div class="tc-section">{{ tc.result.is_error ? 'Error' : 'Output' }}</div>
-                    <pre>{{ tc.result.content || '(empty)' }}</pre>
-                  </template>
-                </div>
-              </div>
-            </div>
-          </template>
-        </div>
+        <SessionTimelineRow
+          v-for="item in timelineItems"
+          :key="item.key"
+          :item="item"
+          :disclosures="disclosures"
+          :expanded-message-text="expandedMessageText"
+          :full-text-loading="fullTextLoading"
+          @load-full-text="handleLoadFullText"
+          @navigate-subagent="navigateToSubagent"
+        />
       </div>
     </div>
   </div>
 </template>
-
-<script>
-function getToolArgPreview(tc) {
-  try {
-    const j = JSON.parse(tc.input_json || '{}');
-    return j.file_path || j.command || j.path || j.description || JSON.stringify(j).slice(0, 100);
-  } catch { return (tc.input_json || '').slice(0, 100); }
-}
-</script>

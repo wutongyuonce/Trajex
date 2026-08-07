@@ -3,6 +3,7 @@ import { computed } from 'vue';
 import { isTextTruncated } from '../data.js';
 import { buildSessionTimelinePresentation } from '../session-timeline-presentation.mjs';
 import { fmtClockTime, renderMarkdown } from '../utils.js';
+import ThinkingBlock from './ThinkingBlock.vue';
 
 const props = defineProps({
   item: { type: Object, required: true },
@@ -160,13 +161,12 @@ function navigateToSubagent(agentId, description = '') {
 
   <template v-else-if="item.kind === 'thinking'">
     <div class="msg assistant" :class="{ 'is-focused': focused }" :data-uuid="item.anchorUuid" :data-message-uuid="item.messageUuid">
-      <div class="msg-thinking" :class="{ open: disclosures.isOpen(`thinking:${msg.uuid}`) }" :data-view-key="`thinking:${msg.uuid}`">
-        <button class="thinking-toggle" @click="toggleDisclosure(`thinking:${msg.uuid}`, msg.uuid)">
-          <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-          <span class="thinking-label">Thinking</span>
-        </button>
-        <div class="thinking-body" v-html="presentation.thinkingHtml"></div>
-      </div>
+      <ThinkingBlock
+        :open="disclosures.isOpen(`thinking:${msg.uuid}`)"
+        :html="presentation.thinkingHtml"
+        :data-view-key="`thinking:${msg.uuid}`"
+        @toggle="toggleDisclosure(`thinking:${msg.uuid}`, msg.uuid)"
+      />
     </div>
   </template>
 
@@ -182,13 +182,13 @@ function navigateToSubagent(agentId, description = '') {
         <span class="when">{{ msg.timestamp ? fmtClockTime(msg.timestamp) : '' }}</span>
       </div>
 
-      <div v-if="msg._thinking" class="msg-thinking" :class="{ open: disclosures.isOpen(`thinking:${msg.uuid}`) }" :data-view-key="`thinking:${msg.uuid}`">
-        <button class="thinking-toggle" @click="toggleDisclosure(`thinking:${msg.uuid}`, msg.uuid)">
-          <svg class="chevron" viewBox="0 0 8 8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 1.5l3 2.5-3 2.5"/></svg>
-          <span class="thinking-label">Thinking</span>
-        </button>
-        <div class="thinking-body" v-html="presentation.thinkingHtml"></div>
-      </div>
+      <ThinkingBlock
+        v-if="msg._thinking"
+        :open="disclosures.isOpen(`thinking:${msg.uuid}`)"
+        :html="presentation.thinkingHtml"
+        :data-view-key="`thinking:${msg.uuid}`"
+        @toggle="toggleDisclosure(`thinking:${msg.uuid}`, msg.uuid)"
+      />
 
       <template v-if="msg.text">
         <div class="message-content" v-html="presentation.messageHtml"></div>

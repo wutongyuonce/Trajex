@@ -20,14 +20,14 @@ Trajex 是“Coding Agent 的显式记忆基础设施”（Claude Code、Codex�
      return { hits, details };
      ```
 
-     这里 JS 是编排语言，`search/context/sessions/failures/fileHistory` 等是预设查询 API。
+     这里 JS 是编排语言，`search/context/sessions/failures/fileHistory` 等是预设查询 API；脚本在独立的 **Node.js Worker Thread + `node:vm` context** 中执行。
 
    - 人类侧：Electron 桌面 app 浏览 session、memory、activity。
 
 核心设计不是“为每个 provider 写一套 app/CLI 逻辑”，而是：
 
 ```text
-Provider Adapter 适配器解析不同格式原始日志 (claude.ts / codex.ts / pi.ts)
+Provider 适配器解析不同格式原始日志 (claude.ts / codex.ts / pi.ts)
     │  统一流式 yield TranscriptRecord，结束时 return Cursor
     ▼
 persist.ts (写库 SQLite)
@@ -95,7 +95,7 @@ Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有
   3、Provider 适配层                                             
     providers/types.ts         ← TranscriptRecord / Provider 契约
     providers/{claude,codex,pi}.ts ← 原始文件 -> 统一记录         
-    providers/{registry,builtins}.ts ← 注册、根目录、raw 回源      
+    providers/{registry,builtins}.ts ← 注册、根目录、watch/raw 回源
                │                                                
   2、持久化层                                                    
     persist.ts                 ← TranscriptRecord -> SQLite 行   
@@ -663,7 +663,7 @@ type TranscriptRecord =
 | `id`              | 摘要主键，不同 Provider 的来源不同，Codex 的 id 为 `"codex:<thread-id>:<line-number>"`。 |
 | `session_id`      | 所属会话。                                                   |
 | `timestamp`       | 摘要时间，可为空。                                           |
-| `source`          | 摘要来源标签。当前内置 adapter 写 provider 名（如 `claude`、`codex`）；schema 允许未来用更细的子类型，但不能假定它已与 provider source 区分。 |
+| `source`          | 摘要来源标签。由 adapter 写入；Claude/Codex 通常写 provider 名，Pi 可能写具体 entry type。schema 允许来源标签比 provider 更细。 |
 | `content`         | 摘要正文。                                                   |
 
 `query.summaries()` 读取这张表。它保存的是来源已经产生的摘要，不等同于用户批准的长期 memory。
@@ -753,7 +753,7 @@ interface ProviderDescriptor {
 | 字段          | 含义                                                         |
 | ------------- | ------------------------------------------------------------ |
 | `id`          | 稳定机器 ID，用 registry 查找、配置 `providerRoots` 和版本 marker。 |
-| `name`        | 面向用户的名称，例如 Claude/Codex/Kimi。                     |
+| `name`        | 面向用户的名称，例如 Claude/Codex/Pi。                       |
 | `vendor`      | 厂商名称，用于设置与 UI 分组。                               |
 | `defaultRoot` | 默认数据根目录。用户可覆盖它；它不是已发现的具体 session 路径。 |
 | `color`       | UI 的来源颜色提示。它不参与 SQL 或解析语义。                 |
@@ -816,18 +816,18 @@ interface ProviderAdapter extends Provider {
 
 Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解自己的日志格式，翻译成统一 TranscriptRecord**：
 
-| 维度           | Claude                                | Codex                                     |
-| -------------- | ------------------------------------- | ----------------------------------------- |
-| 默认根         | `~/.claude`                           | `~/.codex`                                |
-| 索引单位       | 主/子代理 JSONL 与 workflow JSON      | 一个 rollout JSONL                        |
-| cursor/策略    | mtime + 已处理行；流式逐行            | mtime 判断变化；全文件重放，lines 仅记录 |
-| 必须全量的原因 | 不需要；仅续读新增行                  | event_msg 与 response_item 双向去重       |
-| 特殊关系       | history 标题、Workflow、subagent meta | root-thread 筛选、父/子 thread、collab spawn |
-| raw 定位       | session/subagent JSONL 内 UUID        | `codex:<thread>:<line>`                   |
+| 维度           | Claude                                | Codex                                     | Pi                                      |
+| -------------- | ------------------------------------- | ----------------------------------------- | --------------------------------------- |
+| 默认根         | `~/.claude`                           | `~/.codex`                                | `~/.pi/agent/sessions`                  |
+| 索引单位       | 主/子代理 JSONL 与 workflow JSON      | 一个 rollout JSONL                        | 一个 v3 session JSONL                   |
+| cursor/策略    | mtime + 已处理行；流式逐行            | mtime 判断变化；全文件重放，lines 仅记录 | mtime 判断变化；全文件重放，lines 仅记录 |
+| 必须全量的原因 | 不需要；仅续读新增行                  | event_msg 与 response_item 双向去重       | 树状分支与 compaction 需要重算可见上下文 |
+| 特殊关系       | history 标题、Workflow、subagent meta | root-thread 筛选、父/子 thread、collab spawn | durable leaf、branch、compaction、hidden/inactive |
+| raw 定位       | session/subagent JSONL 内 UUID        | `codex:<thread>:<line>`                   | `pi:<session-scope>:<entry>`            |
 
 它负责：
 
-  - 负责找到变化了的文件：`discover()` 去 ~/.codex/sessions 发现 JSONL 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断文件有没有变
+  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断是否需要处理；例如 Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
 
     > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
     >
@@ -1933,7 +1933,7 @@ persist()
 | `version`       | TEXT                  | CLI 版本                              |
 | `message_count` | INTEGER               | 消息数                                |
 | `jsonl_path`    | TEXT                  | 来源 JSONL 文件路径                   |
-| `source`        | TEXT DEFAULT 'claude' | 来源标识：`claude` / `codex` / `kimi` |
+| `source`        | TEXT DEFAULT 'claude' | 来源标识：`claude` / `codex` / `pi` |
 
 2、**`messages` — 消息**
 
@@ -2048,7 +2048,7 @@ persist()
 | `id`         | TEXT PK | 摘要 ID                                 |
 | `session_id` | TEXT    | 所属会话                                |
 | `timestamp`  | TEXT    | 时间                                    |
-| `source`     | TEXT    | 来源 provider 或事件类型（如 `codex`、`kimi`、`compaction`、`branch_summary`） |
+| `source`     | TEXT    | 来源 provider 或事件类型（如 `claude`、`codex`、`pi`、`compaction`、`branch_summary`） |
 | `content`    | TEXT    | 摘要内容                                |
 
 9、**`index_state` — 索引进度**
@@ -2268,7 +2268,7 @@ SELECT * FROM messages_fts WHERE text MATCH 'fix bug';
 ```
 用户搜索："修复按钮颜色"
                    │
-        messages_fts MATCH '"修复" NEAR/3 "按钮" NEAR/3 "颜色"'
+        messages_fts MATCH '修复 按钮 颜色'
                    │
         返回匹配的 rowid 和 session_id
                    │
@@ -2282,7 +2282,7 @@ SELECT * FROM messages_fts WHERE text MATCH 'fix bug';
               展示结果
 ```
 
-**FTS** 负责"找出内容匹配的消息"，**B-Tree** 负责"按会话和时间的筛选排序"。各管各的，互不替代。
+**FTS** 负责"找出内容匹配的消息"，**B-Tree** 负责"按会话和时间的筛选排序"。当前 `search()` 会优先保留用户输入的 FTS5 语法；遇到非法语法时才退回为逐 token 加引号的安全查询。各管各的，互不替代。
 
 |          | B-Tree 索引                                      | FTS5 全文索引                           |
 | -------- | ------------------------------------------------ | --------------------------------------- |
@@ -2640,7 +2640,7 @@ ON CONFLICT(agent_id) DO UPDATE SET
 > CodeAct 代表了一种先进的 AI 智能体设计范式，它通过将 **“编写可执行代码”** 作为核心行动方式，极大地增强了 AI 处理复杂任务、操作数据和与外部世界交互的能力。
 >
 > 1. **接收任务**：智能体收到用户的自然语言指令，例如：“分析这份销售数据并生成趋势图”。
-> 2. **生成代码**：智能体（大语言模型）根据指令，生成一段可执行的 **Python 代码**作为它的“行动”。
+> 2. **生成代码**：智能体（大语言模型）根据指令，生成一段可执行的 **JavaScript 代码**作为它的“行动”。
 > 3. **执行代码**：这段代码会被发送到一个**沙盒环境**（一个安全的隔离执行空间）中运行。
 > 4. **获取反馈**：智能体收到代码执行的**结果**，可能是正确的输出，也可能是报错信息。
 > 5. **迭代优化**：如果结果不正确或出现错误，智能体会根据反馈**动态修改**代码并重新执行，直到问题解决。
@@ -2662,12 +2662,14 @@ trajex.ts --search "xxx"
 ```ts
 trajex --query <file.js>
   -> core.ts executeQuery(scriptContent)
-  	-> buildIndex()
-  	-> openReadDb()
-  	-> runInSandbox(createQueryApi(db), script)
-    	-> 沙箱内提供 sql(), search(), context(), sessions(), etc.
-        -> emit() 序列化 stdout 输出 json
-  	-> db.close()
+    -> buildIndex()
+    -> 启动 sandbox worker
+      -> worker openReadDb()
+      -> createQueryApi(db)
+      -> node:vm 在受限 context 中执行脚本
+         -> 沙箱内提供 sql(), search(), context(), sessions(), etc.
+      -> worker finally 关闭 db
+    -> 主线程接收结果并 emit() 序列化 stdout JSON
   	-> Agent 根据 JSON 回答自然语言
 ```
 
@@ -2677,12 +2679,15 @@ trajex --query <file.js>
 trajex.ts --attune <file.js>
   -> core.ts executeAttune(scriptContent)
     -> buildIndex()
-    -> 检查 daemon 活跃状态
-    -> acquireWriterLease()           // 获取写入锁
-    -> openDb()
-    -> runInSandbox(createAttuneApi(db), script)
-      -> 沙箱内提供 remember() / forget()
-    -> release()
+    -> 启动 sandbox worker
+      -> acquireWriterLease()         // worker 内获取写入锁
+      -> 锁内再次检查 daemon 活跃状态
+      -> openDb()
+      -> BEGIN IMMEDIATE
+      -> node:vm 在受限 context 中执行脚本
+        -> 沙箱内仅提供 remember() / forget()
+      -> COMMIT；失败则 ROLLBACK
+      -> 关闭 db 并 release()
 ```
 
 ```ts
@@ -2699,9 +2704,9 @@ executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
 
 * 是否拿锁 = 是否写库
 
-  - searchText / executeQuery 都只开 `openReadDb()`（只读连接），不可能改数据，所以不需要 lease；
+  - searchText / executeQuery 都只使用 `openReadDb()`（只读连接；executeQuery 由 sandbox worker 打开），不可能改数据，所以不需要 lease；
 
-  - executeAttune 要写 memories，才走完整的 buildIndex 检查 → acquireWriterLease → 锁内复查 heartbeat → openDb → 跑脚本 → 关库放锁。
+  - executeAttune 要写 memories，先由主线程执行 buildIndex 检查，再由 sandbox worker 完成 acquireWriterLease → 锁内复查 heartbeat → openDb → 事务执行脚本 → 关库放锁。
 
 > vm sandbox 本质就是：Node 把 V8 的 context 单独开一个，把自己注入的全局全部撤掉。
 >
@@ -2710,7 +2715,7 @@ executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
 
 ### Query API：只读证据检索
 
-`createQueryApi(db)` 创建 16 个只读方法注入沙箱。全部是闭包捕获 `db`（只读连接，生命周期由 core.ts 的 finally 管理）；返回值都是纯数据对象，脚本 `return` 后由 CLI 序列化为 JSON。
+`createQueryApi(db)` 创建 16 个只读方法注入沙箱。全部是闭包捕获 `db`（查询 worker 打开的只读连接，生命周期由 worker 的 `finally` 管理）；返回值都是纯数据对象，脚本 `return` 后由 CLI 序列化为 JSON。
 
 #### 输入契约与过滤机制（类型层怎么发挥作用）
 

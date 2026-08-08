@@ -149,7 +149,11 @@ npx --yes skills add wutongyuonce/trajex-skill
 # 或：npx --yes skills add wutongyuonce/trajex-skill --global
 ```
 
-## 使用 trajex-skill
+## 使用 CLI、trajex-skill
+
+<div align="center">
+  <img src=".github/assets/boron.sh.png" alt="CLI Help" width="720">
+</div>
 
 你可以这样使用 trajex-skill：
 

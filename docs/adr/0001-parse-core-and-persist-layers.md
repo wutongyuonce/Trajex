@@ -1,85 +1,48 @@
-# Indexing is a registry of pure provider adapters over one shared persist layer
+# Indexing architecture: provider registry and shared orchestration
 
-> Revised 2026-07-08. The first draft framed the parse layer as a single "parse
-> core" with "two thin persist layers, one per binding." That was wrong on both
-> axes and is corrected below: the parse layer is a *registry of per-provider
-> adapters* (driven by the multi-provider roadmap), and there is *one* shared
-> persist layer, not one per binding.
+> Revised 2026-08-09. This ADR defines the top-level layering and ownership
+> boundaries. Detailed parsing, persistence, source reconciliation, and UI
+> projection decisions live in ADR-0002 through ADR-0006.
 
-**Context.** Trajex had two divergent full indexers — the former
-`scripts/indexer.mjs` (`node:sqlite`, the former skill-embedded runtime) and
-`app/indexer.js`
-(`better-sqlite3`, Electron
-app) — that duplicated the same Claude and Codex JSONL parsing and had silently
-diverged in write semantics (`INSERT OR REPLACE` vs `ON CONFLICT DO UPDATE`,
-message-count accumulation). Two forces shape the fix: (1) the roadmap will add
-more transcript sources — opencode, pi, and others — so the parse layer must be
-*pluggable*, not one monolith; (2) `node:sqlite` and `better-sqlite3` share the
-same `prepare/run/get/all` API, so persistence is *already* nearly
-binding-agnostic and does not need a per-binding implementation.
+## Context
 
-**Decision.** Split indexing along two orthogonal axes.
+Trajex previously had separate CLI and App indexers that duplicated Claude and
+Codex parsing and slowly diverged in SQLite write behavior. More providers are
+expected, and the CLI (`node:sqlite`) and App (`better-sqlite3`) must consume the
+same indexing semantics.
 
-- **Provider axis — a registry of pure adapters.** Each source (Claude Code,
-  Codex, Pi, and later sources) is a provider adapter implementing one complete
-  boundary: serializable descriptor metadata, `watchRoots(root)`,
-  `discover(context) → IndexUnit[]`, `parse(unit, cursor) → Iterable<Record>`,
-  and `raw(lookup)`. An `IndexUnit` is deliberately not a file abstraction: Kimi
-  uses one session directory containing state plus multiple agent wire logs. An
-  adapter is *pure*: it emits normalized records and never touches a database.
-  Adding a source means adding one adapter and registering it; nothing else
-  changes. `parse` exposes an iterator as its common interface and streams when
-  the provider semantics permit it. An adapter may buffer one complete
-  `IndexUnit` when correctness requires whole-unit semantics — for example,
-  Codex duplicate reconciliation or Kimi `context.undo` / `context.clear`
-  replay. Each adapter maps its own resume/change semantics onto an opaque
-  provider cursor in `index_state`; a cursor may include fingerprints and
-  processed-line state when the provider supports incremental parsing. The emitted
-  `TranscriptRecord` stream is also the input to provider-independent session
-  detail assembly; see ADR-0007.
-- **Persist axis — one shared orchestration.** A single provider-agnostic,
-  binding-agnostic layer consumes records from any adapter and writes them:
-  incremental `index_state` bookkeeping, FTS maintenance, and the canonical
-  **upsert** (`ON CONFLICT(uuid) DO UPDATE`) write semantics reconciled from the
-  drift on 2026-07-08. The database handle is *injected*, so `node:sqlite`
-  (CLI) and `better-sqlite3` (app) run the same code — there is no
-  per-binding persist layer.
+## Decision
 
-Provider adapters also own source-specific context projection. The canonical
-visibility states are `visible`, `inactive`, and `hidden`; providers emit the
-state before persistence, and shared layers do not infer it from message text
-or provider-specific branch flags. Pi is a v3-only full-replay provider: its
-durable leaf and compaction forms determine active context before records are
-emitted.
+Split indexing into two orthogonal axes:
 
-The adapters also own their parse boundary and source reconciliation policy:
-Claude resumes from a line cursor, while Codex and Pi replay a changed unit in
-full. All three may stop at a malformed JSONL line and commit the valid prefix;
-when a readable provider inventory proves an indexed transcript disappeared,
-the adapter emits a tombstone unit with `retractSessionIds`. A missing or
-unreadable root produces no tombstones. The shared persist layer performs that
-retraction before consuming records and never deletes `memories`; the complete
-matrix is recorded in ADR-0010.
+- **Provider registry.** Each source implements a complete adapter boundary:
+  descriptor metadata, `watchRoots(root)`, `discover(context)`,
+  `parse(unit, cursor)`, and `raw(lookup)`. Adapters understand provider
+  formats and emit canonical `TranscriptRecord` values; they never touch a
+  database. Adding a provider means adding and registering one adapter.
+- **One shared orchestration/persist layer.** A provider-agnostic coordinator
+  invokes discovery, parsing, per-unit persistence, index-state bookkeeping,
+  FTS maintenance, and finalization. The database handle is injected, so both
+  `node:sqlite` and `better-sqlite3` use the same implementation.
+- **Canonical record center.** Provider-specific semantics are projected into
+  the shared record language before persistence and session-detail assembly.
+  Shared layers do not add provider branches or infer semantics from text.
+- **Two triggers, one behavior.** App daemon mode watches provider roots;
+  passive CLI mode indexes on demand when no daemon owns writes. Both use the
+  same registry and orchestration and are separated by heartbeat/lease policy.
 
-**Two indexing modes** share all of the above and differ only in trigger:
-**daemon mode** (the app, and potentially a future CLI daemon, watches and keeps
-the index fresh) and **passive pull mode** (a CLI command indexes on invocation
-when no daemon is active). They never write concurrently — passive mode detects
-a fresh daemon via heartbeat markers in `index_state` (**daemon arbitration**).
+## Ownership boundaries
 
-**Consequences.** Golden tests anchor on each adapter's `parse` output (feed
-fixture JSONL, assert the yielded record sequence) — independent of binding and
-persistence. The app's richer changed-path discovery becomes a `discover`
-strategy injected into the shared orchestration, not a fork of it. The Electron
-main process migrates to ESM (ADR-0003) to import the shared core. The real work
-is disentangling the currently interleaved parse-and-write inside `indexJsonl` /
-`indexCodexJsonl` into (pure adapter parse) + (shared persist).
+- ADR-0002 defines provider parse strategies, cursors, and malformed-line
+  boundaries.
+- ADR-0003 defines the shared persist contract, transactions, retries, and
+  writer coordination.
+- ADR-0004 defines source inventory and deletion proof.
+- ADR-0005 defines canonical records and session-detail assembly.
+- ADR-0006 defines Pi's tree/visibility projection.
 
-The normalized `TranscriptRecord` union is the stable center of the design, and
-SQLite is one serialization adapter for it. Provider-only concepts are either
-projected lossily into that language or ignored. The registry,
-not provider switches, drives both indexers, watcher roots, persisted source
-  roots, source catalog/UI labels and colors, and raw-record routing. Adding or
-  hardening Pi therefore changes the Pi adapter, its registration, and its
-  conformance tests; the shared layers consume canonical visibility rather than
-  acquiring Pi-specific branch fields.
+## Consequences
+
+Golden parser tests can run without SQLite; persistence tests can use either
+database binding; App and CLI cannot silently fork provider semantics; and a
+new provider does not require changes to query or renderer code.

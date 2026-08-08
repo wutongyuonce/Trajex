@@ -352,4 +352,4 @@ if (!columns.has('source')) {
 - [完整 schema](../packages/core/src/schema.sql)
 - [持久化 SQL](../packages/core/src/persist.ts)
 - [事务与连接配置](../packages/core/src/tx.ts)
-- [并发设计 ADR](adr/0006-write-transaction-rollback-and-concurrency.md)
+- [并发设计 ADR](../adr/0003-write-transaction-rollback-and-concurrency.md)

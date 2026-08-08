@@ -1,8 +1,7 @@
 # Architecture decision records
 
 Canonical ADR order follows the runtime architecture from source ingestion to
-packaging. The old numbered paths remain as short compatibility aliases where
-an ADR was renumbered; they are not additional decisions.
+packaging. The directory contains only the current ten ADRs.
 
 | ADR | Responsibility |
 | --- | --- |

@@ -23,9 +23,12 @@ directly, while `PI_CODING_AGENT_DIR` points at the agent root whose
 `sessions` subdirectory holds the sessions — without making Trajex read those
 environment variables.
 Provider CLI path overrides and arbitrary additional roots are out of scope.
-Discovery uses provider-owned source fingerprints and explicit retraction only
-when Pi can prove the replacement or move, while a full rebuild remains the
-recovery path for ambiguous filesystem changes.
+Discovery uses provider-owned source fingerprints and explicit retraction when
+Pi can prove a same-path identity replacement or a deleted file in a readable
+session root. If that root is missing or unreadable, Pi preserves the previous
+snapshot instead of emitting mass tombstones. A full rebuild remains the
+recovery path for ambiguous filesystem changes. The retraction and parse-prefix
+rules are shared with the other adapters; see ADR-0010.
 
 The canonical projection marker advances together for Claude, Codex, and Pi;
 when an old provider projection is present, the indexer performs one clean

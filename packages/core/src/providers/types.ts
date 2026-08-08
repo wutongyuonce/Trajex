@@ -65,8 +65,17 @@ export interface IndexUnit {
   /** 为子代理 transcript 设置，使其消息携带 agent_id。 */
   isSubagent?: boolean;
   agentId?: string;
+  /** Provider 在发现阶段确认已失效、需要先级联撤回的旧 session。 */
+  retractSessionIds?: readonly string[];
   /** adapter 私有负载，对调度层完全不透明。 */
   meta?: unknown;
+}
+
+/** 已持久化的 session 身份，用于 Provider 发现 identity replacement/retraction。 */
+export interface IndexedSession {
+  sessionId: string;
+  jsonlPath: string;
+  source?: string;
 }
 
 /**
@@ -77,6 +86,8 @@ export interface DiscoverContext {
   lastCursor(key: string): Cursor;
   /** 当 daemon 处于 changed-path 模式时，限制在此路径集合内发现变更。 */
   changedPaths?: string[];
+  /** 查询该 Provider 之前写入的 session 身份；Provider 不直接访问 SQLite。 */
+  indexedSessions?: () => readonly IndexedSession[];
 }
 
 // ──────────────────────────────────────────────

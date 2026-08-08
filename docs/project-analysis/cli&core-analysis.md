@@ -556,6 +556,7 @@ index_state 的 value = Cursor
 | `isSubagent?: boolean` | 表示此 unit 是子 Agent transcript，而非主线会话。它指导解析器关联 agent，而不是把它当作独立顶层会话。 |
 | `agentId?: string`     | 子 Agent 的规范 ID。`isSubagent` 是布尔语义，`agentId` 是可关联的具体身份；解析出的 `messages.agent_id` 与 `subagents.agent_id` 用它相连。 |
 | `meta?: unknown`       | Provider 私有负载，例如扫描时已取得的辅助路径、线程 metadata 或解析提示。编排层绝不读取或序列化解释它，只把原对象传给 `parse()`。 |
+| `retractSessionIds?: readonly string[]` | discover 已经证明某个旧 session 的来源文件消失或被同一路径的新身份替换时，要求 persist 先撤回这些 session 的派生投影；不会删除 `memories`。 |
 
 这里 `meta` 是 `unknown` 而不是 `any`：Provider 在自己的实现中必须先收窄类型；共享层无法偶然依赖某个 Provider 的私有结构。
 
@@ -567,6 +568,7 @@ index_state 的 value = Cursor
 | ------------------------- | ------------------------------------------------------------ |
 | `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的 cursor。当前内置 Provider 用它比较 mtime 决定是否变化；Claude 另外用已处理行数增量恢复，Codex/Pi 则忽略行数并全量 replay。 |
 | `changedPaths?: string[]` | Electron daemon 监听到文件变化时提供的路径缩小范围。它是优化提示，不是事实来源；Provider 仍要保证漏传或没有它时的完整 discover 正确。 |
+| `indexedSessions?: () => readonly IndexedSession[]` | 返回当前 provider 已索引的 `sessionId`、`jsonlPath` 和 `source` 清单。Provider 只有在自己的配置根目录可读、能完成当前清单时，才用它生成删除 tombstone。 |
 
 所以发现阶段不是“索引”。`discover()` 只回答“有哪些 unit 值得处理”；真正读取原始内容从 `parse()` 开始，真正改变数据库从 `persist()` 开始。
 
@@ -732,7 +734,7 @@ type TranscriptRecord =
 { kind: 'delete-session', sessionId }
 ```
 
-同样不是表行。Pi 和 Codex 根 thread 都在全量重放前发出它，先移除旧投影，再写入当前完整 session；Codex 不再把它作为 guardian / auto-review 的特殊撤回协议。child/fork/guardian 在发现阶段直接忽略，因此不会进入 `parse`，也不会产生 `delete-session`。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent 和全部摘要，但保留 `memories`；其他 session 或未关联 session 的记忆也不会受影响。
+同样不是表行。Pi 和 Codex 根 thread 都在全量重放前发出它，先移除旧投影，再写入当前完整 session；Codex 不再把它作为 guardian / auto-review 的特殊撤回协议。child/fork/guardian 在发现阶段直接忽略，因此不会进入 `parse`，也不会产生 `delete-session`。此外，discover 可在 `IndexUnit.retractSessionIds` 中表达已证明的文件删除或路径换 ID；这类 tombstone unit 的 `parse()` 不读取文件，只返回空 cursor，persist 会先撤回旧投影再提交 unit。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent 和全部摘要，但保留 `memories`；其他 session 或未关联 session 的记忆也不会受影响。
 
 ### 描述、监视、原文回源：`ProviderDescriptor`、`RawLookup`、`RawRecord`、`ProviderAdapter`
 
@@ -824,6 +826,35 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | 必须全量的原因 | 不需要；仅续读新增行                  | event_msg 与 response_item 双向去重       | 树状分支与 compaction 需要重算可见上下文 |
 | 特殊关系       | history 标题、Workflow、subagent meta | root-thread 筛选、父/子 thread、collab spawn | durable leaf、branch、compaction、hidden/inactive |
 | raw 定位       | session/subagent JSONL 内 UUID        | `codex:<thread>:<line>`                   | `pi:<session-scope>:<entry>`            |
+
+### 内置 Provider 的 parse / reconcile 策略
+
+| Provider | 解析策略 | 损坏行边界 | 删除与目录缺失保护 |
+| --- | --- | --- | --- |
+| Claude | `mtime:lines` 增量读取；cursor 后只读新增行，截断/重写导致 cursor 超长时回到文件头 | 新增尾部遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `projects/` 可读且旧主 transcript 从当前清单消失时发 tombstone；根目录不存在/不可读时保留快照 |
+| Codex | 变更 rollout 全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `sessions/` 可读且旧 rollout 从当前清单消失时发 tombstone；根目录不存在/不可读时保留快照 |
+| Pi | v3 session 全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | 可读 session 根目录确认文件消失或同路径换 ID 时发撤回；根目录不存在/不可读时保留快照 |
+
+这些策略都汇入同一个持久化流程：
+
+```text
+discover(ctx)
+  ├─ current files + indexedSessions() + readable root
+  ├─ normal IndexUnit
+  └─ tombstone IndexUnit(retractSessionIds)
+        ↓
+parse(unit, cursor)
+  ├─ normal records / valid prefix
+  └─ tombstone: 不读文件，返回空 cursor
+        ↓
+persist(unit, generator)  [一个 unit 一个事务]
+  ├─ 先撤回 retractSessionIds / delete-session 的派生投影
+  ├─ 消费 records，upsert canonical rows
+  ├─ generator 正常结束后才写入 cursor
+  └─ memories 永不随 transcript 撤回
+```
+
+删除判断的关键是“完整清单证明”，不是单个 watcher 事件。目录暂时不可见时宁可保留旧投影；明确的删除或身份替换才生成清理单元。损坏行则采用有效前缀语义：坏行之后暂时不可见，源文件修复后下一次解析重试。
 
 它负责：
 
@@ -2463,10 +2494,12 @@ provider.parse(unit, oldCursor)
        ↓
 persist(db, unit, generator)
   → statements(db) 预编译所有语句
+  → retractSessionIds：先删除旧 session 的派生投影
   → generator.next() 循环
     → write(record.kind) 按 record.kind 执行 INSERT / UPSERT / UPDATE / DELETE
       → message/tool/result/... 的预编译 statement
       → delete-session：先显式级联删除旧投影
+      → tombstone unit：无 record，仅完成上面的撤回
       → session/message/tool/result/...：全量写入当前投影
   → generator 完成后 return cursor
   → cursor 非 null → 更新 index_state(unit.key, mtime, lines_processed)

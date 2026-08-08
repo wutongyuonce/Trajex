@@ -34,7 +34,10 @@ layers.
 - Per-file failures remain warnings and are reported in `skippedFiles`; finalize
   failures propagate. `affectedSessionIds` is updated only after the relevant
   commit. Force cleanup is one atomic, retryable transaction, and finalize is
-  likewise retried as a complete idempotent transaction.
+  likewise retried as a complete idempotent transaction. Provider parse
+  corruption is a normal valid-prefix boundary (ADR-0010), so the prefix can
+  commit and the cursor remains before the bad line; database failures still
+  abort the unit and leave its cursor unchanged.
 - A fresh `__app_heartbeat__` is policy ownership: while it is fresh, the CLI
   opens no write connection and performs no migration, schema setup, checkpoint,
   index build, or `attune`. `__app_last_successful_build__` remains an

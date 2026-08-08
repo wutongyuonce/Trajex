@@ -55,6 +55,12 @@ subagents/workflows/<run-id>/<agent-id>.jsonl
 
 同一文件可能混有不同版本写入的字段；解析器必须按可选字段处理。未知顶层 `type` 不应被当作错误。
 
+## 2.1 Trajex 的发现与解析边界
+
+Trajex 对主 transcript 使用 `mtime:lines` cursor：已成功消费的行会被跳过，只读取新增尾部。若 cursor 的行数超过当前文件长度（例如文件被重写或截断），解析器会回到文件开头重新建立投影。cursor 之后遇到损坏的 JSONL 行时，Claude 不把它当成整次构建失败，而是停止读取并提交该行之前的有效前缀，cursor 也停在损坏行之前；修复文件后下一次索引会重试该边界。
+
+删除清理依赖完整目录清单，而不是单个 watcher 事件：当 `projects/` 可读且已索引的主 transcript 路径从当前清单中消失时，discover 会生成 tombstone unit，由共享 persist 撤回该 session 的可重建派生投影。如果 `projects/` 暂时不存在或不可读，则认为 inventory 不完整，不生成 tombstone，保留上一次快照。普通子代理和 workflow 文件仍按各自 unit 解析；当前 session 删除清理的主键来自 `sessions.jsonl_path`。
+
 ## 3. `user` 与 `assistant` 消息
 
 消息的基本形状：

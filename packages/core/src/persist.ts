@@ -109,6 +109,12 @@ function deleteSession(db: SqliteDb, sessionId: string) {
 export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<TranscriptRecord, Cursor>): Cursor {
   const st = statements(db);
 
+  // Provider discovery can prove that an older identity is no longer present
+  // even when the replacement unit emits no transcript records. Retract those
+  // projections before consuming the generator so the whole replacement unit
+  // remains atomic with its subsequent writes.
+  for (const sessionId of unit.retractSessionIds ?? []) deleteSession(db, sessionId);
+
   // 未处理的 kind 立即抛错，避免新增规范记录后静默丢失。
   const write = (r: TranscriptRecord) => {
     switch (r.kind) {

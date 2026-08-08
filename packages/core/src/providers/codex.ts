@@ -44,6 +44,19 @@ export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
 
+function readableDirectory(path: string): boolean {
+  try { readdirSync(path); return true; } catch { return false; }
+}
+
+function pathWithin(root: string, candidate: string): boolean {
+  const inside = relative(root, candidate);
+  return inside === '' || (!inside.startsWith('..') && !isAbsolute(inside));
+}
+
+function changedPathCovers(changedPaths: readonly string[], target: string): boolean {
+  return changedPaths.some((changed) => changed === target || pathWithin(changed, target));
+}
+
 function messageVisibility(role: string, text: string | null): 'visible' | 'hidden' {
   return role === 'user' && typeof text === 'string' && HIDDEN_CONTEXT_ENVELOPE_RE.test(text)
     ? 'hidden'
@@ -68,6 +81,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     });
   }
   const changedFiles = new Set<string>();
+  const changedScopes: string[] = [];
   let sessionIndexChanged = false;
   for (const changedPath of ctx.changedPaths ?? []) {
     const rootRelative = isAbsolute(changedPath)
@@ -79,9 +93,15 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
       : normalize(join(sessionsDir, changedPath));
     const inside = relative(sessionsDir, absolute);
     if (!inside || inside.startsWith('..') || isAbsolute(inside)) continue;
+    changedScopes.push(absolute);
     if (absolute.toLowerCase().endsWith('.jsonl')) changedFiles.add(absolute);
   }
-  return discoverCodexJsonlFiles(sessionsDir).flatMap((file) => {
+  // A missing/unreadable sessions directory is not a complete inventory. Do
+  // not turn an empty scan into deletion until the directory is readable.
+  const inventoryComplete = readableDirectory(sessionsDir);
+  const discoveredFiles = inventoryComplete ? discoverCodexJsonlFiles(sessionsDir) : [];
+  const currentFiles = new Set(discoveredFiles.map(file => normalize(file.path)));
+  const units = discoveredFiles.flatMap((file) => {
     if (ctx.changedPaths !== undefined && !sessionIndexChanged && !changedFiles.has(normalize(file.path))) return [];
     const cursor = ctx.lastCursor(file.path);
     if (!sessionIndexChanged && cursor !== null && Number(cursor.split(':')[0]) >= statSync(file.path).mtimeMs) {
@@ -110,6 +130,21 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
       },
     }];
   });
+  if (!inventoryComplete) return units;
+  const tombstones = (ctx.indexedSessions?.() ?? [])
+    .filter(session => {
+      const path = normalize(session.jsonlPath);
+      if (!pathWithin(normalize(sessionsDir), path) || currentFiles.has(path)) return false;
+      return ctx.changedPaths === undefined || changedPathCovers(changedScopes, path);
+    })
+    .map(session => ({
+      key: normalize(session.jsonlPath),
+      sessionId: session.sessionId,
+      retractSessionIds: [session.sessionId],
+      meta: { kind: 'codex-tombstone' as const },
+    }));
+
+  return [...units, ...tombstones];
 }
 
 /**
@@ -125,14 +160,21 @@ export function discover(ctx: DiscoverContext): IndexUnit[] {
  * event_msg，再处理 response_item，才能双向去重这两种可能乱序的消息镜像。
  */
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
+  if ((unit.meta as { kind?: string } | undefined)?.kind === 'codex-tombstone') return '0:0';
   const mtime = statSync(unit.key).mtimeMs;
   const records: { lineNum: number; obj: any }[] = [];
   let lineNum = 0;
+  let processedLineCount = 0;
   readLines(unit.key, (line: string) => {
     lineNum++;
-    try { records.push({ lineNum, obj: JSON.parse(line) }); } catch { /* skip malformed */ }
+    try { records.push({ lineNum, obj: JSON.parse(line) }); } catch {
+      // A malformed line is a hard boundary for this full replay. Commit only
+      // the valid prefix and retry from this line after the source is fixed.
+      return false;
+    }
+    processedLineCount = lineNum;
   });
-  const outCursor = `${mtime}:${lineNum}`;
+  const outCursor = `${mtime}:${processedLineCount}`;
 
   const metaRecord = records.find(r => r.obj?.type === 'session_meta' && r.obj.payload?.id);
   if (!metaRecord) return outCursor;

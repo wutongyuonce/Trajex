@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -83,6 +83,21 @@ test('codex parse() yields a deduped, tool-aware record stream with a total sess
   assert.equal(sessions[0].git_branch, 'main');
 });
 
+test('codex full replay stops at a malformed line and returns the valid prefix', () => {
+  const path = writeFixture([
+    { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: META },
+    { type: 'event_msg', timestamp: '2026-06-10T10:00:01Z', payload: { type: 'user_message', message: 'before corruption' } },
+  ]);
+  appendFileSync(path, [
+    '{bad json}',
+    JSON.stringify({ type: 'event_msg', timestamp: '2026-06-10T10:00:02Z', payload: { type: 'user_message', message: 'after corruption' } }),
+  ].join('\n') + '\n');
+
+  const { values, ret } = drain(parse({ key: path, sessionId: '' }, null));
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.text), ['before corruption']);
+  assert.equal(ret.split(':')[1], '2');
+});
+
 test('codex parse() ignores a guardian thread and emits nothing', () => {
   const path = writeFixture([
     { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: { ...META, source: { subagent: { other: 'guardian' } } } },
@@ -145,4 +160,41 @@ test('codex provider folds session_index metadata into its canonical session rec
   const session = values.find(record => record.kind === 'session');
   assert.equal(session.title, 'Indexed title');
   assert.equal(session.ended_at, '2026-06-10T11:00:00Z');
+});
+
+test('codex discovery emits a tombstone for a deleted indexed rollout', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-codex-retract-'));
+  const sessionsDir = join(root, 'sessions', '2026', '06', '10');
+  const path = join(sessionsDir, 'rollout-deleted.jsonl');
+  mkdirSync(sessionsDir, { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ type: 'session_meta', payload: META })}\n`);
+  const provider = createCodexProvider({ rootDir: root });
+  const [indexed] = provider.discover({ lastCursor: () => null });
+  rmSync(path);
+
+  const [tombstone] = provider.discover({
+    lastCursor: () => null,
+    changedPaths: [path],
+    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'codex' }],
+  });
+  assert.equal(tombstone.meta.kind, 'codex-tombstone');
+  assert.equal(tombstone.sessionId, indexed.sessionId);
+  assert.deepEqual(tombstone.retractSessionIds, [indexed.sessionId]);
+});
+
+test('codex discovery keeps the last snapshot when its sessions root is missing', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-codex-missing-root-'));
+  const sessionsDir = join(root, 'sessions', '2026', '06', '10');
+  const path = join(sessionsDir, 'rollout-kept.jsonl');
+  mkdirSync(sessionsDir, { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ type: 'session_meta', payload: META })}\n`);
+  const provider = createCodexProvider({ rootDir: root });
+  const [indexed] = provider.discover({ lastCursor: () => null });
+  rmSync(join(root, 'sessions'), { recursive: true });
+
+  assert.deepEqual(provider.discover({
+    lastCursor: () => null,
+    changedPaths: [path],
+    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'codex' }],
+  }), []);
 });

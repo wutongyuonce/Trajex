@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { appendFileSync, mkdtempSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -776,5 +776,60 @@ test('app indexer skips Codex child threads and synthetic spawn calls', () => {
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM tool_calls WHERE session_id=?').get(`codex:${parentId}`).c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM tool_results WHERE session_id=?').get(`codex:${parentId}`).c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE agent_id=?').get(`codex:${childId}`).c, 0);
+  db.close();
+});
+
+test('app Claude incrementally removes deleted transcripts but preserves the snapshot while projects is missing', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-claude-delete-'));
+  const claudeDir = join(home, '.claude');
+  const projectDir = join(claudeDir, 'projects', '-tmp-claude-delete');
+  const jsonlPath = join(projectDir, 'session-delete.jsonl');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(jsonlPath, `${JSON.stringify({ uuid: 'claude-delete-message', type: 'user', message: { role: 'user', content: 'delete me' } })}\n`);
+  const options = { claudeDir, codexDir: join(home, 'empty-codex'), dbPath, DatabaseImpl: TestDatabase };
+
+  assert.deepEqual(buildIndex(options).affectedSessionIds, ['session-delete']);
+  rmSync(join(claudeDir, 'projects'), { recursive: true });
+  assert.deepEqual(buildIndex({ ...options, changedPaths: [jsonlPath] }).affectedSessionIds, []);
+  let db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get('session-delete').c, 1);
+  db.close();
+
+  mkdirSync(projectDir, { recursive: true });
+  assert.deepEqual(buildIndex({ ...options, changedPaths: [jsonlPath] }).affectedSessionIds, ['session-delete']);
+  db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get('session-delete').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get('session-delete').c, 0);
+  db.close();
+});
+
+test('app Codex incrementally removes deleted rollouts but preserves the snapshot while sessions is missing', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-codex-delete-'));
+  const codexDir = join(home, '.codex');
+  const sessionDir = join(codexDir, 'sessions', '2026', '06', '15');
+  const jsonlPath = join(sessionDir, 'rollout-delete.jsonl');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  const rawId = '019e8951-3e7d-7343-a3e3-05bff48a317d';
+  const sessionId = `codex:${rawId}`;
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(jsonlPath, [
+    { type: 'session_meta', payload: { id: rawId, cwd: '/tmp/codex-delete', timestamp: '2026-06-15T10:00:00Z' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'delete me' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const options = { claudeDir: join(home, 'empty-claude'), codexDir, dbPath, DatabaseImpl: TestDatabase };
+
+  assert.deepEqual(buildIndex(options).affectedSessionIds, [sessionId]);
+  rmSync(join(codexDir, 'sessions'), { recursive: true });
+  assert.deepEqual(buildIndex({ ...options, changedPaths: [jsonlPath] }).affectedSessionIds, []);
+  let db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 1);
+  db.close();
+
+  mkdirSync(sessionDir, { recursive: true });
+  assert.deepEqual(buildIndex({ ...options, changedPaths: [jsonlPath] }).affectedSessionIds, [sessionId]);
+  db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(sessionId).c, 0);
   db.close();
 });

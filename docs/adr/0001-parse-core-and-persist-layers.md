@@ -52,6 +52,15 @@ or provider-specific branch flags. Pi is a v3-only full-replay provider: its
 durable leaf and compaction forms determine active context before records are
 emitted.
 
+The adapters also own their parse boundary and source reconciliation policy:
+Claude resumes from a line cursor, while Codex and Pi replay a changed unit in
+full. All three may stop at a malformed JSONL line and commit the valid prefix;
+when a readable provider inventory proves an indexed transcript disappeared,
+the adapter emits a tombstone unit with `retractSessionIds`. A missing or
+unreadable root produces no tombstones. The shared persist layer performs that
+retraction before consuming records and never deletes `memories`; the complete
+matrix is recorded in ADR-0010.
+
 **Two indexing modes** share all of the above and differ only in trigger:
 **daemon mode** (the app, and potentially a future CLI daemon, watches and keeps
 the index fresh) and **passive pull mode** (a CLI command indexes on invocation

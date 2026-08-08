@@ -6,7 +6,7 @@ import { isAbsolute, join, normalize, relative } from 'node:path';
 
 import { projectSlugFromPath, trunc, truncJson } from '../parsing.ts';
 import type {
-  Cursor, DiscoverContext, IndexUnit, MessageRecord, ProviderAdapter,
+  Cursor, DiscoverContext, IndexUnit, IndexedSession, MessageRecord, ProviderAdapter,
   RawLookup, RawRecord, TranscriptRecord,
 } from './types.ts';
 
@@ -34,14 +34,32 @@ function sessionFiles(dir: string): string[] {
 }
 
 function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
+  const normalizedSessionDir = normalize(sessionDir);
   const changed = new Set<string>();
+  let changedRoot = false;
   for (const changedPath of ctx.changedPaths ?? []) {
     const absolute = isAbsolute(changedPath) ? normalize(changedPath) : normalize(join(sessionDir, changedPath));
     const inside = relative(sessionDir, absolute);
-    if (absolute === normalize(sessionDir) || (inside && !inside.startsWith('..') && !isAbsolute(inside))) changed.add(absolute);
+    if (absolute === normalizedSessionDir) changedRoot = true;
+    if (absolute === normalizedSessionDir || (inside && !inside.startsWith('..') && !isAbsolute(inside))) changed.add(absolute);
   }
-  return sessionFiles(sessionDir).flatMap((path) => {
-    if (ctx.changedPaths !== undefined && !changed.has(normalize(path)) && !changed.has(normalize(sessionDir))) return [];
+  // A missing root is not a complete inventory. Do not interpret it as proof
+  // that every previously indexed session was deleted.
+  const inventoryComplete = existsSync(sessionDir);
+  const files = inventoryComplete ? sessionFiles(sessionDir).map(normalize) : [];
+  const currentFiles = new Set(files);
+  const indexedByPath = new Map<string, IndexedSession[]>();
+  for (const session of ctx.indexedSessions?.() ?? []) {
+    const path = normalize(session.jsonlPath);
+    const inside = relative(normalizedSessionDir, path);
+    if (!inside || inside.startsWith('..') || isAbsolute(inside)) continue;
+    const rows = indexedByPath.get(path) ?? [];
+    rows.push(session);
+    indexedByPath.set(path, rows);
+  }
+
+  const units = files.flatMap((path) => {
+    if (ctx.changedPaths !== undefined && !changed.has(path) && !changedRoot) return [];
     const mtime = statSync(path).mtimeMs;
     const cursor = ctx.lastCursor(path);
     if (cursor !== null && Number(cursor.split(':')[0]) >= mtime) return [];
@@ -49,8 +67,39 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
     try { header = JSON.parse(readFileSync(path, 'utf8').split('\n')[0] || 'null'); } catch { /* malformed file */ }
     if (header?.type !== 'session' || header.version !== 3 || typeof header.id !== 'string') return [];
     const project = projectSlugFromPath(header.cwd);
-    return [{ key: path, sessionId: piSessionId(header.id, header.cwd), ...(project ? { project } : {}), meta: { sessionId: header.id, cwd: header.cwd ?? null } }];
+    const sessionId = piSessionId(header.id, header.cwd);
+    const retractSessionIds = (indexedByPath.get(path) ?? [])
+      .map(session => session.sessionId)
+      .filter(id => id !== sessionId);
+    return [{
+      key: path,
+      sessionId,
+      ...(project ? { project } : {}),
+      ...(retractSessionIds.length ? { retractSessionIds } : {}),
+      meta: { sessionId: header.id, cwd: header.cwd ?? null },
+    }];
   });
+
+  // A readable Pi root gives us a complete inventory. If a previously indexed
+  // session file disappeared from that inventory, emit an empty tombstone unit
+  // so persist can retract its old projection without touching other sessions.
+  const tombstones = inventoryComplete ? (ctx.indexedSessions?.() ?? [])
+    .filter(session => {
+      const path = normalize(session.jsonlPath);
+      const inside = relative(normalizedSessionDir, path);
+      const pathChanged = changed.has(path);
+      return inside && !inside.startsWith('..') && !isAbsolute(inside)
+        && !currentFiles.has(path)
+        && (ctx.changedPaths === undefined || changedRoot || pathChanged);
+    })
+    .map(session => ({
+      key: normalize(session.jsonlPath),
+      sessionId: session.sessionId,
+      retractSessionIds: [session.sessionId],
+      meta: { kind: 'pi-tombstone' as const },
+    })) : [];
+
+  return [...units, ...tombstones];
 }
 
 function piSessionId(rawId: string, cwd: unknown): string {
@@ -79,20 +128,21 @@ function toolFilePath(name: unknown, input: unknown): string | null {
 
 /** Full replay is required because the current Pi transcript is a tree path. */
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
+  const meta = unit.meta as { kind?: string } | undefined;
+  if (meta?.kind === 'pi-tombstone') return '0:0';
   const stat = statSync(unit.key);
   const raw = readFileSync(unit.key, 'utf8');
   const lines = raw.split('\n');
   if (raw.endsWith('\n')) lines.pop();
-  const outCursor = `${stat.mtimeMs}:${lines.length}`;
   const parsed: PiEntry[] = [];
+  let processedLineCount = 0;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!.replace(/\r$/, '');
-    if (!line) continue;
-    try { parsed.push(JSON.parse(line)); } catch (error) {
-      if (index === lines.length - 1 && !raw.endsWith('\n')) break;
-      throw new Error(`Pi session: corrupted line ${index + 1} in ${unit.key}`, { cause: error });
-    }
+    if (!line) { processedLineCount = index + 1; continue; }
+    try { parsed.push(JSON.parse(line)); } catch { break; }
+    processedLineCount = index + 1;
   }
+  const outCursor = `${stat.mtimeMs}:${processedLineCount}`;
   const header = parsed.find(entry => entry.type === 'session' && typeof entry.id === 'string');
   if (!header || header.version !== 3) return outCursor;
 

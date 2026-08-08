@@ -137,3 +137,27 @@ test('delete-session clears transcript tables but preserves memories', () => {
   assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE session_id=?').get('sid-p').c, 1);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE session_id=?').get('other-session').c, 1);
 });
+
+test('IndexUnit retractions clear prior projection before an empty replacement unit', () => {
+  const db = freshDb();
+  const unit = fixtureUnit();
+  persist(db, unit, parse(unit, null));
+  db.prepare('INSERT INTO memories (id,session_id,path,summary,created_at) VALUES (?,?,?,?,?)').run(
+    'memory-retract', 'sid-p', '/tmp/retract.md', 'keep this memory', '2026-06-10T10:00:00Z',
+  );
+
+  function* tombstone() { return '0:0'; }
+  persist(db, {
+    key: 'tombstone',
+    sessionId: 'pi:new-identity',
+    retractSessionIds: ['sid-p'],
+  }, tombstone());
+
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions WHERE id=?').get('sid-p').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM messages WHERE session_id=?').get('sid-p').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM tool_calls WHERE session_id=?').get('sid-p').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM summaries WHERE session_id=?').get('sid-p').c, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE id=?').get('memory-retract').c, 1);
+  assert.equal(db.prepare('SELECT mtime, lines_processed FROM index_state WHERE jsonl_path=?').get('tombstone').mtime, 0);
+  assert.equal(db.prepare('SELECT mtime, lines_processed FROM index_state WHERE jsonl_path=?').get('tombstone').lines_processed, 0);
+});

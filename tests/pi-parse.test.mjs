@@ -62,20 +62,47 @@ test('Pi discovers standard top-level v3 sessions and ignores a torn final line'
   assert.equal(drain(provider.parse(unit, null)).filter(record => record.kind === 'session').length, 1);
 });
 
-test('Pi rejects a malformed complete JSONL line instead of deleting valid history', () => {
+test('Pi discovery retracts a prior identity when a session file is reused', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-retract-'));
+  const dir = join(root, 'sessions', '--tmp-project--');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ type: 'session', version: 3, id: 'old-identity', cwd: '/tmp/project' })}\n`);
+
+  const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
+  const oldUnit = provider.discover({ lastCursor: () => null })[0];
+  writeFileSync(path, `${JSON.stringify({ type: 'session', version: 3, id: 'new-identity', cwd: '/tmp/project' })}\n`);
+
+  const [replacement] = provider.discover({
+    lastCursor: () => null,
+    changedPaths: [path],
+    indexedSessions: () => [{ sessionId: oldUnit.sessionId, jsonlPath: path, source: 'pi' }],
+  });
+
+  assert.equal(replacement.sessionId, oldUnit.sessionId.replace('old-identity', 'new-identity'));
+  assert.deepEqual(replacement.retractSessionIds, [oldUnit.sessionId]);
+});
+
+test('Pi stops at a malformed line and returns the valid prefix', () => {
   const root = mkdtempSync(join(tmpdir(), 'trajex-pi-malformed-'));
   const dir = join(root, 'sessions', '--project--');
   const path = join(dir, 'fixture.jsonl');
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, [
     JSON.stringify({ type: 'session', version: 3, id: 'malformed' }),
+    JSON.stringify({ type: 'message', id: 'before', parentId: null, message: { role: 'user', content: 'must index' } }),
     '{bad json}',
     JSON.stringify({ type: 'message', id: 'after', parentId: null, message: { role: 'user', content: 'must not index' } }),
   ].join('\n') + '\n');
 
   const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
   const unit = provider.discover({ lastCursor: () => null })[0];
-  assert.throws(() => drain(provider.parse(unit, null)), /Pi session: corrupted line 2/);
+  const generator = provider.parse(unit, null);
+  const records = [];
+  let step = generator.next();
+  while (!step.done) { records.push(step.value); step = generator.next(); }
+  assert.deepEqual(records.filter(record => record.kind === 'message').map(record => record.text), ['must index']);
+  assert.equal(step.value.split(':')[1], '2');
 });
 
 test('Pi treats a cyclic model parent chain as an unknown model', () => {

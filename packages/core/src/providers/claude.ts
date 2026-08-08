@@ -65,17 +65,32 @@ function totalInputTokens(usage: Record<string, unknown>): number | null {
   return seen ? total : null;
 }
 
+function readableDirectory(path: string): boolean {
+  try { readdirSync(path); return true; } catch { return false; }
+}
+
+function pathWithin(root: string, candidate: string): boolean {
+  const inside = relative(root, candidate);
+  return inside === '' || (!inside.startsWith('..') && !isAbsolute(inside));
+}
+
+function changedPathCovers(changedPaths: readonly string[], target: string): boolean {
+  return changedPaths.some((changed) => changed === target || pathWithin(changed, target));
+}
+
 function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   const projectsDir = join(rootDir, 'projects');
   const changedTranscriptPaths = new Set<string>();
   const changedWorkflowPaths = new Set<string>();
   const forcedPaths = new Set<string>();
+  const changedScopes: string[] = [];
   for (const changedPath of ctx.changedPaths ?? []) {
     const absolute = isAbsolute(changedPath)
       ? normalize(changedPath)
       : normalize(join(projectsDir, changedPath));
     const inside = relative(projectsDir, absolute);
     if (!inside || inside.startsWith('..') || isAbsolute(inside)) continue;
+    changedScopes.push(absolute);
     if (absolute.toLowerCase().endsWith('.meta.json')) {
       const transcript = absolute.slice(0, -'.meta.json'.length) + '.jsonl';
       changedTranscriptPaths.add(transcript);
@@ -86,7 +101,12 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
       changedWorkflowPaths.add(absolute);
     }
   }
-  const transcriptUnits = discoverJsonlFiles(projectsDir).filter((file) => {
+  // An absent/unreadable projects directory is not a complete inventory. In
+  // that state, an empty discovery result must not be interpreted as deletion.
+  const inventoryComplete = readableDirectory(projectsDir);
+  const transcriptFiles = inventoryComplete ? discoverJsonlFiles(projectsDir) : [];
+  const currentTranscriptPaths = new Set(transcriptFiles.map(file => normalize(file.path)));
+  const transcriptUnits = transcriptFiles.filter((file) => {
     const normalizedPath = normalize(file.path);
     if (ctx.changedPaths !== undefined && !changedTranscriptPaths.has(normalizedPath)) return false;
     const cursor = ctx.lastCursor(file.path);
@@ -105,7 +125,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   }));
 
   const workflowUnits: IndexUnit[] = [];
-  if (!existsSync(projectsDir)) return transcriptUnits;
+  if (!inventoryComplete) return transcriptUnits;
   let projects: string[];
   try { projects = readdirSync(projectsDir); } catch { return transcriptUnits; }
   for (const project of projects) {
@@ -141,7 +161,20 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
       }
     }
   }
-  return [...transcriptUnits, ...workflowUnits];
+  const tombstones = (ctx.indexedSessions?.() ?? [])
+    .filter(session => {
+      const path = normalize(session.jsonlPath);
+      if (!pathWithin(normalize(projectsDir), path) || currentTranscriptPaths.has(path)) return false;
+      return ctx.changedPaths === undefined || changedPathCovers(changedScopes, path);
+    })
+    .map(session => ({
+      key: normalize(session.jsonlPath),
+      sessionId: session.sessionId,
+      retractSessionIds: [session.sessionId],
+      meta: { kind: 'claude-tombstone' as const },
+    }));
+
+  return [...transcriptUnits, ...workflowUnits, ...tombstones];
 }
 
 /**
@@ -244,7 +277,9 @@ function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
  * duration 及 subagent 元数据；主会话末尾才产出 session 聚合记录。
  */
 export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRecord, Cursor> {
-  if ((unit.meta as ClaudeWorkflowUnitMeta | undefined)?.kind === 'workflow') {
+  const kind = (unit.meta as { kind?: string } | undefined)?.kind;
+  if (kind === 'claude-tombstone') return '0:0';
+  if (kind === 'workflow') {
     return yield* parseWorkflow(unit);
   }
   const skip = cursorToSkip(cursor);
@@ -266,10 +301,18 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
   };
 
   let lineNum = 0;
+  let processedLineCount = 0;
   readLines(unit.key, (line: string) => {
     lineNum++;
     let obj: any;
-    try { obj = JSON.parse(line); } catch { return; }
+    try { obj = JSON.parse(line); } catch {
+      // Historical lines before the cursor have already been accepted. A new
+      // malformed line is the boundary of this incremental batch: stop here,
+      // keep the cursor before it, and let the next file change retry it.
+      if (lineNum <= skip) { processedLineCount = lineNum; return; }
+      return false;
+    }
+    processedLineCount = lineNum;
     const sid = unit.sessionId;
     const ts = obj.timestamp || null;
     const msg = obj.message || {};
@@ -337,6 +380,11 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     }
   });
 
+  // A rewrite/truncation can leave the stored incremental cursor beyond the
+  // current file. Rewind once so a replacement transcript is not silently
+  // treated as an empty append.
+  if (skip > 0 && lineNum < skip) return yield* parse(unit, null);
+
   if (isSubagent && unit.agentId) {
     const metaPath = unit.key.replace(/\.jsonl$/, '.meta.json');
     if (existsSync(metaPath)) {
@@ -381,7 +429,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
   }
 
   yield* records;
-  return `${mtime}:${lineNum}`;
+  return `${mtime}:${processedLineCount}`;
 }
 
 /** 按原生 message UUID 在主会话、subagent 或 workflow-agent 文件中回查原始行。 */

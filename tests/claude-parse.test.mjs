@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -99,6 +99,56 @@ test('claude parse() resumes from a cursor, skipping already-indexed lines', () 
   // Only the (empty-chunk) session record, with message_count 0.
   assert.deepEqual(values.filter(r => r.kind !== 'session'), []);
   assert.equal(values.find(r => r.kind === 'session').message_count, 0);
+});
+
+test('claude incremental parse stops at a new malformed line and leaves the cursor before it', () => {
+  const path = writeFixture();
+  appendFileSync(path, [
+    JSON.stringify({ uuid: 'u-before-corruption', type: 'user', message: { role: 'user', content: 'before corruption' } }),
+    '{bad json}',
+    JSON.stringify({ uuid: 'u-after-corruption', type: 'user', message: { role: 'user', content: 'after corruption' } }),
+  ].join('\n') + '\n');
+
+  const { values, ret } = drain(parse({ key: path, sessionId: 'sid-x', project: 'quiet-zero' }, '0:6'));
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.uuid), ['u-before-corruption']);
+  assert.equal(ret.split(':')[1], '7');
+});
+
+test('claude discovery emits a tombstone for a deleted indexed transcript', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-claude-retract-'));
+  const projectDir = join(root, 'projects', '-proj');
+  const path = join(projectDir, 'sid-deleted.jsonl');
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ uuid: 'm1', type: 'user', message: { role: 'user', content: 'keep' } })}\n`);
+  const provider = createClaudeProvider({ rootDir: root });
+  const [indexed] = provider.discover({ lastCursor: () => null });
+  rmSync(path);
+
+  const [tombstone] = provider.discover({
+    lastCursor: () => null,
+    changedPaths: [path],
+    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'claude' }],
+  });
+  assert.equal(tombstone.meta.kind, 'claude-tombstone');
+  assert.equal(tombstone.sessionId, indexed.sessionId);
+  assert.deepEqual(tombstone.retractSessionIds, [indexed.sessionId]);
+});
+
+test('claude discovery keeps the last snapshot when its projects root is missing', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-claude-missing-root-'));
+  const projectDir = join(root, 'projects', '-proj');
+  const path = join(projectDir, 'sid-kept.jsonl');
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ uuid: 'm1', type: 'user', message: { role: 'user', content: 'keep' } })}\n`);
+  const provider = createClaudeProvider({ rootDir: root });
+  const [indexed] = provider.discover({ lastCursor: () => null });
+  rmSync(join(root, 'projects'), { recursive: true });
+
+  assert.deepEqual(provider.discover({
+    lastCursor: () => null,
+    changedPaths: [path],
+    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'claude' }],
+  }), []);
 });
 
 test('claude provider emits workflow artifacts with an explicit canonical tool edge', () => {

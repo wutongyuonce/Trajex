@@ -6,7 +6,7 @@
  */
 import { persist } from './persist.ts';
 import type { ProviderRegistry } from './providers/registry.ts';
-import type { Cursor, IndexUnit, ProviderAdapter } from './providers/types.ts';
+import type { Cursor, IndexUnit, ProviderAdapter, IndexedSession } from './providers/types.ts';
 import type { SqliteDb } from './sqlite-types.ts';
 
 /** 计划中的单个执行单元：哪个 Provider 解析哪个 unit，以及从哪个 cursor 续读（null 为全量）。 */
@@ -66,10 +66,14 @@ export function createProviderIndexPlan(
     markerMissing.get(provider.name) === true && sourceAlreadyIndexed(db, provider.name)
   ));
   for (const provider of providers) {
+    const indexedSessions = (): readonly IndexedSession[] => db.prepare(
+      'SELECT id AS sessionId, jsonl_path AS jsonlPath, source FROM sessions WHERE source = ?',
+    ).all(provider.name) as IndexedSession[];
     const fullReindex = fullRebuild;
     const units = provider.discover({
       lastCursor: fullReindex ? () => null : (key) => storedProviderCursor(db, key),
       changedPaths: fullReindex ? undefined : changedPaths,
+      indexedSessions,
     });
     for (const unit of units) {
       items.push({

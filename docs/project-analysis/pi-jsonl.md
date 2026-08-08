@@ -3,6 +3,17 @@
 > 来源：Pi 官方仓库 `earendil-works/pi` 的 [`packages/coding-agent/docs/session-format.md`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md)
 > 获取日期：2026-08-07。以下为原文副本，保留原始内容以便离线查阅；上游更新时请以官方仓库为准。
 
+## Trajex indexing behavior
+
+Trajex treats each official v3 file as a full-replay unit because the active
+context depends on the durable leaf, branches, and compaction checkpoints. A
+malformed line stops the replay at the valid prefix; that prefix is persisted
+and the cursor remains before the bad line. When the configured session
+directory is readable, discovery can emit a tombstone for an indexed file
+that disappeared, retracting only its regenerable projection. A temporarily
+missing or unreadable session directory is treated as an incomplete inventory,
+so the previous snapshot is preserved.
+
 # Session File Format
 Sessions are stored as JSONL (JSON Lines) files. Each line is a JSON object with a `type` field. Session entries form a tree structure via `id`/`parentId` fields, enabling in-place branching without creating new files.
 ## File Location

@@ -260,10 +260,11 @@ guardian 是子线程的特殊变体，标记在 `source.subagent.other`，见�
 - 递归枚举 `sessions/` 下全部 `*.jsonl`。有 `changedPaths` 时只检查 watcher 指出的路径；否则用存储 cursor 与文件 mtime 跳过未变更文件。
 - 对每个候选文件读首行 `session_meta`；**有父 ID 的 rollout 一律不索引**（`discoverAt` 直接跳过，与 Claude 把子代理转录也索引的做法不同）。
 - 产出 `IndexUnit`：`sessionId = codex:<rawId>`，携带 `indexedTitle` / `indexedUpdatedAt`。
+- 发现阶段同时读取已索引的 session 路径清单。只有当 `sessions/` 本身可读，且旧路径从当前清单中明确消失时，才产出带 `retractSessionIds` 的 tombstone unit；如果根目录暂时不存在或不可读，则不产出 tombstone，保留上一次快照。
 
 ### 9.2 全量重放（parse）
 
-这正是 Codex 是"全量重放"适配器的原因：去重需要整文件（双向）知识，无法像 Claude 那样按行增量续读。每次根 thread 的 parse 都重发全部记录并带 `countMode: 'total'`，且在记录流开头发出 `delete-session`，由 persist 先清理该 session 的旧派生投影，再写入当前完整结果。`delete-session` 是全量重建协议，不再是 guardian/auto-review 的特殊撤回协议。
+这正是 Codex 是"全量重放"适配器的原因：去重需要整文件（双向）知识，无法像 Claude 那样按行增量续读。每次根 thread 的 parse 都重发全部记录并带 `countMode: 'total'`，且在记录流开头发出 `delete-session`，由 persist 先清理该 session 的旧派生投影，再写入当前完整结果。`delete-session` 是全量重建协议，不再是 guardian/auto-review 的特殊撤回协议。若全量读取遇到损坏 JSONL 行，解析在该行停止，只提交此前的有效前缀，并把 cursor 留在损坏行之前；修复源文件后下一次 replay 会从头重建。
 
 处理顺序（`providers/codex.ts`）：
 

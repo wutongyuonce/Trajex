@@ -6,78 +6,81 @@ Accepted — 2026-08-09
 
 ## Context
 
-Claude Code, Codex, and Pi all emit JSONL, but their correctness boundaries are
-different. Claude can resume an append-only file from a line cursor. Codex
-needs the complete rollout to reconcile duplicate `event_msg` and
+Claude Code, Codex, and Pi all emit JSONL, but their parser correctness
+boundaries differ. Claude can resume an append-only file from a line cursor.
+Codex needs the complete rollout to reconcile duplicate `event_msg` and
 `response_item` records. Pi needs the complete tree to resolve its durable
-leaf, branches, and compaction checkpoints. Treating all three as one generic
-incremental parser either duplicates messages or loses context.
+leaf, branches, and compaction checkpoints.
 
-The same distinction must not leak into SQLite persistence. Retraction,
-upsert, cursor advancement, FTS maintenance, and memory preservation need one
-provider-independent contract.
+The source-inventory question — whether a missing path is a real deletion — is
+owned by ADR-0008. This ADR starts after discovery has produced an
+`IndexUnit`, and defines how that unit is parsed and persisted consistently.
 
 ## Decision
 
-### Provider parse and discovery matrix
+### Provider parse matrix
 
-| Provider | Discover / cursor | Parse flow | Corruption policy | Reconciliation policy |
-| --- | --- | --- | --- | --- |
-| Claude | Discover main/subagent/workflow units; cursor is `mtime:lines` | Skip accepted lines, stream new tail, aggregate session at the end | A malformed line after the cursor stops the stream; commit the valid prefix and return a cursor before that line. If the cursor is past current EOF, restart from line 1 | When readable `projects/` inventory proves an indexed main transcript disappeared, emit a tombstone. Missing/unreadable root preserves the snapshot |
-| Codex | Discover root rollouts; cursor records `mtime:lines`, but replay ignores the line offset | Read the whole file, collect visible `event_msg` keys, then replay `response_item` with deduplication; emit `countMode: total` | Stop at the first malformed line, commit the valid prefix, and return a cursor before it | When readable `sessions/` inventory proves an indexed rollout disappeared, emit a tombstone. Missing/unreadable root preserves the snapshot |
-| Pi | Discover v3 session files; cursor records `mtime:lines`, but replay ignores the line offset | Read the whole tree, resolve durable leaf/compaction, and project `visible` / `inactive` / `hidden` | Stop at the first malformed line, commit the valid prefix, and return a cursor before it | Emit retraction for a proven deletion or same-path identity replacement. Missing/unreadable configured session root preserves the snapshot |
+| Provider | Cursor and parse flow | Malformed JSONL policy |
+| --- | --- | --- |
+| Claude | `mtime:lines`; skip accepted lines, stream the new tail, aggregate the session at the end | Stop after a malformed line beyond the cursor; commit the valid prefix and return a cursor before the bad line. If the cursor is past EOF, restart from line 1 |
+| Codex | Record `mtime:lines`, but replay the whole rollout; collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Stop at the first malformed line; commit the valid prefix and return a cursor before it |
+| Pi | Record `mtime:lines`, but replay the whole v3 tree; resolve durable leaf/compaction and project `visible` / `inactive` / `hidden` | Stop at the first malformed line; commit the valid prefix and return a cursor before it |
 
-The valid-prefix rule is deliberate: a malformed source line is a recoverable
-boundary, not permission to discard previously valid records. Lines after the
-boundary are retried on the next run after the source is repaired.
+The valid-prefix rule treats a malformed line as a recoverable boundary, not
+as permission to discard earlier valid records. Lines after the boundary are
+retried after the source is repaired.
 
-### Unified persist flow
+### Unit-to-persist contract
 
-Every `IndexUnit` is committed independently:
+Discovery may hand the indexer either a normal unit or the tombstone unit
+defined by ADR-0008. `persist()` applies the same contract to both:
 
 ```text
-discover(ctx)
-  -> normal unit or tombstone unit(retractSessionIds)
 parse(unit, oldCursor)
-  -> TranscriptRecord*; return newCursor only after the valid prefix is read
+  -> TranscriptRecord*; return newCursor after the accepted prefix
+
 persist(db, unit, generator)
   -> BEGIN IMMEDIATE
-  -> deleteSession(id) for each retractSessionIds
-  -> consume records:
-       session/message/tool/result/summary/... = provider-neutral upsert
-       delete-session = delete one session's derived projection
-  -> if generator completed: write index_state cursor
+  -> retract each unit.retractSessionIds
+  -> consume records as provider-neutral upserts/updates
+  -> delete-session removes one session's derived projection
+  -> tombstone has no records and only performs the retraction
+  -> write index_state only after generator completion
   -> COMMIT
 ```
 
-`deleteSession()` removes `sessions`, `messages`, `tool_calls`, `tool_results`,
-`subagents`, `workflow_agents`, `workflows`, and `summaries` rows associated
-with the session. It never removes `memories`; memories are a separate,
-user-confirmed durable domain. A tombstone has no source file to parse and
-therefore only performs the retraction and records an empty cursor.
+Retraction removes regenerable rows for the session (`sessions`, `messages`,
+tools, workflows, subagents, and summaries) but never removes `memories`.
+`delete-session` and `retractSessionIds` therefore share the same derived-data
+boundary without making memories part of transcript replay.
 
-Cursor advancement is coupled to generator completion. If parsing or a record
-write fails for reasons other than the provider's malformed-line boundary, the
-unit transaction does not advance `index_state`; the next build retries the
-unit. Transaction handling therefore protects database consistency without
-turning a known malformed line into an all-history rollback.
+Cursor advancement is coupled to generator completion. A database or record
+write failure aborts the unit and leaves its cursor unchanged; the next build
+retries it. A provider's malformed-line boundary is different: it is surfaced
+as a normal, committed prefix with a deliberately earlier cursor.
+
+## Non-goals and ownership boundaries
+
+- This ADR does not decide whether a source path is deleted or merely
+  unavailable; ADR-0008 owns inventory completeness and tombstone creation.
+- This ADR does not define SQLite rollback, writer leases, or BUSY retry policy;
+  ADR-0006 owns those mechanics.
+- This ADR does not add provider branches to UI assembly; ADR-0007 owns the
+  canonical transcript/detail seam.
 
 ## Rationale and trade-offs
 
-- Claude gets inexpensive append indexing without giving up safe recovery from
-  truncation or corruption.
-- Codex and Pi pay the cost of full replay because their projections depend on
-  global file context.
-- Root-readability guards prevent a transient missing mount or startup state
-  from becoming mass deletion.
-- Explicit tombstones make deletion observable and testable while keeping the
-  shared persist layer unaware of provider-specific directory layouts.
-- Full rebuild remains available when a provider cannot prove inventory
-  completeness or when a user wants authoritative re-import.
+- Claude gets cheap append indexing while still retrying a damaged boundary.
+- Codex and Pi pay for full replay because their projections depend on global
+  file context.
+- A single persist contract keeps provider-specific parsing out of SQLite and
+  keeps CLI/App behavior aligned.
+- Full rebuild remains available when a provider cannot provide a complete
+  inventory or when a user wants authoritative re-import.
 
 ## Related decisions
 
 - ADR-0001 — provider registry and one shared persist layer
 - ADR-0006 — write transactions, rollback safety, and concurrency
-- ADR-0008 — incremental discovery and safe transcript reconciliation
-- ADR-0009 — Pi v3 context projection and visibility
+- ADR-0007 — canonical transcript records and session-detail assembly
+- ADR-0008 — source inventory and deletion reconciliation

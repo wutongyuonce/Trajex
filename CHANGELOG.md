@@ -13,6 +13,7 @@
 - 统一 persist 的撤回语义：`retractSessionIds` 在消费 record generator 前清理旧 session 投影，保留 `memories`；空 tombstone unit 只负责触发该清理。
 - Claude 继续按 cursor 增量读取，遇到 cursor 之后的损坏 JSONL 行时提交此前的有效前缀，并把 cursor 停在损坏行之前；Codex、Pi 对变更文件全量重放，但同样只提交损坏行之前的有效前缀。
 - Claude 在检测到文件被重写/截断、旧 cursor 超过当前文件长度时回退到文件开头重新解析，避免把新文件误当作已消费内容。
+- 重新划分 ADR 职责：ADR-0008 只定义来源清单与删除判断，ADR-0010 只定义 Provider parse 边界与 IndexUnit→persist 契约，避免两份决策重复描述同一语义。
 
 ### Fixed
 

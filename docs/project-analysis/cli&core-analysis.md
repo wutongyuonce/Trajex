@@ -734,7 +734,7 @@ type TranscriptRecord =
 { kind: 'delete-session', sessionId }
 ```
 
-同样不是表行。Pi 和 Codex 根 thread 都在全量重放前发出它，先移除旧投影，再写入当前完整 session；Codex 不再把它作为 guardian / auto-review 的特殊撤回协议。child/fork/guardian 在发现阶段直接忽略，因此不会进入 `parse`，也不会产生 `delete-session`。此外，discover 可在 `IndexUnit.retractSessionIds` 中表达已证明的文件删除或路径换 ID；这类 tombstone unit 的 `parse()` 不读取文件，只返回空 cursor，persist 会先撤回旧投影再提交 unit。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent 和全部摘要，但保留 `memories`；其他 session 或未关联 session 的记忆也不会受影响。
+同样不是表行。Pi 和 Codex 根 thread 都在全量重放前发出它，先移除旧投影，再写入当前完整 session。child/fork/guardian 在发现阶段直接忽略，因此不会进入 `parse`，也不会产生 `delete-session`。此外，discover 可在 `IndexUnit.retractSessionIds` 中表达已证明的文件删除或路径换 ID；这类 tombstone unit 的 `parse()` 不读取文件，只返回空 cursor，persist 会先撤回旧投影再提交 unit。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent 和全部摘要，但保留 `memories`；其他 session 或未关联 session 的记忆也不会受影响。
 
 ### 描述、监视、原文回源：`ProviderDescriptor`、`RawLookup`、`RawRecord`、`ProviderAdapter`
 
@@ -827,6 +827,27 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | 特殊关系       | history 标题、Workflow、subagent meta | root-thread 筛选、父/子 thread、collab spawn | durable leaf、branch、compaction、hidden/inactive |
 | raw 定位       | session/subagent JSONL 内 UUID        | `codex:<thread>:<line>`                   | `pi:<session-scope>:<entry>`            |
 
+它负责：
+
+  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断是否需要处理；例如 Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
+
+    > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
+    >
+    > * Claude 是 line-incremental，所以 Claude cursor 里的 `linesProcessed` 会被用来跳过旧行。
+    >
+    > * Codex 是 full-reparse，所以对 Codex：
+    >
+    >   ```
+    >   mtime 用来判断文件有没有变
+    >   linesProcessed 更多是记录文件当前总行数
+    >   ```
+
+  - 负责解析文件内容：`parse()` 读取某个 JSONL，把它翻译成 TranscriptRecord
+
+  - 负责回查原文：`raw()` 根据 SQLite message uuid 找回原始 JSONL 行
+
+  - 负责告诉 app 监听哪里：`watchRoots()` 告诉 app daemon 应该监听哪些目录
+
 ### 内置 Provider 的 parse / reconcile 策略
 
 | Provider | 解析策略 | 损坏行边界 | 删除与目录缺失保护 |
@@ -855,27 +876,6 @@ persist(unit, generator)  [一个 unit 一个事务]
 ```
 
 删除判断的关键是“完整清单证明”，不是单个 watcher 事件。目录暂时不可见时宁可保留旧投影；明确的删除或身份替换才生成清理单元。损坏行则采用有效前缀语义：坏行之后暂时不可见，源文件修复后下一次解析重试。
-
-它负责：
-
-  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断是否需要处理；例如 Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
-
-    > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
-    >
-    > * Claude 是 line-incremental，所以 Claude cursor 里的 `linesProcessed` 会被用来跳过旧行。
-    >
-    > * Codex 是 full-reparse，所以对 Codex：
-    >
-    >   ```
-    >   mtime 用来判断文件有没有变
-    >   linesProcessed 更多是记录文件当前总行数
-    >   ```
-
-  - 负责解析文件内容：`parse()` 读取某个 JSONL，把它翻译成 TranscriptRecord
-
-  - 负责回查原文：`raw()` 根据 SQLite message uuid 找回原始 JSONL 行
-
-  - 负责告诉 app 监听哪里：`watchRoots()` 告诉 app daemon 应该监听哪些目录
 
 ### Claude Code：主会话、子会话与 Workflow 的 JSONL/JSON 映射 `claude.ts`
 

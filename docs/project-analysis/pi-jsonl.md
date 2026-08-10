@@ -9,10 +9,11 @@ Trajex treats each official v3 file as a full-replay unit because the active
 context depends on the durable leaf, branches, and compaction checkpoints. A
 malformed line stops the replay at the valid prefix; that prefix is persisted
 and the cursor remains before the bad line. When the configured session
-directory is readable, discovery can emit a tombstone for an indexed file
-that disappeared, retracting only its regenerable projection. A temporarily
-missing or unreadable session directory is treated as an incomplete inventory,
-so the previous snapshot is preserved.
+directory can be enumerated at its root, discovery can emit a tombstone for an
+indexed file that disappeared, retracting only its regenerable projection. A
+temporarily missing or root-unreadable session directory preserves the previous
+snapshot. Once root enumeration succeeds, missing or unreadable descendant
+directories are treated as empty subtrees.
 
 # Session File Format
 Sessions are stored as JSONL (JSON Lines) files. Each line is a JSON object with a `type` field. Session entries form a tree structure via `id`/`parentId` fields, enabling in-place branching without creating new files.

@@ -190,7 +190,7 @@ createWindow()
     └─ 开发时 loadURL(Vite)，生产时 loadFile(renderer/index.html)
 ```
 
-数据库尚不存在时，普通 `openDb()` 会返回 `null`；首次索引由 worker 创建数据库和 schema。退出时 `before-quit` 会先停止 watcher、终止 worker、关闭数据库，再真正退出，避免后台线程或 SQLite 连接被硬切断。
+数据库尚不存在时，普通 `openDb()` 会返回 `null`；首次索引由 worker 创建数据库和 schema。已有数据库需要补列时，main 只有取得 writer lease 后才迁移并把真实连接交给 IPC；若 lease 被占用，真实连接立即关闭，后续 SQL 统一报告 `schema upgrade is blocked by writer_busy`，不会继续暴露旧结构的 `no such column`。退出时 `before-quit` 会先停止 watcher、终止 worker、关闭数据库，再真正退出，避免后台线程或 SQLite 连接被硬切断。
 
 ### 4.2 renderer 再启动 Vue
 
@@ -276,8 +276,8 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 ```text
 1. 获取跨进程 writer lease；拿不到返回 { deferred: true }
 2. openIndexDb()：创建目录、打开 better-sqlite3、安装/迁移 schema
-3. 创建内置 provider registry 和本次 provider index plan
-4. force 时清理会话派生表（保留 memories）
+3. 创建内置 provider registry 和本次 provider index plan；临时库 rebuild 从旧库读取 Provider provenance
+4. force/canonical rebuild 先预检现有 Provider 来源根，通过后才清理会话派生表（保留 memories）
 5. 逐项执行 provider plan
    └─ 每个 unit 通过可重试 SQLite 写事务进入数据库
 6. 一个 finalize 事务：补 project_path、保证 FTS、写索引 marker
@@ -290,7 +290,7 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 - **writer lease** 在独立的 `writer.lock.sqlite` 上保证同一时刻只有一个索引写者，避免 App 与 CLI 抢写。
 - **deferred 不是失败**。遇到锁忙时 service 会稍后再试，不把数据库并发看成解析错误。
 - `changedPaths` 让 provider plan 尽可能只处理变化的单元；手动 rebuild 的 `force: true` 才走全量重建。
-- force 重建会先建临时数据库，复制旧库的 `memories`，成功后原子替换主数据库。因此手动重建不会因中途失败轻易毁掉当前可用索引。
+- force 重建会先读取旧库的 Provider provenance 并预检现有来源根；任一根不可用时在清理前整体失败。通过后才建立临时数据库、复制旧库的 `memories`，成功后原子替换主数据库。因此根目录故障或中途失败都不会替换当前可用索引。
 
 ### 5.4 heartbeat 的意义
 
@@ -300,7 +300,7 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 
 ### 6.1 数据库位置与连接
 
-默认数据库是 `~/.trajex/trajex.sqlite`；设置文件是 `~/.trajex/settings.json`。App 的 main 使用 `better-sqlite3`，配置 busy timeout 与 WAL，并在持有 writer lease 时安装 schema / 补列迁移。
+默认数据库是 `~/.trajex/trajex.sqlite`；设置文件是 `~/.trajex/settings.json`。App 的 main 使用 `better-sqlite3`，配置 busy timeout 与 WAL，并在持有 writer lease 时安装 schema / 补列迁移。schema 已经可读时，即使另一个 writer 暂时持锁也可以继续读取；只有“确实需要迁移但无法取得 lease”时才阻止 IPC 数据访问。
 
 Core 的 schema、表含义和 provider 解析请看 `cli&core-analysis.md`。App 主要读取：
 

@@ -5,9 +5,10 @@
 ### Added
 
 - 增加孤立 tool result 的时间线组装回归测试，确保空壳 result 不会打断相邻 assistant 消息与 tool call 的合并。
-- 为 Provider 增加已索引 session 清单与显式撤回能力：当可读的配置目录确认某个旧 transcript 已删除，Claude、Codex、Pi 会生成清理单元，删除对应的 transcript 派生投影。
-- 增加安全的目录缺失保护：Claude 的 `projects`、Codex 的 `sessions` 或 Pi 的配置 session 目录暂时不存在/不可读时，不生成删除单元，保留上一次索引快照。
-- 补充 Provider 解析、删除重 reconciliation 与共享 persist 事务的 ADR、项目解析说明和 README 文档。
+- 为 Provider 增加已索引 session 清单、结构化来源根诊断与显式撤回能力：当权威 inventory 确认某个旧 transcript 已删除，Claude、Codex、Pi 会生成清理单元，删除对应的 transcript 派生投影。
+- 增加来源根可靠性边界：Claude 的 `projects`、Codex 的 `sessions` 或 Pi 的配置 session 根暂时不存在/不可读时保留上一次索引快照；根层可枚举后，缺失或不可读的后代目录按空子树参与删除 reconciliation。
+- 为 CLI/Core 与 App force rebuild 增加清理前 Provider 根预检；App 临时库 rebuild 会从当前数据库读取 Provider provenance，来源根不可用时保留旧数据库。
+- 补充 Provider 解析、删除对账与共享 persist 事务的 ADR、项目解析说明和 README 文档。
 
 ### Changed
 
@@ -15,11 +16,15 @@
 - Claude 继续按 cursor 增量读取，遇到 cursor 之后的损坏 JSONL 行时提交此前的有效前缀，并把 cursor 停在损坏行之前；Codex、Pi 对变更文件全量重放，但同样只提交损坏行之前的有效前缀。
 - Claude 在检测到文件被重写/截断、旧 cursor 超过当前文件长度时回退到文件开头重新解析，避免把新文件误当作已消费内容。
 - 重新按项目架构重排 ADR：ADR-0002 负责 Provider parse，ADR-0003 负责统一 persist/事务，ADR-0004 负责来源清单与删除判断；运行时契约与构建发布 ADR 顺延到最后。
+- 查询、原文读取和 attune 在业务访问前独立确认 SQLite schema 可读；最近构建标记只控制 Provider 数据扫描，不再跳过必要的安全加列迁移。
 
 ### Fixed
 
 - 修复同一路径被新 session ID 替换时旧派生数据残留的问题。
 - 修复“目录暂时消失”被误判为“全部 transcript 已删除”、从而清空历史索引的问题。
+- 重新开启 auto-refresh 时立即启动增量 build，不再等待文件事件的防抖窗口；快速切换时以最后一次设置为准。
+- 手动 rebuild 遇到 writer/database busy 或文件索引失败时保留旧数据库，并在 Settings 显示原因。
+- 修复 schema 升级被活跃 daemon 或其他 writer 阻塞时继续执行新版 SQL、最终暴露 `no such column` 的问题；CLI 与 App 现在返回明确的 `daemon_active` / `writer_busy` 诊断。
 
 ## [0.2.4]
 

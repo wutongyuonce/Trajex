@@ -113,6 +113,15 @@ Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有
 ```
 
 ```text
+query() / search() / attune()
+  │
+  ├─ ensureReadableSchema()：先检查当前程序能否读取现有 schema
+  │    ├─ 已可读：继续
+  │    ├─ 需要迁移：尊重 daemon heartbeat，再竞争 writer lease
+  │    └─ 被占用：明确返回 daemon_active / writer_busy，不执行查询或记忆写入
+  │
+  └─ schema 就绪后再调用 buildIndex()；recent_build 只跳过 Provider 数据扫描
+
 buildIndex()
   │
   ├─ writer-lease.ts：取得跨进程唯一写入权
@@ -146,10 +155,14 @@ buildIndex()
 | -------------------- | ---------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
 | db.ts                | **数据库生命周期管理**       | 提供 `openDb()`、`openReadDb()`、`openWriterLeaseDb()`、`rebuildMemoryFts()`。`openDb()` 创建并初始化主库；`openReadDb()` 不建库、不迁移；锁库连接不承载业务表。 | 被 `core.ts`、`indexer.ts`、`query.ts` 使用；依赖 `parsing.ts` 的路径工具、`tx.ts` 的连接配置和 `schema-migrations.ts`。 |
 | schema.sql           | **DDL 定义**                 | 定义新数据库的表、初始列、索引、FTS5 虚拟表和触发器。          | 由 `db.ts` 的 `openDb()` 通过 `exec` 加载。                  |
-| schema-migrations.ts | **渐进式列迁移**             | 提供 `migrateCoreSchemaColumns()`；仅为已有表补充缺失列，不删除列、不修改类型、不搬迁数据。 | 由 `db.ts` 在打开数据库时调用。                              |
+| schema-migrations.ts | **渐进式列迁移**             | 提供 `coreSchemaNeedsMigration()` 与 `migrateCoreSchemaColumns()`；检测/补充已有表的缺失列，不删除列、不修改类型、不搬迁数据。 | 由查询就绪门和 `db.ts` 的可写打开流程调用。                 |
 | sqlite-types.ts      | **SQLite 类型抽象**          | 定义 `SqliteDb`、`SqliteStatement`、`NodeSqliteDb` 等 TypeScript 类型，约束连接、语句和结果行可使用的 API。 | 被几乎所有数据库操作文件作为类型依赖引用；只参与开发/编译，不执行 SQL。 |
 
 `db.ts` 为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责 schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
+
+查询不能仅因 `__last_build__` 很新就假设 schema 也是新的。Core 先通过
+`ensureReadableSchema()` 完成独立的可读性检查/迁移，再决定是否刷新 Provider
+数据；因此安全加列不会被 freshness window 或暂时不可用的 Provider 根目录绑架。
 
 ```ts
 function openDb(): NodeSqliteDb {
@@ -406,7 +419,7 @@ indexer.ts / buildIndex()
 * `createProviderIndexPlan()` 才将“已注册的数据源”变成实际待处理的 `IndexUnit[]`：
 * 它先用 `storedProviderCursor()` 从 `index_state` 取回各 unit 的上次成功水位线；
   
-* 再调用每个 Provider 的 `discover()` 扫描目录、比较 cursor/mtime/changed paths。marker 过期或 force 时，该 Provider 被标为 full replay，避免新旧投影规则混用。
+* 再调用每个 Provider 的 `discover()` 扫描目录、比较 cursor/mtime/changed paths，并收集来源根问题。marker 过期或 force 时会进入全量重建；清理开始前，`assertRebuildRootsAvailable()` 要求现有索引涉及的所有 Provider 来源根都能完成根层枚举，否则整个 rebuild 抛错且数据库不变。
 
 ### 阶段 5：逐 unit 真正开始解析和写入
 
@@ -568,7 +581,8 @@ index_state 的 value = Cursor
 | ------------------------- | ------------------------------------------------------------ |
 | `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的 cursor。当前内置 Provider 用它比较 mtime 决定是否变化；Claude 另外用已处理行数增量恢复，Codex/Pi 则忽略行数并全量 replay。 |
 | `changedPaths?: string[]` | Electron daemon 监听到文件变化时提供的路径缩小范围。它是优化提示，不是事实来源；Provider 仍要保证漏传或没有它时的完整 discover 正确。 |
-| `indexedSessions?: () => readonly IndexedSession[]` | 返回当前 provider 已索引的 `sessionId`、`jsonlPath` 和 `source` 清单。Provider 只有在自己的配置根目录可读、能完成当前清单时，才用它生成删除 tombstone。 |
+| `indexedSessions?: () => readonly IndexedSession[]` | 返回当前 Provider 已索引的 `sessionId`、`jsonlPath` 清单。Provider 在来源根层枚举成功后用它生成删除 tombstone；临时库 rebuild 的清单来自旧数据库 provenance。 |
+| `reportUnavailableRoot?(issue)` | 报告 Provider 来源根缺失或根层枚举失败。普通 build 保留该 Provider 旧快照；全量重建在清理前整体中止。后代目录失败不走这个通道，而是按空子树参与删除 reconciliation。 |
 
 所以发现阶段不是“索引”。`discover()` 只回答“有哪些 unit 值得处理”；真正读取原始内容从 `parse()` 开始，真正改变数据库从 `persist()` 开始。
 
@@ -852,15 +866,16 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 
 | Provider | 解析策略 | 损坏行边界 | 删除与目录缺失保护 |
 | --- | --- | --- | --- |
-| Claude | `mtime:lines` 增量读取；cursor 后只读新增行，截断/重写导致 cursor 超长时回到文件头 | 新增尾部遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `projects/` 可读且旧主 transcript 从当前清单消失时发 tombstone；根目录不存在/不可读时保留快照 |
-| Codex | 变更 rollout 全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `sessions/` 可读且旧 rollout 从当前清单消失时发 tombstone；根目录不存在/不可读时保留快照 |
-| Pi | v3 session 全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | 可读 session 根目录确认文件消失或同路径换 ID 时发撤回；根目录不存在/不可读时保留快照 |
+| Claude | `mtime:lines` 增量读取；cursor 后只读新增行，截断/重写导致 cursor 超长时回到文件头 | 新增尾部遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `projects/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
+| Codex | 变更 rollout 全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `sessions/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
+| Pi | v3 session 全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | session 根层可枚举后，缺失/不可读后代按空子树并发撤回；来源根不可用时保留快照 |
 
 这些策略都汇入同一个持久化流程：
 
 ```text
 discover(ctx)
-  ├─ current files + indexedSessions() + readable root
+  ├─ root enumeration + current files + indexedSessions()
+  ├─ unavailable root → reportUnavailableRoot(issue), no tombstones
   ├─ normal IndexUnit
   └─ tombstone IndexUnit(retractSessionIds)
         ↓

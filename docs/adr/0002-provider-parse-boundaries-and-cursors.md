@@ -1,5 +1,9 @@
 # Provider parse boundaries and cursor semantics
 
+> Revised 2026-08-10. This ADR also records the current identity relationship
+> between a discovered unit, its cursor key, and the persisted session source
+> path, plus the deferred extension point for multi-file providers.
+
 ## Status
 
 Accepted — 2026-08-09
@@ -29,6 +33,48 @@ records before it remain eligible for persistence, while later lines are
 retried after the source is repaired. A provider may buffer a complete unit
 when global context is required, but the adapter still emits the same
 provider-neutral `TranscriptRecord` stream.
+
+### Unit keys and persisted source paths
+
+`IndexUnit.key` identifies the unit whose parse progress is stored in
+`index_state`. A session record's `jsonl_path` identifies its primary source
+transcript for provenance and raw lookup. These fields have different semantic
+roles even though every current built-in Provider (Claude, Codex, and Pi)
+deliberately emits the same concrete path for both. The shared indexing code may
+rely on that equality while those are the only supported Providers.
+
+The cursor is stored in the `index_state` row keyed by `IndexUnit.key`:
+
+```text
+IndexUnit.key
+    ↓
+index_state.jsonl_path = unit.key
+    └── cursor / mtime / lines_processed
+```
+
+`index_state.jsonl_path` is a historical column name: semantically it is a
+general unit-state key and is not required to name a JSONL file. If a future
+Provider allows a persisted session source path to differ from its unit key,
+cursor lookup must follow this chain:
+
+```text
+sessions.jsonl_path
+    ↓ Provider.sessionUnitKey()
+IndexUnit.key
+    ↓
+SELECT cursor
+FROM index_state
+WHERE jsonl_path = unit.key
+```
+
+Trajex does not add a `sessionUnitKey` abstraction yet. If a future Provider
+treats a directory or a group of files as one indexing unit while persisting a
+particular JSONL file as the session's primary source, then `unit.key` and
+`session.jsonl_path` may differ. Supporting such a Provider requires an explicit
+Provider-owned mapping from the persisted session back to its unit key before
+cursor lookup, version-marker replay, or other unit-state reconciliation uses
+the session path. The shared indexer must not infer that mapping from a
+Provider-specific directory layout.
 
 ## Non-goals and ownership boundaries
 

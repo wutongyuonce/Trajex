@@ -24,11 +24,12 @@ directly, while `PI_CODING_AGENT_DIR` points at the agent root whose
 environment variables.
 Provider CLI path overrides and arbitrary additional roots are out of scope.
 Discovery uses provider-owned source fingerprints and explicit retraction when
-Pi can prove a same-path identity replacement or a deleted file in a readable
-session root. If that root is missing or unreadable, Pi preserves the previous
-snapshot instead of emitting mass tombstones. A full rebuild remains the
-recovery path for ambiguous filesystem changes. The retraction and parse-prefix
-rules are shared with the other adapters; see ADR-0002 and ADR-0004.
+Pi can prove a same-path identity replacement or a deleted file below a
+root-enumerable session directory. If that root is missing or root enumeration
+fails, Pi preserves the previous snapshot instead of emitting mass tombstones;
+descendant failures are treated as empty subtrees. Force rebuild preflights
+existing Provider roots before cleanup. The retraction and parse-prefix rules
+are shared with the other adapters; see ADR-0002 and ADR-0004.
 
 The canonical projection marker advances together for Claude, Codex, and Pi;
 when an old provider projection is present, the indexer performs one clean

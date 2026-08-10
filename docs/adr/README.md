@@ -8,7 +8,7 @@ packaging. The directory contains only the current ten ADRs.
 | [0001](0001-parse-core-and-persist-layers.md) | Provider registry, shared indexing orchestration, and ownership boundaries |
 | [0002](0002-provider-parse-boundaries-and-cursors.md) | Provider parse strategies, cursors, and malformed-line boundaries |
 | [0003](0003-write-transaction-rollback-and-concurrency.md) | Unified persistence, transactions, retries, writer ownership, and concurrency |
-| [0004](0004-source-inventory-and-deletion-reconciliation.md) | Complete source inventory, deletion proof, tombstones, and missing-root protection |
+| [0004](0004-source-inventory-and-deletion-reconciliation.md) | Source-root fallback boundary, deletion reconciliation, and force-rebuild preflight |
 | [0005](0005-canonical-transcript-session-detail-seam.md) | Canonical transcript records and session-detail assembly |
 | [0006](0006-pi-v3-context-projection-and-visibility.md) | Pi v3 tree projection, identity, compaction, and visibility |
 | [0007](0007-two-tier-runtime-contract.md) | CLI and query API compatibility contract |

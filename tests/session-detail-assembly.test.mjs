@@ -45,6 +45,22 @@ test('session assembly attaches subagent records to matching tool calls', () => 
   });
 });
 
+test('orphaned tool results do not break adjacent assistant message assembly', () => {
+  const assembled = assembleSessionDetail({
+    messages: [
+      { uuid: 'answer', type: 'assistant', content_type: 'text', text: 'working' },
+      { uuid: 'orphan-result', type: 'user', content_type: 'tool_result', text: '' },
+      { uuid: 'tool', type: 'assistant', content_type: 'tool_use', text: '' },
+    ],
+    toolCalls: [{ id: 'call', message_uuid: 'tool', name: 'Read', input_json: '{}' }],
+    toolResults: [{ tool_use_id: 'missing-call', message_uuid: 'orphan-result', content: 'boom', is_error: 1 }],
+  }).messages;
+
+  assert.equal(assembled.length, 1);
+  assert.equal(assembled[0].uuid, 'answer');
+  assert.deepEqual(assembled[0].tool_calls.map(call => call.id), ['call']);
+});
+
 test('session assembly keeps Skill instructions as standalone meta evidence and embeds matching workflow agents', () => {
   const assembled = assembleSessionDetail({
     messages: [

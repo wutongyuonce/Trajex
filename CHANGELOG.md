@@ -4,6 +4,7 @@
 
 ### Added
 
+- 增加孤立 tool result 的时间线组装回归测试，确保空壳 result 不会打断相邻 assistant 消息与 tool call 的合并。
 - 为 Provider 增加已索引 session 清单与显式撤回能力：当可读的配置目录确认某个旧 transcript 已删除，Claude、Codex、Pi 会生成清理单元，删除对应的 transcript 派生投影。
 - 增加安全的目录缺失保护：Claude 的 `projects`、Codex 的 `sessions` 或 Pi 的配置 session 目录暂时不存在/不可读时，不生成删除单元，保留上一次索引快照。
 - 补充 Provider 解析、删除重 reconciliation 与共享 persist 事务的 ADR、项目解析说明和 README 文档。

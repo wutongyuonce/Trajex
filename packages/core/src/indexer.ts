@@ -107,6 +107,49 @@ function inspectBuildOwnership({ force = false }: { force?: boolean } = {}) {
 }
 
 /**
+ * 查询入口的 schema 就绪门：只读检查发现旧结构时，先尊重 daemon 软所有权，
+ * 再尝试取得 writer lease 并通过 openDb() 执行幂等迁移。不能安全写入时返回明确
+ * 原因，调用方不得继续把底层缺列错误暴露给用户。
+ */
+function ensureReadableSchema(): { ready: boolean; reason?: string } {
+  const inspect = (): { ready: boolean; reason?: string } => {
+    if (!existsSync(DB_PATH)) return { ready: false };
+    const db = openReadDb();
+    try {
+      if (!coreSchemaNeedsMigration(db)) return { ready: true };
+      try {
+        if (shouldSkipBuild(db, { ignoreRecentBuild: true }).reason === 'daemon_active') {
+          return { ready: false, reason: 'daemon_active' };
+        }
+      } catch (error) {
+        if (!isMissingIndexStateTable(error)) throw error;
+      }
+      return { ready: false };
+    } finally {
+      db.close();
+    }
+  };
+
+  let state = inspect();
+  if (state.ready || state.reason) return state;
+  const lease = acquireWriterLease({
+    lockPath: writerLockPathFor(DB_PATH),
+    openDb: openWriterLeaseDb,
+    waitMs: 1000,
+  });
+  if (!lease) return { ready: false, reason: 'writer_busy' };
+  try {
+    state = inspect();
+    if (state.ready || state.reason) return state;
+    const db = openDb();
+    db.close();
+    return { ready: true };
+  } finally {
+    lease.release();
+  }
+}
+
+/**
  * 执行发现 → parse → persist → finalize 的完整索引流程。force 时只清除可再生的
  * transcript 数据，人工确认的 memories 永远保留。
  */
@@ -191,4 +234,4 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
   }
 }
 
-export { buildIndex, inferProjectPath, refreshSessionProjectPaths, shouldSkipBuild };
+export { buildIndex, ensureReadableSchema, inferProjectPath, refreshSessionProjectPaths, shouldSkipBuild };

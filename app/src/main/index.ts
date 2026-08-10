@@ -9,7 +9,10 @@ import { createIndexerService } from './indexer-service.ts';
 import { createWorkerBuildIndex } from './indexer-worker-client.ts';
 import { previewLocalMarkdownLink, resolveExistingLocalMarkdownFile } from './local-markdown-link.mjs';
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
-import { migrateCoreSchemaColumns } from '../../../packages/core/src/schema-migrations.ts';
+import {
+  coreSchemaNeedsMigration,
+  migrateCoreSchemaColumns,
+} from '../../../packages/core/src/schema-migrations.ts';
 import { createBuiltinProviderRegistry } from '../../../packages/core/src/providers/builtins.ts';
 import {
   buildSourceCatalog,
@@ -151,6 +154,22 @@ function closeDb() {
   db = null;
 }
 
+/**
+ * 旧 schema 被其他 writer 阻塞时不暴露真实连接；保留一个只会报告稳定诊断的
+ * 哨兵，使所有既有 IPC 读取入口都在 prepare/exec 边界一致失败。
+ */
+function schemaBlockedDb(reason: string) {
+  const blocked = () => {
+    throw new Error(`Trajex index schema upgrade is blocked by ${reason}`);
+  };
+  return {
+    close() {},
+    exec: blocked,
+    pragma: blocked,
+    prepare: blocked,
+  };
+}
+
 function openDb(
   dbPath = getRuntimePaths().dbPath,
   { writerLeaseMode = 'acquire' }: { writerLeaseMode?: WriterLeaseMode } = {},
@@ -167,6 +186,9 @@ function openDb(
     } finally {
       lease?.release();
     }
+  } else if (coreSchemaNeedsMigration(db)) {
+    db.close();
+    db = schemaBlockedDb('writer_busy');
   }
   return db;
 }

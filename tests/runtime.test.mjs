@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
 
@@ -61,6 +61,40 @@ test('runtime attune scripts expose only memory mutation helpers', () => {
   assert.equal(payload.overviewType, 'undefined');
   assert.equal(payload.result.path, memoryPath);
   assert.equal(payload.result.project, null);
+});
+
+test('runtime upgrades a recently built legacy schema before querying it', () => {
+  const home = tempHome();
+  const trajexDir = join(home, '.trajex');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
+  mkdirSync(trajexDir, { recursive: true });
+  const schema = readFileSync(
+    new URL('../packages/core/src/schema.sql', import.meta.url),
+    'utf8',
+  ).replace("  visibility TEXT DEFAULT 'visible', -- visible / inactive / hidden\n", '');
+  const db = new DatabaseSync(dbPath);
+  db.exec(schema);
+  db.prepare('INSERT INTO sessions (id,title,jsonl_path,source) VALUES (?,?,?,?)')
+    .run('legacy-session', 'Legacy session', '/missing/session.jsonl', 'claude');
+  db.prepare(`
+    INSERT INTO messages (uuid,session_id,type,role,text,content_type,source)
+    VALUES (?,?,?,?,?,?,?)
+  `).run('legacy-message', 'legacy-session', 'user', 'user', 'legacy evidence', 'text', 'claude');
+  db.prepare(`
+    INSERT INTO index_state (jsonl_path,mtime,lines_processed)
+    VALUES ('__last_build__',?,0)
+  `).run(Date.now());
+  db.close();
+
+  const scriptPath = join(home, 'legacy-query.mjs');
+  writeFileSync(scriptPath, "return thread('legacy-session').map(message => message.uuid);");
+  const result = runRuntime(['--query', scriptPath], { home });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.deepEqual(JSON.parse(result.stdout), ['legacy-message']);
+  const migrated = new DatabaseSync(dbPath, { readOnly: true });
+  assert.ok(migrated.prepare('PRAGMA table_info(messages)').all().some(row => row.name === 'visibility'));
+  migrated.close();
 });
 
 test('runtime rejects removed remember mode', () => {
@@ -181,6 +215,41 @@ test('runtime indexes Codex root sessions into the shared query helpers', () => 
   assert.equal(payload.toolResult.message_uuid, `codex:${codexId}:000006`);
   assert.equal(payload.toolResult.content, '/tmp/trajex-runtime');
   assert.ok(payload.overviewSources.some(s => s.source === 'codex' && s.session_count === 1));
+});
+
+test('runtime force build aborts before cleanup when an indexed Provider root is unavailable', () => {
+  const home = tempHome();
+  const sessionsDir = join(home, '.codex', 'sessions');
+  const rolloutDir = join(sessionsDir, '2026', '06', '15');
+  const rawId = '019ec6ee-cebd-7431-9c93-ceec89a98b00';
+  mkdirSync(rolloutDir, { recursive: true });
+  writeFileSync(join(rolloutDir, `rollout-${rawId}.jsonl`), [
+    JSON.stringify({
+      timestamp: '2026-06-15T10:00:00.000Z',
+      type: 'session_meta',
+      payload: { id: rawId, cwd: '/tmp/runtime-force-preserve' },
+    }),
+    JSON.stringify({
+      timestamp: '2026-06-15T10:00:01.000Z',
+      type: 'event_msg',
+      payload: { type: 'user_message', message: 'runtime force must preserve this' },
+    }),
+    '',
+  ].join('\n'));
+
+  const first = runRuntime(['--build'], { home });
+  assert.equal(first.status, 0, first.stderr || first.stdout);
+  rmSync(sessionsDir, { recursive: true });
+
+  const rebuild = runRuntime(['--build'], { home });
+  assert.notEqual(rebuild.status, 0);
+  assert.match(rebuild.stdout, /Provider root unavailable.*rebuild aborted before cleanup/i);
+  const db = new DatabaseSync(join(home, '.trajex', 'trajex.sqlite'), { readOnly: true });
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(`codex:${rawId}`).c,
+    1,
+  );
+  db.close();
 });
 
 test('runtime skips Codex guardian review threads', () => {

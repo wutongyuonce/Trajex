@@ -19,12 +19,25 @@
 import { Worker } from 'node:worker_threads';
 
 import { DB_PATH, openReadDb } from './db.ts';
-import { buildIndex } from './indexer.ts';
+import { buildIndex, ensureReadableSchema } from './indexer.ts';
 import { createQueryApi } from './query.ts';
 
 export { buildIndex, DB_PATH };
 
 const SANDBOX_TIMEOUT_MS = 30000;
+
+function assertReadableSchema(): void {
+  const schema = ensureReadableSchema();
+  if (!schema.ready) {
+    throw new Error(`Trajex index schema upgrade is blocked by ${schema.reason ?? 'an unknown writer'}`);
+  }
+}
+
+/** 被动刷新可以跳过数据扫描，但任何读取都必须先确认当前 schema 可读。 */
+function refreshQueryIndex(): void {
+  assertReadableSchema();
+  buildIndex();
+}
 
 function runInSandboxWorker(mode: 'query' | 'attune', script: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -67,7 +80,7 @@ function runInSandboxWorker(mode: 'query' | 'attune', script: string): Promise<u
 
 /** 先尝试增量索引，再以只读连接执行消息 FTS 搜索。 */
 export function searchText(text: string, opts?: Record<string, unknown>): unknown {
-  buildIndex();
+  refreshQueryIndex();
   const db = openReadDb();
   try {
     return createQueryApi(db).search(text, opts);
@@ -78,7 +91,7 @@ export function searchText(text: string, opts?: Record<string, unknown>): unknow
 
 /** 执行只读查询脚本；worker 持有并关闭查询连接，超时时随 worker 一起回收。 */
 export async function executeQuery(scriptContent: string): Promise<unknown> {
-  buildIndex();
+  refreshQueryIndex();
   return runInSandboxWorker('query', scriptContent);
 }
 
@@ -87,6 +100,7 @@ export async function executeQuery(scriptContent: string): Promise<unknown> {
  * 二次检查 daemon heartbeat，避免 CLI 在 App 接管写入时绕过所有权规则。
  */
 export async function executeAttune(scriptContent: string): Promise<unknown> {
+  assertReadableSchema();
   const build = buildIndex() as { reason?: string } | undefined;
   if (build?.reason === 'daemon_active') {
     throw new Error('Trajex daemon owns index writes; attune is read-only until the daemon stops');

@@ -11,7 +11,7 @@ import { runCli } from './cli-test-helpers.mjs';
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 
-test('a passive query does not mutate the index while a fresh daemon owns writes', () => {
+test('a passive query reports when a fresh daemon blocks its schema upgrade', () => {
   const home = mkdtempSync(join(tmpdir(), 'trajex-daemon-arbitration-'));
   const trajexDir = join(home, '.trajex');
   const dbPath = join(trajexDir, 'trajex.sqlite');
@@ -27,8 +27,8 @@ test('a passive query does not mutate the index while a fresh daemon owns writes
   const queryPath = join(home, 'query.mjs');
   writeFileSync(queryPath, "return 'read-only';");
   const result = runCli(['--query', queryPath], { home });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.equal(JSON.parse(result.stdout), 'read-only');
+  assert.equal(result.status, 1);
+  assert.match(JSON.parse(result.stdout).error, /schema upgrade is blocked by daemon_active/i);
 
   const check = new DatabaseSync(dbPath, { readOnly: true });
   const tables = check.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name);
@@ -36,7 +36,7 @@ test('a passive query does not mutate the index while a fresh daemon owns writes
   assert.deepEqual(tables, ['index_state']);
 });
 
-test('attune refuses to mutate the index while a fresh daemon owns writes', () => {
+test('attune reports when a fresh daemon blocks its schema upgrade', () => {
   const home = mkdtempSync(join(tmpdir(), 'trajex-daemon-attune-'));
   const trajexDir = join(home, '.trajex');
   const dbPath = join(trajexDir, 'trajex.sqlite');
@@ -52,7 +52,7 @@ test('attune refuses to mutate the index while a fresh daemon owns writes', () =
   writeFileSync(attunePath, 'return true;');
   const result = runCli(['--attune', attunePath], { home });
   assert.equal(result.status, 1);
-  assert.match(JSON.parse(result.stdout).error, /daemon owns index writes/i);
+  assert.match(JSON.parse(result.stdout).error, /schema upgrade is blocked by daemon_active/i);
 
   const check = new DatabaseSync(dbPath, { readOnly: true });
   const tables = check.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name);
@@ -60,7 +60,7 @@ test('attune refuses to mutate the index while a fresh daemon owns writes', () =
   assert.deepEqual(tables, ['index_state']);
 });
 
-test('a passive query stays read-only when another process holds the writer lease', () => {
+test('a passive query reports when another writer blocks its schema upgrade', () => {
   const home = mkdtempSync(join(tmpdir(), 'trajex-writer-owned-'));
   const trajexDir = join(home, '.trajex');
   const dbPath = join(trajexDir, 'trajex.sqlite');
@@ -78,8 +78,8 @@ test('a passive query stays read-only when another process holds the writer leas
     const queryPath = join(home, 'query.mjs');
     writeFileSync(queryPath, "return 'writer-busy';");
     const result = runCli(['--query', queryPath], { home });
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.equal(JSON.parse(result.stdout), 'writer-busy');
+    assert.equal(result.status, 1);
+    assert.match(JSON.parse(result.stdout).error, /schema upgrade is blocked by writer_busy/i);
   } finally {
     lease.release();
   }

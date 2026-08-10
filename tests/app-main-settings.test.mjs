@@ -719,6 +719,10 @@ test('main process keeps schema and memory mutations behind the writer lease', a
     check.close();
     assert.deepEqual(columns, ['id']);
     assert.throws(
+      () => ipcHandlers.get('db:getSessions')(null, {}),
+      /schema upgrade is blocked by writer_busy/i,
+    );
+    assert.throws(
       () => ipcHandlers.get('db:archiveMemory')(null, 'memory-1', 'test'),
       /writer is busy/i,
     );

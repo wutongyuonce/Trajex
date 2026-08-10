@@ -43,6 +43,8 @@ interface ColumnAliases {
   sessionId: string;
   project: string;
   timestamp: string;
+  timestampAfter?: string;
+  timestampBefore?: string;
   branch: string;
   source?: string;
 }
@@ -98,8 +100,8 @@ function buildWhere(opts: QueryOptions, aliases: ColumnAliases) {
     }
   }
   if (opts.project) { clauses.push(`${aliases.project} LIKE ?`); params.push(opts.project); }
-  if (opts.after) { clauses.push(`${aliases.timestamp} > ?`); params.push(opts.after); }
-  if (opts.before) { clauses.push(`${aliases.timestamp} < ?`); params.push(opts.before); }
+  if (opts.after) { clauses.push(`${aliases.timestampAfter ?? aliases.timestamp} > ?`); params.push(opts.after); }
+  if (opts.before) { clauses.push(`${aliases.timestampBefore ?? aliases.timestamp} < ?`); params.push(opts.before); }
   if (opts.branch) { clauses.push(`${aliases.branch} = ?`); params.push(opts.branch); }
   if (opts.source && opts.source !== 'all' && aliases.source) {
     clauses.push(`COALESCE(${aliases.source}, 'claude') = ?`);
@@ -260,8 +262,10 @@ function createQueryApi(
   const subagents = (optsOrSid?: QueryOptions | string) => {
     const opts = normalizeOpts(optsOrSid);
     const limit = normalizeLimit(opts.limit, 100);
-    const needsJoin = opts.project || opts.after || opts.before || opts.branch || opts.source;
-    const { where, params } = buildWhere(opts, { sessionId: 'sa.session_id', project: 's.project', timestamp: 's.started_at', branch: 's.git_branch', source: 's.source' });
+    const needsJoin = opts.project || opts.branch || opts.source;
+    const firstMessageAt = '(SELECT MIN(m.timestamp) FROM messages m WHERE m.agent_id=sa.agent_id)';
+    const lastMessageAt = '(SELECT MAX(m.timestamp) FROM messages m WHERE m.agent_id=sa.agent_id)';
+    const { where, params } = buildWhere(opts, { sessionId: 'sa.session_id', project: 's.project', timestamp: firstMessageAt, timestampAfter: lastMessageAt, timestampBefore: firstMessageAt, branch: 's.git_branch', source: 's.source' });
     params.push(limit);
     const join = needsJoin ? 'LEFT JOIN sessions s ON s.id=sa.session_id' : '';
     return db.prepare(`SELECT sa.* FROM subagents sa ${join} WHERE ${where} LIMIT ?`).all(...params).map((r: DbRow) => {

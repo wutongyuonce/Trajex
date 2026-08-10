@@ -144,13 +144,24 @@ test('subagents() row carries messageCount', () => {
   db.close();
 });
 
-test('subagents() filters by its session start time', () => {
+test('subagents() filters by its own message activity interval', () => {
   const db = fixture();
-  db.prepare('INSERT INTO sessions (id, started_at) VALUES (?, ?)').run('sid-2', '2026-07-10T10:00:00Z');
-  db.prepare('INSERT INTO subagents (agent_id, session_id) VALUES (?, ?)').run('sub-B', 'sid-2');
+  db.prepare('INSERT INTO sessions (id, started_at) VALUES (?, ?)').run('sid-agents', '2026-06-01T09:00:00Z');
+  const insertAgent = db.prepare('INSERT INTO subagents (agent_id, session_id) VALUES (?, ?)');
+  insertAgent.run('agent-early', 'sid-agents');
+  insertAgent.run('agent-late', 'sid-agents');
+  insertAgent.run('agent-spanning', 'sid-agents');
+  const insertMessage = db.prepare(`INSERT INTO messages (uuid, session_id, timestamp, agent_id) VALUES (?, ?, ?, ?)`);
+  insertMessage.run('m-early-1', 'sid-agents', '2026-06-01T10:00:00Z', 'agent-early');
+  insertMessage.run('m-early-2', 'sid-agents', '2026-06-01T10:05:00Z', 'agent-early');
+  insertMessage.run('m-late-1', 'sid-agents', '2026-06-03T10:00:00Z', 'agent-late');
+  insertMessage.run('m-span-1', 'sid-agents', '2026-06-01T12:00:00Z', 'agent-spanning');
+  insertMessage.run('m-span-2', 'sid-agents', '2026-06-03T12:00:00Z', 'agent-spanning');
+  const api = createQueryApi(db);
 
-  const rows = createQueryApi(db).subagents({ after: '2026-07-01T00:00:00Z' });
-  assert.deepEqual(rows.map(row => row.agent_id), ['sub-B']);
+  assert.deepEqual(api.subagents({ sessionId: 'sid-agents', after: '2026-06-02T00:00:00Z' }).map(row => row.agent_id).sort(), ['agent-late', 'agent-spanning']);
+  assert.deepEqual(api.subagents({ sessionId: 'sid-agents', before: '2026-06-02T00:00:00Z' }).map(row => row.agent_id).sort(), ['agent-early', 'agent-spanning']);
+  assert.deepEqual(api.subagents({ sessionId: 'sid-agents', after: '2026-06-02T00:00:00Z', before: '2026-06-03T00:00:00Z' }).map(row => row.agent_id), ['agent-spanning']);
   db.close();
 });
 

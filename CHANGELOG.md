@@ -23,7 +23,7 @@
 - 修复同一路径被新 session ID 替换时旧派生数据残留的问题。
 - 修复“目录暂时消失”被误判为“全部 transcript 已删除”、从而清空历史索引的问题。
 - 重新开启 auto-refresh 时立即启动增量 build，不再等待文件事件的防抖窗口；快速切换时以最后一次设置为准。
-- 手动 rebuild 遇到 writer/database busy 或文件索引失败时保留旧数据库，并在 Settings 显示原因。
+- 手动 rebuild 遇到 writer/database busy 时保留旧数据库，并在 Settings 显示原因；单文件失败继续遵循 best-effort 语义。
 - 修复 schema 升级被活跃 daemon 或其他 writer 阻塞时继续执行新版 SQL、最终暴露 `no such column` 的问题；CLI 与 App 现在返回明确的 `daemon_active` / `writer_busy` 诊断。
 
 ## [0.2.4]

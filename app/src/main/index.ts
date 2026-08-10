@@ -828,10 +828,6 @@ ipcMain.handle('settings:rebuildIndex', async () => {
     if (result?.deferred) {
       throw new Error(`Trajex rebuild was not completed: ${String(result.reason || 'indexing deferred').replaceAll('_', ' ')}`);
     }
-    if (result?.skipped) {
-      const detail = result.skippedFiles?.slice(0, 3).map(file => `${file.path}: ${file.error}`).join('; ');
-      throw new Error(`Trajex rebuild failed for ${result.skipped} file(s)${detail ? `: ${detail}` : ''}`);
-    }
     closeDb();
     replaceDbWithTemp(tempDbPath, paths.dbPath);
     openDb(paths.dbPath, { writerLeaseMode: 'caller-held' });

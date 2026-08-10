@@ -845,7 +845,7 @@ test('closing the last macOS window releases background resources until activati
   }
 });
 
-test('settings rebuild reopens the configured database without overriding newer auto-refresh settings', async () => {
+test('settings rebuild accepts skipped files without overriding newer auto-refresh settings', async () => {
   const home = join(tmpdir(), `trajex-main-settings-${Date.now()}`);
   const defaultClaudeDir = join(home, '.claude');
   const customClaudeDir = join(home, 'custom-claude');
@@ -931,7 +931,12 @@ test('settings rebuild reopens the configured database without overriding newer 
             competingLeaseDuringBuild = Boolean(competingLease);
             competingLease?.release();
             writeFileSync(args.dbPath, 'rebuilt temp db');
-            return { files: 2, affectedSessionIds: ['session-1', 'session-2'] };
+            return {
+              files: 2,
+              affectedSessionIds: ['session-1', 'session-2'],
+              skipped: 1,
+              skippedFiles: [{ path: 'broken.jsonl', error: 'bad transcript' }],
+            };
           },
           stop() { return Promise.resolve(); },
         }),
@@ -974,7 +979,7 @@ test('settings rebuild reopens the configured database without overriding newer 
   }
 });
 
-test('settings rebuild keeps the existing database after deferred, skipped, and failed builds', async () => {
+test('settings rebuild keeps the existing database after deferred and failed builds', async () => {
   const home = join(tmpdir(), `trajex-main-settings-rebuild-failure-${Date.now()}`);
   const customClaudeDir = join(home, 'custom-claude');
   const customCodexDir = join(home, 'custom-codex');
@@ -1051,19 +1056,11 @@ test('settings rebuild keeps the existing database after deferred, skipped, and 
     [INDEXER_WORKER_URL, {
       namedExports: {
         createWorkerBuildIndex: () => ({
-          buildIndex: async (args) => {
+          buildIndex: async () => {
             serviceEvents.push('build');
             buildAttempts += 1;
             if (buildAttempts === 1) {
               return { deferred: true, reason: 'database_busy', skipped: 0, skippedFiles: [] };
-            }
-            if (buildAttempts === 2) {
-              writeFileSync(args.dbPath, 'incomplete index');
-              return {
-                deferred: false,
-                skipped: 1,
-                skippedFiles: [{ path: 'broken.jsonl', error: 'bad transcript' }],
-              };
             }
             throw new Error('worker exploded');
           },
@@ -1079,7 +1076,6 @@ test('settings rebuild keeps the existing database after deferred, skipped, and 
     const rebuild = ipcHandlers.get('settings:rebuildIndex');
     const openCountBeforeRebuild = openedDbPaths.length;
     await assert.rejects(() => rebuild(), /database busy/i);
-    await assert.rejects(() => rebuild(), /broken\.jsonl.*bad transcript/i);
     await assert.rejects(() => rebuild(), /worker exploded/);
 
     const expectedDbPath = join(home, '.trajex', 'trajex.sqlite');

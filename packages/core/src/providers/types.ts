@@ -78,6 +78,12 @@ export interface IndexedSession {
   source?: string;
 }
 
+/** Provider 来源根无法建立权威 inventory 时的结构化诊断。 */
+export interface InventoryRootIssue {
+  path: string;
+  error: string;
+}
+
 /**
  * 调度层提供给 adapter.discover() 的上下文。
  */
@@ -88,6 +94,8 @@ export interface DiscoverContext {
   changedPaths?: string[];
   /** 查询该 Provider 之前写入的 session 身份；Provider 不直接访问 SQLite。 */
   indexedSessions?: () => readonly IndexedSession[];
+  /** 报告来源根缺失或根层枚举失败；后代目录失败不使用此通道。 */
+  reportUnavailableRoot?: (issue: InventoryRootIssue) => void;
 }
 
 // ──────────────────────────────────────────────

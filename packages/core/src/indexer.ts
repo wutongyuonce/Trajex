@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs';
 import { DB_PATH, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts } from './db.ts';
 import { inferProjectPath } from './parsing.ts';
 import {
+  assertRebuildRootsAvailable,
   createProviderIndexPlan,
   indexProviderPlan,
   writeProviderIndexMarkers,
@@ -126,6 +127,7 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
     const txDb = nodeSqliteTransactionAdapter(db);
     const skippedFiles: SkippedFile[] = [];
     const providerPlan = createProviderIndexPlan(db, createBuiltinProviderRegistry(), { force });
+    assertRebuildRootsAvailable(providerPlan);
     try {
       try {
         if (providerPlan.fullRebuild) {

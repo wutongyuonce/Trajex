@@ -833,3 +833,138 @@ test('app Codex incrementally removes deleted rollouts but preserves the snapsho
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(sessionId).c, 0);
   db.close();
 });
+
+test('app force rebuild aborts before cleanup when an indexed Provider root is unavailable', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-force-root-preflight-'));
+  const codexDir = join(home, '.codex');
+  const sessionsDir = join(codexDir, 'sessions');
+  const rolloutDir = join(sessionsDir, '2026', '06', '15');
+  const rolloutPath = join(rolloutDir, 'rollout-preserved.jsonl');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  const rawId = '019e8951-3e7d-7343-a3e3-05bff48a4000';
+  const sessionId = `codex:${rawId}`;
+  mkdirSync(rolloutDir, { recursive: true });
+  writeFileSync(rolloutPath, [
+    { type: 'session_meta', payload: { id: rawId, cwd: '/tmp/codex-preserved', timestamp: '2026-06-15T10:00:00Z' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'preserve this snapshot' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const options = {
+    claudeDir: join(home, 'empty-claude'),
+    codexDir,
+    dbPath,
+    DatabaseImpl: TestDatabase,
+  };
+
+  buildIndex(options);
+  rmSync(sessionsDir, { recursive: true });
+
+  assert.throws(
+    () => buildIndex({ ...options, force: true }),
+    /Codex.*root.*unavailable|root.*unavailable.*Codex/i,
+  );
+  const db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 1);
+  assert.equal(db.prepare('SELECT text FROM messages WHERE session_id=?').get(sessionId).text, 'preserve this snapshot');
+  db.close();
+});
+
+test('app temp rebuild preflights Provider roots against provenance from the current database', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-temp-root-preflight-'));
+  const codexDir = join(home, '.codex');
+  const sessionsDir = join(codexDir, 'sessions');
+  const rolloutDir = join(sessionsDir, '2026', '06', '15');
+  const rolloutPath = join(rolloutDir, 'rollout-current.jsonl');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  const tempDbPath = join(home, '.trajex', 'trajex.rebuild.sqlite');
+  const rawId = '019e8951-3e7d-7343-a3e3-05bff48a4001';
+  const sessionId = `codex:${rawId}`;
+  mkdirSync(rolloutDir, { recursive: true });
+  writeFileSync(rolloutPath, [
+    { type: 'session_meta', payload: { id: rawId, cwd: '/tmp/codex-current', timestamp: '2026-06-15T10:00:00Z' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'current database survives' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const options = {
+    claudeDir: join(home, 'empty-claude'),
+    codexDir,
+    dbPath,
+    DatabaseImpl: TestDatabase,
+  };
+
+  buildIndex(options);
+  rmSync(sessionsDir, { recursive: true });
+
+  assert.throws(
+    () => buildIndex({
+      ...options,
+      dbPath: tempDbPath,
+      preserveDbPath: dbPath,
+      force: true,
+    }),
+    /Codex.*root.*unavailable|root.*unavailable.*Codex/i,
+  );
+  const db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 1);
+  db.close();
+});
+
+test('app force rebuild aborts before cleanup when the indexed Claude projects root is unavailable', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-claude-root-preflight-'));
+  const claudeDir = join(home, '.claude');
+  const projectsDir = join(claudeDir, 'projects');
+  const projectDir = join(projectsDir, '-tmp-claude-force');
+  const jsonlPath = join(projectDir, 'claude-force-session.jsonl');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(jsonlPath, `${JSON.stringify({
+    uuid: 'claude-force-message',
+    type: 'user',
+    timestamp: '2026-06-15T10:00:00Z',
+    message: { role: 'user', content: 'keep the Claude snapshot' },
+  })}\n`);
+  const options = {
+    claudeDir,
+    codexDir: join(home, 'empty-codex'),
+    dbPath,
+    DatabaseImpl: TestDatabase,
+  };
+
+  buildIndex(options);
+  rmSync(projectsDir, { recursive: true });
+
+  assert.throws(
+    () => buildIndex({ ...options, force: true }),
+    /Claude.*root.*unavailable|root.*unavailable.*Claude/i,
+  );
+  const db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get('claude-force-session').c, 1);
+  db.close();
+});
+
+test('app Codex treats a missing descendant directory as an authoritative deletion', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-codex-descendant-delete-'));
+  const codexDir = join(home, '.codex');
+  const sessionsDir = join(codexDir, 'sessions');
+  const rolloutDir = join(sessionsDir, '2026', '06', '15');
+  const rawId = '019e8951-3e7d-7343-a3e3-05bff48a4002';
+  const sessionId = `codex:${rawId}`;
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  mkdirSync(rolloutDir, { recursive: true });
+  writeFileSync(join(rolloutDir, 'rollout-descendant.jsonl'), [
+    { type: 'session_meta', payload: { id: rawId, cwd: '/tmp/codex-descendant', timestamp: '2026-06-15T10:00:00Z' } },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'delete with descendant' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const options = {
+    claudeDir: join(home, 'empty-claude'),
+    codexDir,
+    dbPath,
+    DatabaseImpl: TestDatabase,
+  };
+
+  buildIndex(options);
+  rmSync(join(sessionsDir, '2026'), { recursive: true });
+  buildIndex(options);
+
+  const db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 0);
+  db.close();
+});

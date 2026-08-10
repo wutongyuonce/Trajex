@@ -44,10 +44,6 @@ export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
 
-function readableDirectory(path: string): boolean {
-  try { readdirSync(path); return true; } catch { return false; }
-}
-
 function pathWithin(root: string, candidate: string): boolean {
   const inside = relative(root, candidate);
   return inside === '' || (!inside.startsWith('..') && !isAbsolute(inside));
@@ -98,8 +94,11 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   }
   // A missing/unreadable sessions directory is not a complete inventory. Do
   // not turn an empty scan into deletion until the directory is readable.
-  const inventoryComplete = readableDirectory(sessionsDir);
-  const discoveredFiles = inventoryComplete ? discoverCodexJsonlFiles(sessionsDir) : [];
+  let inventoryComplete = true;
+  const discoveredFiles = discoverCodexJsonlFiles(sessionsDir, (issue) => {
+    inventoryComplete = false;
+    ctx.reportUnavailableRoot?.(issue);
+  });
   const currentFiles = new Set(discoveredFiles.map(file => normalize(file.path)));
   const units = discoveredFiles.flatMap((file) => {
     if (ctx.changedPaths !== undefined && !sessionIndexChanged && !changedFiles.has(normalize(file.path))) return [];

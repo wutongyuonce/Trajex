@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -125,5 +125,66 @@ test('app Pi keeps the last snapshot when its configured root is missing', () =>
   const db = new TestDatabase(dbPath);
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM sessions WHERE source='pi'").get().c, 1);
   assert.equal(db.prepare('SELECT text FROM messages').get().text, 'keep snapshot');
+  db.close();
+});
+
+test('app force rebuild aborts before cleanup when the indexed Pi session root is unavailable', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-pi-force-root-'));
+  const piRoot = join(home, '.pi', 'agent', 'sessions');
+  const sessionDir = join(piRoot, '--tmp-app-pi--');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(join(sessionDir, 'fixture.jsonl'), [
+    { type: 'session', version: 3, id: 'force-kept-pi', cwd: '/tmp/app-pi' },
+    { type: 'message', id: 'force-kept-message', parentId: null, message: { role: 'user', content: 'force keeps Pi snapshot' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const options = {
+    claudeDir: join(home, 'empty-claude'),
+    codexDir: join(home, 'empty-codex'),
+    providerRoots: { pi: piRoot },
+    dbPath,
+    DatabaseImpl: TestDatabase,
+  };
+
+  buildIndex(options);
+  rmSync(piRoot, { recursive: true });
+
+  assert.throws(
+    () => buildIndex({ ...options, force: true }),
+    /Pi.*root.*unavailable|root.*unavailable.*Pi/i,
+  );
+  const db = new TestDatabase(dbPath);
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM sessions WHERE source='pi'").get().c, 1);
+  db.close();
+});
+
+test('app Pi treats an unreadable descendant directory as an authoritative deletion', () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-app-pi-descendant-delete-'));
+  const piRoot = join(home, '.pi', 'agent', 'sessions');
+  const sessionDir = join(piRoot, '--tmp-app-pi--');
+  const dbPath = join(home, '.trajex', 'trajex.sqlite');
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(join(sessionDir, 'fixture.jsonl'), [
+    { type: 'session', version: 3, id: 'descendant-pi', cwd: '/tmp/app-pi' },
+    { type: 'message', id: 'descendant-message', parentId: null, message: { role: 'user', content: 'remove unreadable subtree' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const options = {
+    claudeDir: join(home, 'empty-claude'),
+    codexDir: join(home, 'empty-codex'),
+    providerRoots: { pi: piRoot },
+    dbPath,
+    DatabaseImpl: TestDatabase,
+  };
+
+  buildIndex(options);
+  chmodSync(sessionDir, 0o000);
+  try {
+    buildIndex(options);
+  } finally {
+    chmodSync(sessionDir, 0o700);
+  }
+
+  const db = new TestDatabase(dbPath);
+  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM sessions WHERE source='pi'").get().c, 0);
   db.close();
 });

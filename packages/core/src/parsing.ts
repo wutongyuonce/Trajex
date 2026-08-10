@@ -14,7 +14,7 @@
 // providers can be consumed by the app (better-sqlite3 / a Node without
 // node:sqlite). Originally extracted verbatim from db/indexer; it now exposes a
 // typed seam while remaining limited to node:fs/path/os.
-import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -43,6 +43,16 @@ export interface ClaudeJsonlFile {
 export interface CodexJsonlFile {
   path: string;
   source: 'codex';
+}
+
+type InventoryRootIssueReporter = (issue: { path: string; error: string }) => void;
+
+function reportInventoryRootIssue(
+  report: InventoryRootIssueReporter | undefined,
+  path: string,
+  error: unknown,
+): void {
+  report?.({ path, error: error instanceof Error ? error.message : String(error) });
 }
 
 /** Codex 逐行解析记录（Codex 专用，供 guardian 判定使用）。 */
@@ -180,11 +190,18 @@ function legacyProjectPathFromSlug(project: string | null | undefined): string |
 }
 
 /** 枚举 Claude 主会话、subagent 与 workflow-agent JSONL 的文件级元数据。 */
-function discoverJsonlFiles(projectsDir = PROJECTS_DIR): ClaudeJsonlFile[] {
+function discoverJsonlFiles(
+  projectsDir = PROJECTS_DIR,
+  reportUnavailableRoot?: InventoryRootIssueReporter,
+): ClaudeJsonlFile[] {
   const files: ClaudeJsonlFile[] = [];
-  if (!existsSync(projectsDir)) return files;
   let projects;
-  try { projects = readdirSync(projectsDir); } catch (e) { process.stderr.write(`Warning: cannot read projects dir: ${e instanceof Error ? e.message : String(e)}\n`); return files; }
+  try {
+    projects = readdirSync(projectsDir);
+  } catch (error) {
+    reportInventoryRootIssue(reportUnavailableRoot, projectsDir, error);
+    return files;
+  }
   for (const proj of projects) {
     const projPath = join(projectsDir, proj);
     if (!isDir(projPath)) continue;
@@ -247,12 +264,19 @@ function inferProjectPath(project: string | null | undefined, observedCwds: unkn
 // 前缀 codex，绑定 Codex rollout 的 thread / meta / payload 语义；仅 codex.ts 使用。
 
 /** 递归枚举 Codex 按日期分层保存的 rollout JSONL。 */
-function discoverCodexJsonlFiles(sessionsDir = CODEX_SESSIONS_DIR): CodexJsonlFile[] {
+function discoverCodexJsonlFiles(
+  sessionsDir = CODEX_SESSIONS_DIR,
+  reportUnavailableRoot?: InventoryRootIssueReporter,
+): CodexJsonlFile[] {
   const files: CodexJsonlFile[] = [];
-  if (!existsSync(sessionsDir)) return files;
-  const walk = (dir: string): void => {
+  const walk = (dir: string, isRoot = false): void => {
     let entries;
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (error) {
+      if (isRoot) reportInventoryRootIssue(reportUnavailableRoot, dir, error);
+      return;
+    }
     for (const entry of entries) {
       const fp = join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -262,7 +286,7 @@ function discoverCodexJsonlFiles(sessionsDir = CODEX_SESSIONS_DIR): CodexJsonlFi
       }
     }
   };
-  walk(sessionsDir);
+  walk(sessionsDir, true);
   return files;
 }
 

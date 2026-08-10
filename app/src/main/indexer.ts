@@ -6,8 +6,10 @@ import Database from 'better-sqlite3';
 import { createBuiltinProviderRegistry } from '../../../packages/core/src/providers/builtins.ts';
 import type { ProviderRegistry } from '../../../packages/core/src/providers/registry.ts';
 import {
+  assertRebuildRootsAvailable,
   createProviderIndexPlan,
   indexProviderPlan,
+  readProviderSessionProvenance,
   writeProviderIndexMarkers,
 } from '../../../packages/core/src/provider-indexing.ts';
 import { runWriteTransaction, configureConnection, betterSqliteTransactionAdapter } from '../../../packages/core/src/tx.ts';
@@ -300,7 +302,21 @@ function buildIndex({
         ...providerRoots,
       };
       const registry = providerRegistry ?? createBuiltinProviderRegistry(roots);
-      const providerPlan = createProviderIndexPlan(db, registry, { force, changedPaths });
+      let priorSessions;
+      if (force && preserveDbPath && path.resolve(preserveDbPath) !== path.resolve(dbPath)) {
+        const previousDb = new DatabaseImpl(preserveDbPath);
+        try {
+          priorSessions = readProviderSessionProvenance(previousDb);
+        } finally {
+          previousDb.close();
+        }
+      }
+      const providerPlan = createProviderIndexPlan(db, registry, {
+        force,
+        changedPaths,
+        priorSessions,
+      });
+      assertRebuildRootsAvailable(providerPlan);
       let latestSourceMtime = providerPlan.items.reduce((latest, { unit }) => {
         const providerCursor = (unit.meta as { currentCursor?: unknown } | undefined)?.currentCursor;
         if (typeof providerCursor === 'string') {

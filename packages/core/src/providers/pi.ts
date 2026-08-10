@@ -1,5 +1,5 @@
 /** Pi JSONL session adapter. One JSONL file is one Pi session. */
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, type Dirent } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative } from 'node:path';
@@ -19,17 +19,25 @@ function piId(sessionId: string, entryId: string, suffix = ''): string {
   return `${sessionId}:${entryId}${suffix}`;
 }
 
-function sessionFiles(dir: string): string[] {
-  if (!existsSync(dir)) return [];
+function sessionFiles(dir: string, rootEntries: readonly Dirent[]): string[] {
   const out: string[] = [];
-  const walk = (current: string): void => {
-    for (const file of readdirSync(current, { withFileTypes: true })) {
+  const walk = (current: string, knownEntries?: readonly Dirent[]): void => {
+    let entries = knownEntries;
+    if (!entries) {
+      try {
+        entries = readdirSync(current, { withFileTypes: true });
+      } catch {
+        // 根层已成功枚举后，后代读取失败按空子树处理。
+        return;
+      }
+    }
+    for (const file of entries) {
       const path = join(current, file.name);
       if (file.isDirectory()) walk(path);
       else if (file.isFile() && file.name.endsWith('.jsonl')) out.push(path);
     }
   };
-  walk(dir);
+  walk(dir, rootEntries);
   return out;
 }
 
@@ -43,10 +51,18 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
     if (absolute === normalizedSessionDir) changedRoot = true;
     if (absolute === normalizedSessionDir || (inside && !inside.startsWith('..') && !isAbsolute(inside))) changed.add(absolute);
   }
-  // A missing root is not a complete inventory. Do not interpret it as proof
-  // that every previously indexed session was deleted.
-  const inventoryComplete = existsSync(sessionDir);
-  const files = inventoryComplete ? sessionFiles(sessionDir).map(normalize) : [];
+  // 来源根是唯一回退边界；根层枚举成功后，后代失败按空子树处理。
+  let rootEntries: Dirent[];
+  try {
+    rootEntries = readdirSync(sessionDir, { withFileTypes: true });
+  } catch (error) {
+    ctx.reportUnavailableRoot?.({
+      path: sessionDir,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+  const files = sessionFiles(sessionDir, rootEntries).map(normalize);
   const currentFiles = new Set(files);
   const indexedByPath = new Map<string, IndexedSession[]>();
   for (const session of ctx.indexedSessions?.() ?? []) {
@@ -83,7 +99,7 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
   // A readable Pi root gives us a complete inventory. If a previously indexed
   // session file disappeared from that inventory, emit an empty tombstone unit
   // so persist can retract its old projection without touching other sessions.
-  const tombstones = inventoryComplete ? (ctx.indexedSessions?.() ?? [])
+  const tombstones = (ctx.indexedSessions?.() ?? [])
     .filter(session => {
       const path = normalize(session.jsonlPath);
       const inside = relative(normalizedSessionDir, path);
@@ -97,7 +113,7 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
       sessionId: session.sessionId,
       retractSessionIds: [session.sessionId],
       meta: { kind: 'pi-tombstone' as const },
-    })) : [];
+    }));
 
   return [...units, ...tombstones];
 }

@@ -224,7 +224,7 @@ function createIndexerService({
   const start = ({ buildOnStart = true } = {}) => {
     stopped = false;
     publishHeartbeat();
-    if (buildOnStart) scheduleBuild('startup');
+    if (buildOnStart) runBuildNow('startup');
     startWatching();
     if (typeof timers.setInterval === 'function') {
       heartbeatTimer = timers.setInterval(() => {

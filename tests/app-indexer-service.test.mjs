@@ -202,6 +202,22 @@ test('indexer service publishes daemon ownership as soon as it starts', () => {
   service.stop();
 });
 
+test('indexer service runs a startup build immediately', async () => {
+  const timers = manualTimers();
+  const calls = [];
+  const service = createIndexerService({
+    buildIndex: async ({ reason }) => calls.push(reason),
+    watchProjects: () => null,
+    writeHeartbeat: () => {},
+    timers,
+  });
+
+  service.start({ buildOnStart: true });
+  assert.deepEqual(calls, ['startup']);
+  await service.idle();
+  service.stop();
+});
+
 test('indexer service watches Claude JSON files through chokidar', async () => {
   const projectsDir = mkdtempSync(join(tmpdir(), 'trajex-chokidar-projects-'));
   const timers = manualTimers();

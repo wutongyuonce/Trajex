@@ -269,7 +269,7 @@ test('main process watches every root declared by the built-in provider registry
   }
 });
 
-test('re-enabling auto-refresh recreates the watcher and starts a build', async () => {
+test('rapid auto-refresh changes converge to the latest setting', async () => {
   const originalHome = process.env.HOME;
   const home = join(tmpdir(), `trajex-main-auto-refresh-${Date.now()}`);
   mkdirSync(join(home, '.trajex'), { recursive: true });
@@ -279,6 +279,8 @@ test('re-enabling auto-refresh recreates the watcher and starts a build', async 
   const ipcHandlers = new Map();
   const services = [];
   const starts = [];
+  let releaseStop;
+  const stopPromise = new Promise(resolve => { releaseStop = resolve; });
 
   class FakeDatabase {
     pragma() {}
@@ -313,7 +315,7 @@ test('re-enabling auto-refresh recreates the watcher and starts a build', async 
         createIndexerService: () => {
           const service = {
             start(options) { starts.push(options); },
-            stop() {},
+            stop() { return services[0] === service ? stopPromise : undefined; },
             idle: async () => {},
             runBuildNow() { return Promise.resolve(); },
           };
@@ -328,7 +330,17 @@ test('re-enabling auto-refresh recreates the watcher and starts a build', async 
   try {
     await importMain();
     const setSetting = ipcHandlers.get('settings:set');
-    await setSetting(null, 'autoRefresh', false);
+    const changes = [
+      setSetting(null, 'autoRefresh', false),
+      setSetting(null, 'autoRefresh', true),
+      setSetting(null, 'autoRefresh', false),
+    ];
+    releaseStop();
+    await Promise.all(changes);
+
+    assert.equal(services.length, 1);
+    assert.equal((await ipcHandlers.get('settings:get')()).autoRefresh, false);
+
     await setSetting(null, 'autoRefresh', true);
 
     assert.equal(services.length, 2);
@@ -829,7 +841,7 @@ test('closing the last macOS window releases background resources until activati
   }
 });
 
-test('settings rebuild reopens the database from the configured Claude path', async () => {
+test('settings rebuild reopens the configured database without overriding newer auto-refresh settings', async () => {
   const home = join(tmpdir(), `trajex-main-settings-${Date.now()}`);
   const defaultClaudeDir = join(home, '.claude');
   const customClaudeDir = join(home, 'custom-claude');
@@ -907,6 +919,7 @@ test('settings rebuild reopens the database from the configured Claude path', as
           buildIndex: async (args) => {
             serviceEvents.push('build');
             buildCalls.push(args);
+            await ipcHandlers.get('settings:set')(null, 'autoRefresh', false);
             const competingLease = acquireWriterLease({
               lockPath: args.writerLeasePath,
               openDb: lockPath => new DatabaseSync(lockPath),
@@ -943,6 +956,7 @@ test('settings rebuild reopens the database from the configured Claude path', as
       'rebuilt temp db',
     );
     assert.ok(serviceEvents.indexOf('build') > serviceEvents.indexOf('stop'));
+    assert.ok(serviceEvents.lastIndexOf('start') < serviceEvents.indexOf('build'));
     const postRebuildLease = acquireWriterLease({
       lockPath: join(home, '.trajex', 'writer.lock.sqlite'),
       openDb: lockPath => new DatabaseSync(lockPath),
@@ -956,7 +970,7 @@ test('settings rebuild reopens the database from the configured Claude path', as
   }
 });
 
-test('settings rebuild keeps the existing database after a worker failure', async () => {
+test('settings rebuild keeps the existing database after deferred, skipped, and failed builds', async () => {
   const home = join(tmpdir(), `trajex-main-settings-rebuild-failure-${Date.now()}`);
   const customClaudeDir = join(home, 'custom-claude');
   const customCodexDir = join(home, 'custom-codex');
@@ -976,6 +990,7 @@ test('settings rebuild keeps the existing database after a worker failure', asyn
   const openedDbPaths = [];
   const closedDbPaths = [];
   const serviceEvents = [];
+  let buildAttempts = 0;
 
   class FakeDatabase {
     constructor(dbPath) {
@@ -1032,8 +1047,20 @@ test('settings rebuild keeps the existing database after a worker failure', asyn
     [INDEXER_WORKER_URL, {
       namedExports: {
         createWorkerBuildIndex: () => ({
-          buildIndex: async () => {
+          buildIndex: async (args) => {
             serviceEvents.push('build');
+            buildAttempts += 1;
+            if (buildAttempts === 1) {
+              return { deferred: true, reason: 'database_busy', skipped: 0, skippedFiles: [] };
+            }
+            if (buildAttempts === 2) {
+              writeFileSync(args.dbPath, 'incomplete index');
+              return {
+                deferred: false,
+                skipped: 1,
+                skippedFiles: [{ path: 'broken.jsonl', error: 'bad transcript' }],
+              };
+            }
             throw new Error('worker exploded');
           },
           stop() {},
@@ -1047,6 +1074,8 @@ test('settings rebuild keeps the existing database after a worker failure', asyn
 
     const rebuild = ipcHandlers.get('settings:rebuildIndex');
     const openCountBeforeRebuild = openedDbPaths.length;
+    await assert.rejects(() => rebuild(), /database busy/i);
+    await assert.rejects(() => rebuild(), /broken\.jsonl.*bad transcript/i);
     await assert.rejects(() => rebuild(), /worker exploded/);
 
     const expectedDbPath = join(home, '.trajex', 'trajex.sqlite');

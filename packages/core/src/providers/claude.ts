@@ -65,10 +65,6 @@ function totalInputTokens(usage: Record<string, unknown>): number | null {
   return seen ? total : null;
 }
 
-function readableDirectory(path: string): boolean {
-  try { readdirSync(path); return true; } catch { return false; }
-}
-
 function pathWithin(root: string, candidate: string): boolean {
   const inside = relative(root, candidate);
   return inside === '' || (!inside.startsWith('..') && !isAbsolute(inside));
@@ -103,8 +99,12 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   }
   // An absent/unreadable projects directory is not a complete inventory. In
   // that state, an empty discovery result must not be interpreted as deletion.
-  const inventoryComplete = readableDirectory(projectsDir);
-  const transcriptFiles = inventoryComplete ? discoverJsonlFiles(projectsDir) : [];
+  let inventoryComplete = true;
+  const reportUnavailableRoot = (issue: { path: string; error: string }) => {
+    inventoryComplete = false;
+    ctx.reportUnavailableRoot?.(issue);
+  };
+  const transcriptFiles = discoverJsonlFiles(projectsDir, reportUnavailableRoot);
   const currentTranscriptPaths = new Set(transcriptFiles.map(file => normalize(file.path)));
   const transcriptUnits = transcriptFiles.filter((file) => {
     const normalizedPath = normalize(file.path);
@@ -127,7 +127,13 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   const workflowUnits: IndexUnit[] = [];
   if (!inventoryComplete) return transcriptUnits;
   let projects: string[];
-  try { projects = readdirSync(projectsDir); } catch { return transcriptUnits; }
+  try { projects = readdirSync(projectsDir); } catch (error) {
+    reportUnavailableRoot({
+      path: projectsDir,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return transcriptUnits;
+  }
   for (const project of projects) {
     const projectPath = join(projectsDir, project);
     if (!isDir(projectPath)) continue;

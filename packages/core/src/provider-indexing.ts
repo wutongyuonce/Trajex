@@ -6,7 +6,13 @@
  */
 import { persist } from './persist.ts';
 import type { ProviderRegistry } from './providers/registry.ts';
-import type { Cursor, IndexUnit, ProviderAdapter, IndexedSession } from './providers/types.ts';
+import type {
+  Cursor,
+  IndexUnit,
+  InventoryRootIssue,
+  ProviderAdapter,
+  IndexedSession,
+} from './providers/types.ts';
 import type { SqliteDb } from './sqlite-types.ts';
 
 /** 计划中的单个执行单元：哪个 Provider 解析哪个 unit，以及从哪个 cursor 续读（null 为全量）。 */
@@ -21,6 +27,29 @@ export interface ProviderIndexPlan {
   readonly items: ProviderIndexItem[];
   readonly pendingMarkers: ReadonlyMap<string, string>;
   readonly fullRebuild: boolean;
+  readonly inventoryIssues: readonly ProviderInventoryRootIssue[];
+}
+
+/** 带 Provider 身份的来源根诊断，供 build 决定是否允许破坏性清理。 */
+export interface ProviderInventoryRootIssue extends InventoryRootIssue {
+  readonly provider: string;
+}
+
+/** 旧数据库中的 Provider session provenance，供临时库 rebuild 预检使用。 */
+export interface ProviderSessionProvenance extends IndexedSession {
+  readonly source: string;
+}
+
+/** force/canonical rebuild 的来源根预检失败；抛出前数据库尚未执行清理。 */
+export class ProviderRootUnavailableError extends Error {
+  readonly issues: readonly ProviderInventoryRootIssue[];
+
+  constructor(issues: readonly ProviderInventoryRootIssue[]) {
+    const detail = issues.map(issue => `${issue.provider} (${issue.path}): ${issue.error}`).join('; ');
+    super(`Provider root unavailable; rebuild aborted before cleanup: ${detail}`);
+    this.name = 'ProviderRootUnavailableError';
+    this.issues = issues;
+  }
 }
 
 /** 执行结果：已提交项、失败 Provider 集合；stopped 表示数据库忙等原因中途停止的位置。 */
@@ -36,9 +65,17 @@ export function storedProviderCursor(db: SqliteDb, key: string): Cursor {
   return row ? `${String(row.mtime)}:${String(row.lines_processed)}` : null;
 }
 
-/** 该来源是否已有历史 session（用于判定是否必须全量回放）。 */
-function sourceAlreadyIndexed(db: SqliteDb, source: string): boolean {
-  return Boolean(db.prepare('SELECT 1 FROM sessions WHERE source = ? LIMIT 1').get(source));
+/** 读取已有 session 的来源与路径，不携带 transcript 内容。 */
+export function readProviderSessionProvenance(db: SqliteDb): ProviderSessionProvenance[] {
+  return db.prepare(`
+    SELECT id, jsonl_path, COALESCE(source, 'claude') AS source
+    FROM sessions
+    WHERE jsonl_path IS NOT NULL AND jsonl_path != ''
+  `).all().map((row) => ({
+    sessionId: String(row.id),
+    jsonlPath: String(row.jsonl_path),
+    source: String(row.source),
+  }));
 }
 
 /**
@@ -48,11 +85,21 @@ function sourceAlreadyIndexed(db: SqliteDb, source: string): boolean {
 export function createProviderIndexPlan(
   db: SqliteDb,
   registry: ProviderRegistry,
-  { force = false, changedPaths }: { force?: boolean; changedPaths?: string[] } = {},
+  {
+    force = false,
+    changedPaths,
+    priorSessions,
+  }: {
+    force?: boolean;
+    changedPaths?: string[];
+    priorSessions?: readonly ProviderSessionProvenance[];
+  } = {},
 ): ProviderIndexPlan {
   const items: ProviderIndexItem[] = [];
   const pendingMarkers = new Map<string, string>();
+  const inventoryIssues: ProviderInventoryRootIssue[] = [];
   const providers = registry.list();
+  const provenance = priorSessions ?? readProviderSessionProvenance(db);
   const markerMissing = new Map<string, boolean>();
   for (const provider of providers) {
     const marker = provider.indexVersionMarker;
@@ -63,17 +110,24 @@ export function createProviderIndexPlan(
     if (missing) pendingMarkers.set(provider.name, marker);
   }
   const fullRebuild = force || providers.some(provider => (
-    markerMissing.get(provider.name) === true && sourceAlreadyIndexed(db, provider.name)
+    markerMissing.get(provider.name) === true
+    && provenance.some(session => session.source === provider.name)
   ));
   for (const provider of providers) {
-    const indexedSessions = (): readonly IndexedSession[] => db.prepare(
-      'SELECT id AS sessionId, jsonl_path AS jsonlPath, source FROM sessions WHERE source = ?',
-    ).all(provider.name) as IndexedSession[];
+    const providerSessions = provenance
+      .filter(session => session.source === provider.name)
+      .map(({ sessionId, jsonlPath }) => ({ sessionId, jsonlPath }));
+    const indexedSessions = (): readonly IndexedSession[] => providerSessions;
     const fullReindex = fullRebuild;
     const units = provider.discover({
       lastCursor: fullReindex ? () => null : (key) => storedProviderCursor(db, key),
       changedPaths: fullReindex ? undefined : changedPaths,
       indexedSessions,
+      reportUnavailableRoot: (issue) => {
+        // 没有旧快照的内建 Provider 是可选来源，不阻断 force rebuild。
+        if (indexedSessions().length === 0) return;
+        inventoryIssues.push({ provider: provider.name, ...issue });
+      },
     });
     for (const unit of units) {
       items.push({
@@ -83,7 +137,14 @@ export function createProviderIndexPlan(
       });
     }
   }
-  return { items, pendingMarkers, fullRebuild };
+  return { items, pendingMarkers, fullRebuild, inventoryIssues };
+}
+
+/** 任何全量清理都必须在写入前通过现有 Provider 来源根预检。 */
+export function assertRebuildRootsAvailable(plan: ProviderIndexPlan): void {
+  if (plan.fullRebuild && plan.inventoryIssues.length > 0) {
+    throw new ProviderRootUnavailableError(plan.inventoryIssues);
+  }
 }
 
 /**

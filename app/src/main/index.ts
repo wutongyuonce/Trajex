@@ -732,10 +732,8 @@ ipcMain.handle('settings:set', async (_, key, value) => {
   savePersistedSettings(persisted);
 
   if (key === 'autoRefresh') {
-    if (value === false && indexerService) {
-      await stopIndexerServiceAndWait();
-    } else if (value !== false) {
-      if (indexerService) await stopIndexerServiceAndWait();
+    await stopIndexerServiceAndWait();
+    if (loadPersistedSettings().autoRefresh !== false) {
       startIndexerService({ buildOnStart: true });
     }
   }
@@ -791,16 +789,7 @@ ipcMain.handle('settings:rebuildIndex', async () => {
       waitMs: 2000,
     });
     if (!writerLease) {
-      return {
-        files: 0,
-        latestSourceMtime: 0,
-        affectedSessionIds: [],
-        ftsRebuilt: false,
-        skipped: 0,
-        skippedFiles: [],
-        deferred: true,
-        reason: 'writer_busy',
-      };
+      throw new Error('Trajex index writer is busy; rebuild was not started');
     }
     const result = await indexerWorker.buildIndex({
       reason: 'manual-rebuild',
@@ -814,7 +803,13 @@ ipcMain.handle('settings:rebuildIndex', async () => {
       writerLeasePath,
       writerLeaseMode: 'caller-held',
     });
-    if (result?.deferred) return result;
+    if (result?.deferred) {
+      throw new Error(`Trajex rebuild was not completed: ${String(result.reason || 'indexing deferred').replaceAll('_', ' ')}`);
+    }
+    if (result?.skipped) {
+      const detail = result.skippedFiles?.slice(0, 3).map(file => `${file.path}: ${file.error}`).join('; ');
+      throw new Error(`Trajex rebuild failed for ${result.skipped} file(s)${detail ? `: ${detail}` : ''}`);
+    }
     closeDb();
     replaceDbWithTemp(tempDbPath, paths.dbPath);
     openDb(paths.dbPath, { writerLeaseMode: 'caller-held' });

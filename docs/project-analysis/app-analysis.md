@@ -356,7 +356,9 @@ contextBridge.exposeInMainWorld('trajex', { ... })
 
 ### 7.1 `getMessageFullText` 为什么不只查数据库
 
-为了索引大小和性能，消息正文可能被截断。用户点击「加载完整内容」时，main 根据 message、session、subagent/workflow 元数据调用 provider registry 的 `raw()`；provider 知道如何回到该 source 的原始日志。这样 renderer 仍然不需要理解任何 provider 原始格式。
+为了索引大小和性能，普通消息正文可能被截断。用户点击「加载完整内容」时，main 根据 message、session、subagent/workflow 元数据调用 provider registry 的 `raw()`；provider 知道如何回到该 source 的原始日志。这样 renderer 仍然不需要理解任何 provider 原始格式。
+
+工具结果走另一条路径：`content_type === 'tool_result'` 的 message 只是时间线和 FTS 使用的最多 1,000 字符首尾预览，不会独立渲染。Core 以 `tool_use_id` 将 `tool_results.content` 挂到对应 tool call，App 的工具卡片展示这份最多 10,000 字符的首尾结果；当前工具卡片没有独立的 `raw()` 全文展开入口。
 
 ## 8. 从数据库行到详情时间线
 
@@ -388,7 +390,7 @@ components/SessionTimelineRow.vue
 | --- | --- |
 | `message` | 成为基础 `AssembledMessage` |
 | `tool_call` | 以 `message_uuid` 挂到 `message.tool_calls[]` |
-| `tool_result` | 以 `tool_use_id` 挂到对应 tool call 的 `result`，不会单独显示成消息 |
+| `tool_result` | 以 `tool_use_id` 挂到对应 tool call 的 `result`，展示最多 10,000 字符的首尾内容；对应的预览 message 不会单独显示 |
 | `workflow` | 以 `parent_tool_use_id` 关联到名为 `Workflow` 的工具调用 |
 | `workflow_agent` | 以 `run_id` 归入 workflow 的 `agents[]` |
 | `summary` | 留在 `summaries[]`，按时间插入 UI 时间线 |

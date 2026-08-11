@@ -1819,7 +1819,7 @@ Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",vers
 | `{type:"custom_message",content,display}`                    | custom `message`                                             | 扩展插入的 Entry，role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
 | `{type:"message",message:{role:"user",content}}`             | user `message`                                               | 仅文本 content 产生消息。                                    |
 | assistant 的 `content[]` text / thinking / toolCall part     | 每个 part 各产生 assistant `message`；toolCall 另有 `tool_call` | 以 `:partIndex` 后缀生成稳定 message ID，并串成 parent chain；usage 只附到最后一个可导航 part。 |
-| `message.role === "toolResult"`                              | tool-result `message` + `tool_result`                        | `toolCallId` 关联前述工具；错误状态写入 result。             |
+| `message.role === "toolResult"`                              | tool-result `message` + `tool_result`                        | `toolCallId` 关联前述工具；message 保留最多 1,000 字符首尾预览，result 保留最多 10,000 字符首尾内容。 |
 | `message.role === "bashExecution"`                           | bash `message`                                               | 形成 `content_type: 'bash'` 的文本投影；不另造 `tool_result`。未知条目和无可投影文本的条目不产出。 |
 
 #### 增量发现 `discoverAt()`
@@ -2029,7 +2029,7 @@ persist()
 | `tool_use_id`  | TEXT PK | 对应 `tool_calls.id` |
 | `message_uuid` | TEXT    | 所属消息             |
 | `session_id`   | TEXT    | 所属会话             |
-| `content`      | TEXT    | 执行结果文本         |
+| `content`      | TEXT    | 执行结果文本；最多 10,000 字符，超长时保留首尾 |
 | `file_path`    | TEXT    | 文件路径             |
 | `is_error`     | INTEGER | 是否错误             |
 

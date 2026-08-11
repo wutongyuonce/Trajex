@@ -225,6 +225,7 @@ Keep queries scoped, bounded, and structural.
 - Helper First: prefer `overview()`, `memories()`, `search()`, `sessions()`, `summaries()`, `fileHistory()`, and other helpers for first-pass retrieval. Escalate to raw `sql()` only when helpers cannot express the needed join, grouping, or exact schema-level check.
 - Plan Before Probe: for conclusion, broad history, failure investigation, or file evolution, write a bounded retrieval script instead of spending turns on intermediate results.
 - Structure Before Text: compute counts, joins, grouping, dedupe, and projection in SQL or JS; keep runtime JSON compact, ideally under 10k-12k chars for synthesis tasks.
+- Return Budget: treat helper results as internal data. Before returning, keep only the rows, fields, and text needed for the answer. Raw returns are acceptable only for small, exactly scoped results.
 - Evidence Before Conclusion: return compact evidence with stable IDs (`session_id`, `uuid`, `tool_call_id`, `run_id`, `agent_id`) and short snippets, then synthesize in the final answer.
 - Exclude Meta By Default: `is_meta=1` rows are injected/control-plane transcript material. Helpers hide them by default; raw SQL for ordinary conversation evidence should include `COALESCE(m.is_meta,0)=0` unless meta rows are the investigation target.
 - Persist Durable Conclusions: after answering, if retrieval produced a durable conclusion that future sessions are likely to reuse and `memories()` does not already cover it, explicitly offer to write a memory. Keep the offer brief. Do not write the markdown file or run `--attune` until the user approves.
@@ -368,4 +369,4 @@ See `references/query-patterns.md` for longer recipes.
 - First run builds the index. Later runs update incrementally.
 - DB location: `~/.trajex/trajex.sqlite`; old `~/.claude/trajex.sqlite` is copied forward if needed.
 - Query scripts run in a sandboxed VM with no filesystem or network access from inside the script.
-- Indexed text and stored tool inputs/results are truncated to 10k chars. Use `raw(uuid, { offset, limit })` for specific JSONL windows.
+- Ordinary indexed text and tool inputs are capped at 10k chars. Tool-result messages keep a 1k head-tail preview, while `tool_results.content` keeps up to 10k head-tail chars. Use `raw(uuid, { offset, limit })` for specific JSONL windows.

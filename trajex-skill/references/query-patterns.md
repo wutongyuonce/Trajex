@@ -120,6 +120,21 @@ return hits.slice(0, 5).map(h => {
 });
 ```
 
+For an exact session, treat `thread()` rows as internal data and return only a
+small projection:
+
+```js
+return thread(sessionId)
+  .slice(-30)
+  .map(m => ({
+    uuid: m.uuid,
+    role: m.role,
+    timestamp: m.timestamp,
+    content_type: m.content_type,
+    text: m.text?.slice(0, 300),
+  }));
+```
+
 ## Memory Plus Session Evidence
 
 Use this when prior conclusions may exist but the answer still depends on raw

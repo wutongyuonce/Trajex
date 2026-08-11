@@ -73,7 +73,7 @@ Core evidence table.
 | `type`, `role` | User/assistant role fields |
 | `parent_uuid` | Conversation tree parent |
 | `timestamp` | ISO timestamp |
-| `text` | Extracted text, truncated to 10k chars |
+| `text` | Extracted text, capped at 10k chars; tool-result messages use a 1k head-tail preview |
 | `content_type` | `text`, `thinking`, `tool_use`, `tool_result`, or `unknown` |
 | `is_meta` | 1 for injected/control-plane messages |
 | `model` | Assistant model name |
@@ -113,7 +113,7 @@ One row per tool result.
 | `tool_use_id` | FK to `tool_calls.id` |
 | `message_uuid` | User/tool-result message carrying the result |
 | `session_id` | Denormalized session ID |
-| `content` | Result text, truncated to 10k chars |
+| `content` | Result text, capped at 10k chars with both head and tail retained |
 | `file_path` | Tool result file path metadata, if any |
 | `is_error` | 1 when the provider marks the result as an error |
 
@@ -319,8 +319,9 @@ Common indexed filters:
 - `sessions.project` is a slug/fuzzy scope; `sessions.project_path` is the
   absolute path when known; `messages.cwd` is per-message working directory.
 - Memory rows are archived with `deleted_at`; do not recall archived memories.
-- Indexed text and JSON fields are truncated to 10k chars. Use `raw()` from
-  `references/api-reference.md` when a specific message needs the original JSONL
-  line.
+- Ordinary indexed text and JSON fields are capped at 10k chars. Tool-result
+  messages keep a 1k head-tail preview and `tool_results.content` keeps up to
+  10k head-tail chars. Use `raw()` from `references/api-reference.md` when a
+  specific message needs the original JSONL line.
 - Prefer SQL-side `COUNT`, `GROUP BY`, `MAX`, `ORDER BY`, and `LIMIT` over
   returning large row sets and hand-counting in the final answer.

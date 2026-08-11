@@ -47,6 +47,8 @@ sql(`
 ## Over-Large Runtime JSON
 
 If runtime stdout is large, fix the query instead of reading it in chunks.
+Rows inspected inside the script stay local; only the final returned JSON enters
+the agent context.
 
 - Lower `LIMIT`.
 - Shorten snippets to 160-240 chars.

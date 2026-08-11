@@ -24,7 +24,7 @@ Parses JSONL history from different providers — Codex, Claude Code, Pi — int
 
 ## Acknowledgements
 
-Trajex is a fork product of [tommy0103/obelisk](https://github.com/tommy0103/obelisk). It substantially reworks the desktop app, including a Codex-like vertical progress rail and local-file link previews, and adds Pi session support.
+Trajex is a fork product of [tommy0103/obelisk](https://github.com/tommy0103/obelisk). It substantially reworks the Index core, adds Pi session support and optimize the desktop app according to my taste, including light/dark theme switch, a Codex-like vertical progress rail and local-file link previews.
 
 ## Two Sides of One Index
 

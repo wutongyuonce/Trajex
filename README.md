@@ -24,7 +24,7 @@
 
 ## Acknowledgements
 
-Trajex 是 [tommy0103/obelisk](https://github.com/tommy0103/obelisk) 的一个衍生作品分支。它大幅重写了桌面应用，包括类似 Codex 的纵向进度条和本地文件链接预览，并增加了 Pi 会话支持。
+Trajex 来自 [tommy0103/obelisk](https://github.com/tommy0103/obelisk)。它在此基础上进行了索引核心 core 的改写与精简，修复了一些 bug，增加了 Pi 会话支持，并优化了桌面应用，包括白天/黑夜主题切换、Codex-like 的纵向进度条和本地文件链接预览。
 
 ## 同一个索引的两面
 

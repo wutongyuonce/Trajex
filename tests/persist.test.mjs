@@ -146,7 +146,7 @@ test('IndexUnit retractions clear prior projection before an empty replacement u
     'memory-retract', 'sid-p', '/tmp/retract.md', 'keep this memory', '2026-06-10T10:00:00Z',
   );
 
-  function* tombstone() { return '0:0'; }
+  function* tombstone() { yield* []; return '0:0'; }
   persist(db, {
     key: 'tombstone',
     sessionId: 'pi:new-identity',

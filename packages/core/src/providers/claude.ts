@@ -18,7 +18,7 @@ import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
 
 import {
   extractText, extractContentType, extractMessageIsMeta, isSkillInstructions,
-  filePath, trunc, truncJson, truncToolResult, toolResultPreview, readLines, discoverJsonlFiles, isDir,
+  filePath, truncJson, truncToolResult, toolResultPreview, readLines, discoverJsonlFiles, isDir,
 } from '../parsing.ts';
 
 import type {

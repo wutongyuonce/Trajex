@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-08-11
+
 ### Added
 
 - 增加孤立 tool result 的时间线组装回归测试，确保空壳 result 不会打断相邻 assistant 消息与 tool call 的合并。
@@ -46,7 +48,7 @@
 - 旧数据库启动迁移时不再删除遗留的 `messages.is_sidechain` 列。
 - 修复 Codex 工具结果无法作为独立消息查询、全文搜索和详情时间线内容的问题。
 
-## [0.2.4]
+## [0.2.3]
 
 ### Added
 

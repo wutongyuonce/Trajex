@@ -57,7 +57,7 @@ Codex 只索引根 thread 为普通 Trajex session。带有 `parent_thread_id`�
 
 每个 Pi 官方 v3 session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，Trajex 会根据 durable leaf 和 compaction（包括 retained tail）计算当前上下文：当前记录为 `visible`，已被取代但保留的分支证据为 `inactive`，来源明确隐藏的 transport context 为 `hidden`。详情页默认只展示 visible 记录，其他分支可显式展开。
 
-为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots：Claude 的 `~/.claude/projects`、Codex 的 `~/.codex/sessions`（外加 `session_index.jsonl`）和 Pi 默认的 `~/.pi/agent/sessions`。App Settings 中 Claude 与 Codex 配置的是各自的 provider root（默认 `~/.claude` / `~/.codex`），Trajex 会在此基础上追加 `projects` / `sessions` 进行发现和监听；Pi 配置的则是最终 session directory，Trajex 不再追加任何路径，可直接填写由 `PI_CODING_AGENT_SESSION_DIR` 解析出的目录，或由 `PI_CODING_AGENT_DIR` 解析出的目录下的 `sessions` 子目录（即 `$PI_CODING_AGENT_DIR/sessions`）。Trajex 不读取环境变量或 CLI 参数。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。
+为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots：Claude 的 `~/.claude/projects`、Codex 的 `~/.codex/sessions`（外加 `session_index.jsonl`）和 Pi 默认的 `~/.pi/agent/sessions`。App Settings 中 Claude 与 Codex 配置的是各自的 provider root（默认 `~/.claude` / `~/.codex`），Trajex 会在此基础上追加 `projects` / `sessions` 进行发现和监听；Pi 配置的则是最终 session directory，Trajex 不再追加任何路径，可直接填写由 `PI_CODING_AGENT_SESSION_DIR` 解析出的目录，或由 `PI_CODING_AGENT_DIR` 解析出的目录下的 `sessions` 子目录（即 `$PI_CODING_AGENT_DIR/sessions`）。Trajex 不读取环境变量或 CLI 参数。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。如果 App 启动时某个已有快照的来源根暂时不可用，daemon 会保留旧快照，从 30 秒开始指数退避全量重试，最长间隔 10 分钟；目录恢复后会补建 watcher 并立即重新清点。
 
 ## App 与 CLI 的关系
 

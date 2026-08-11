@@ -860,7 +860,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 
   - 负责回查原文：`raw()` 根据 SQLite message uuid 找回原始 JSONL 行
 
-  - 负责告诉 app 监听哪里：`watchRoots()` 告诉 app daemon 应该监听哪些目录
+  - 负责告诉 app 监听哪里：`watchRoots()` 告诉 app daemon 应该监听哪些目录。启动时缺失的 root 会持续尝试补建 watcher；Provider 报告来源根 inventory 不完整时，App 以 30 秒起步、10 分钟封顶的指数退避重做全量清点，恢复后重置间隔。
 
 ### 内置 Provider 的 parse / reconcile 策略
 

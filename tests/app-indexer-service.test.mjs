@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,9 +8,12 @@ import { createIndexerService } from '../app/src/main/indexer-service.ts';
 
 function manualTimers() {
   const timers = new Set();
+  const delays = [];
   return {
-    setTimeout(fn) {
+    delays,
+    setTimeout(fn, ms) {
       timers.add(fn);
+      delays.push(ms);
       return fn;
     },
     clearTimeout(fn) {
@@ -99,6 +102,43 @@ test('indexer service reschedules a writer-lease deferral without publishing a h
   assert.equal(heartbeats, 1);
 });
 
+test('incomplete inventory retries back off to ten minutes and reset after recovery', async () => {
+  const timers = manualTimers();
+  let incomplete = true;
+  const service = createIndexerService({
+    buildIndex: async () => incomplete
+      ? {
+          inventoryIssues: [{
+            provider: 'pi',
+            path: '/tmp/pi/locked',
+            error: 'EACCES: permission denied',
+          }],
+        }
+      : { inventoryIssues: [] },
+    watchProjects: () => ({ close() {} }),
+    writeHeartbeat: () => {},
+    timers,
+    heartbeatMs: 120_000,
+    stabilityMs: 0,
+    logger: { warn() {} },
+  });
+
+  await service.runBuildNow('startup');
+  for (let attempt = 0; attempt < 4; attempt++) {
+    timers.flush();
+    await service.idle();
+  }
+  assert.deepEqual(timers.delays, [120_000, 240_000, 480_000, 600_000, 600_000]);
+
+  incomplete = false;
+  timers.flush();
+  await service.idle();
+  incomplete = true;
+  await service.runBuildNow('manual');
+  assert.equal(timers.delays.at(-1), 120_000);
+  service.stop();
+});
+
 test('indexer service does not log a build cancelled by a service stop', async () => {
   const timers = manualTimers();
   const warnings = [];
@@ -184,6 +224,46 @@ test('indexer service retries watcher setup when the projects directory is missi
 
   timers.flush();
   assert.equal(attempts, 2);
+});
+
+test('indexer service watches a source root that appears after startup', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'trajex-late-watch-root-'));
+  const existingRoot = join(home, 'existing');
+  const missingRoot = join(home, 'missing');
+  mkdirSync(existingRoot);
+  const timers = manualTimers();
+  const watched = [];
+  const builds = [];
+  const chokidar = {
+    watch(root) {
+      watched.push(root);
+      const watcher = {
+        on() { return watcher; },
+        close() {},
+      };
+      return watcher;
+    },
+  };
+  const service = createIndexerService({
+    watchDirs: [existingRoot, missingRoot],
+    buildIndex: async (args) => builds.push(args),
+    chokidar,
+    writeHeartbeat: () => {},
+    timers,
+    debounceMs: 0,
+    stabilityMs: 0,
+  });
+
+  service.start({ buildOnStart: false });
+  assert.deepEqual(watched, [existingRoot]);
+  mkdirSync(missingRoot);
+  timers.flush();
+  timers.flush();
+  await service.idle();
+
+  assert.deepEqual(watched, [existingRoot, missingRoot]);
+  assert.deepEqual(builds, [{ reason: 'watch', changedPaths: undefined }]);
+  service.stop();
 });
 
 test('indexer service publishes daemon ownership as soon as it starts', () => {

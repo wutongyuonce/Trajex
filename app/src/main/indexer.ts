@@ -12,6 +12,7 @@ import {
   readProviderSessionProvenance,
   writeProviderIndexMarkers,
 } from '../../../packages/core/src/provider-indexing.ts';
+import type { ProviderInventoryRootIssue } from '../../../packages/core/src/provider-indexing.ts';
 import { runWriteTransaction, configureConnection, betterSqliteTransactionAdapter } from '../../../packages/core/src/tx.ts';
 import { migrateCoreSchemaColumns } from '../../../packages/core/src/schema-migrations.ts';
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
@@ -221,6 +222,7 @@ interface BuildIndexResult {
   ftsRebuilt: boolean;
   skipped: number;
   skippedFiles: SkippedFile[];
+  inventoryIssues: readonly ProviderInventoryRootIssue[];
   deferred: boolean;
   reason?: string;
 }
@@ -236,6 +238,7 @@ function deferredBuildResult(
     ftsRebuilt: false,
     skipped: 0,
     skippedFiles: [],
+    inventoryIssues: [],
     ...overrides,
     deferred: true,
     reason,
@@ -316,6 +319,18 @@ function buildIndex({
         changedPaths,
         priorSessions,
       });
+      if (!force && providerPlan.fullRebuild && providerPlan.inventoryIssues.length > 0) {
+        return {
+          files: providerPlan.items.length,
+          latestSourceMtime: 0,
+          affectedSessionIds: [],
+          ftsRebuilt: false,
+          skipped: 0,
+          skippedFiles: [],
+          inventoryIssues: providerPlan.inventoryIssues,
+          deferred: false,
+        };
+      }
       assertRebuildRootsAvailable(providerPlan);
       let latestSourceMtime = providerPlan.items.reduce((latest, { unit }) => {
         const providerCursor = (unit.meta as { currentCursor?: unknown } | undefined)?.currentCursor;
@@ -350,6 +365,7 @@ function buildIndex({
           return deferredBuildResult('database_busy', {
             files: providerPlan.items.length,
             latestSourceMtime,
+            inventoryIssues: providerPlan.inventoryIssues,
           });
         }
         throw error;
@@ -404,6 +420,7 @@ function buildIndex({
           affectedSessionIds: [...affectedSessionIds],
           skipped: skipped.length,
           skippedFiles: skipped,
+          inventoryIssues: providerPlan.inventoryIssues,
         });
       }
       let ftsRebuilt = false;
@@ -428,6 +445,7 @@ function buildIndex({
             affectedSessionIds: [...affectedSessionIds],
             skipped: skipped.length,
             skippedFiles: skipped,
+            inventoryIssues: providerPlan.inventoryIssues,
           });
         }
         throw error;
@@ -440,6 +458,7 @@ function buildIndex({
         ftsRebuilt,
         skipped: skipped.length,
         skippedFiles: skipped,
+        inventoryIssues: providerPlan.inventoryIssues,
         deferred: false,
       };
     } finally {

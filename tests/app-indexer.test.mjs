@@ -8,6 +8,7 @@ import { join } from 'node:path';
 const require = createRequire(import.meta.url);
 import { buildIndex } from '../app/src/main/indexer.ts';
 import { CLAUDE_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/claude.ts';
+import { CODEX_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/codex.ts';
 const { DatabaseSync } = require('node:sqlite');
 
 class TestDatabase {
@@ -791,7 +792,11 @@ test('app Claude incrementally removes deleted transcripts but preserves the sna
 
   assert.deepEqual(buildIndex(options).affectedSessionIds, ['session-delete']);
   rmSync(join(claudeDir, 'projects'), { recursive: true });
-  assert.deepEqual(buildIndex({ ...options, changedPaths: [jsonlPath] }).affectedSessionIds, []);
+  const incomplete = buildIndex({ ...options, changedPaths: [jsonlPath] });
+  assert.deepEqual(incomplete.affectedSessionIds, []);
+  assert.equal(incomplete.inventoryIssues.length, 1);
+  assert.equal(incomplete.inventoryIssues[0].provider, 'claude');
+  assert.equal(incomplete.inventoryIssues[0].path, join(claudeDir, 'projects'));
   let db = new TestDatabase(dbPath);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get('session-delete').c, 1);
   db.close();
@@ -834,7 +839,7 @@ test('app Codex incrementally removes deleted rollouts but preserves the snapsho
   db.close();
 });
 
-test('app force rebuild aborts before cleanup when an indexed Provider root is unavailable', () => {
+test('app reports an unavailable Provider root and force rebuild aborts before cleanup', () => {
   const home = mkdtempSync(join(tmpdir(), 'trajex-app-force-root-preflight-'));
   const codexDir = join(home, '.codex');
   const sessionsDir = join(codexDir, 'sessions');
@@ -857,12 +862,19 @@ test('app force rebuild aborts before cleanup when an indexed Provider root is u
 
   buildIndex(options);
   rmSync(sessionsDir, { recursive: true });
+  let db = new TestDatabase(dbPath);
+  db.prepare('DELETE FROM index_state WHERE jsonl_path=?').run(CODEX_CANONICAL_TRANSCRIPT_MARKER);
+  db.close();
+
+  const backgroundRetry = buildIndex(options);
+  assert.equal(backgroundRetry.inventoryIssues.length, 1);
+  assert.equal(backgroundRetry.inventoryIssues[0].provider, 'codex');
 
   assert.throws(
     () => buildIndex({ ...options, force: true }),
     /Codex.*root.*unavailable|root.*unavailable.*Codex/i,
   );
-  const db = new TestDatabase(dbPath);
+  db = new TestDatabase(dbPath);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 1);
   assert.equal(db.prepare('SELECT text FROM messages WHERE session_id=?').get(sessionId).text, 'preserve this snapshot');
   db.close();

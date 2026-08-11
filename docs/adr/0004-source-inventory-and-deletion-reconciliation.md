@@ -1,6 +1,6 @@
 # Source-root availability and deletion reconciliation
 
-> Revised 2026-08-09. This ADR defines the reliability boundary for Provider
+> Revised 2026-08-11. This ADR defines the reliability boundary for Provider
 > discovery and the precondition for destructive rebuilds. It does not define
 > provider parsing or SQLite transaction mechanics; see ADR-0002 and ADR-0003.
 
@@ -67,11 +67,28 @@ the old snapshot during a normal build. A user who wants to prove an empty
 inventory can recreate the configured root as an empty readable directory and
 build again.
 
+### Daemon recovery from an incomplete inventory
+
+- App builds return structured source-root issues to the daemon instead of
+  treating a partial inventory as complete.
+- The daemon retries a full inventory after 30 seconds and exponentially backs
+  off repeated failures to a maximum interval of 10 minutes. A successful full
+  inventory resets the delay; writer-lease deferrals keep their separate fast
+  retry.
+- Watch roots that do not exist at startup are retried independently. When a
+  root appears, the App attaches its watcher and requests a full inventory so
+  the recovered source is indexed before incremental events take over.
+- A manual force rebuild still fails immediately on an unavailable root. It
+  never turns into an unbounded background rebuild or replaces the last usable
+  database.
+
 ## Consequences
 
 - A genuinely deleted transcript or descendant subtree is removed once its
   source root can be enumerated.
 - A transiently missing or unreadable source root cannot cause mass deletion.
+- A source root that recovers while the App remains open is inventoried and
+  watched without requiring an App restart or manual rebuild.
 - A transiently unreadable descendant can cause deletion by design; the root is
   the only fallback boundary.
 - Same-path identity replacement is handled as two facts: retract the old

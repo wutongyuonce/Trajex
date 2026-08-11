@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 支持通过 `PI_CODING_AGENT_SESSION_DIR` 与 `TRAJEX_DIR` 为 CLI/Core 指定隔离的 Pi 会话根和索引目录，便于评测或临时任务避免触碰默认用户数据。
+
 ## [0.2.5] - 2026-08-11
 
 ### Added

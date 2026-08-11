@@ -358,7 +358,7 @@ function rawPi(sessionDir: string, input: RawLookup): RawRecord | null {
   return { text: line, totalLength: line.length, offset: 0, limit: line.length, hasMore: false };
 }
 
-export function createPiProvider({ sessionDir = join(homedir(), '.pi', 'agent', 'sessions') }: { sessionDir?: string } = {}): ProviderAdapter {
+export function createPiProvider({ sessionDir = process.env.PI_CODING_AGENT_SESSION_DIR || join(homedir(), '.pi', 'agent', 'sessions') }: { sessionDir?: string } = {}): ProviderAdapter {
   return {
     name,
     descriptor: { id: name, name: 'Pi', vendor: 'Pi', defaultRoot: sessionDir, color: '#7c3aed' },

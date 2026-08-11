@@ -14,7 +14,8 @@ import { configureConnection } from './tx.ts';
 import { migrateCoreSchemaColumns } from './schema-migrations.ts';
 import type { NodeSqliteDb, SqliteDb } from './sqlite-types.ts';
 
-const TRAJEX_DIR = join(homedir(), '.trajex');
+// runner 在子进程中指定该目录，使评测索引不触碰用户的默认 ~/.trajex。
+const TRAJEX_DIR = process.env.TRAJEX_DIR || join(homedir(), '.trajex');
 const DB_PATH = join(TRAJEX_DIR, 'trajex.sqlite');
 // 将同目录下的 schema.sql 文件内容读取为字符串，存入常量 SCHEMA 。
 const SCHEMA = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'); // new URL('./schema.sql', import.meta.url) — ESM 中获取当前文件同目录下另一个文件的 绝对 URL 。

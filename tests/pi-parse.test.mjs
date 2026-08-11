@@ -1,7 +1,7 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createPiProvider, PI_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/pi.ts';
 
@@ -11,7 +11,7 @@ const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca4
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
   assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v4__');
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-'));
+  const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
   const path = join(dir, 'session.jsonl');
@@ -47,7 +47,7 @@ test('Pi indexes every tree branch and projects current context through visibili
 });
 
 test('Pi keeps a small head-tail message preview and a bounded head-tail tool result', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-tool-result-'));
+  const root = makeTempDir('trajex-pi-tool-result-');
   const dir = join(root, 'sessions');
   const path = join(dir, 'session.jsonl');
   const output = `${'head '.repeat(3000)}middle ${'tail '.repeat(3000)}`;
@@ -71,7 +71,7 @@ test('Pi keeps a small head-tail message preview and a bounded head-tail tool re
 });
 
 test('Pi discovers standard top-level v3 sessions and ignores a torn final line', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-discover-'));
+  const root = makeTempDir('trajex-pi-discover-');
   const projectDir = join(root, 'sessions', '--tmp-project--');
   const path = join(projectDir, 'fixture.jsonl');
   mkdirSync(join(projectDir, 'nested', 'subagents'), { recursive: true });
@@ -87,7 +87,7 @@ test('Pi discovers standard top-level v3 sessions and ignores a torn final line'
 });
 
 test('Pi discovery retracts a prior identity when a session file is reused', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-retract-'));
+  const root = makeTempDir('trajex-pi-retract-');
   const dir = join(root, 'sessions', '--tmp-project--');
   const path = join(dir, 'fixture.jsonl');
   mkdirSync(dir, { recursive: true });
@@ -108,7 +108,7 @@ test('Pi discovery retracts a prior identity when a session file is reused', () 
 });
 
 test('Pi stops at a malformed line and returns the valid prefix', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-malformed-'));
+  const root = makeTempDir('trajex-pi-malformed-');
   const dir = join(root, 'sessions', '--project--');
   const path = join(dir, 'fixture.jsonl');
   mkdirSync(dir, { recursive: true });
@@ -130,7 +130,7 @@ test('Pi stops at a malformed line and returns the valid prefix', () => {
 });
 
 test('Pi treats a cyclic model parent chain as an unknown model', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-model-cycle-'));
+  const root = makeTempDir('trajex-pi-model-cycle-');
   const dir = join(root, 'sessions', '--project--');
   const path = join(dir, 'fixture.jsonl');
   mkdirSync(dir, { recursive: true });
@@ -147,7 +147,7 @@ test('Pi treats a cyclic model parent chain as an unknown model', () => {
 });
 
 test('Pi durable leaf selects the target branch instead of the last physical entry', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-leaf-'));
+  const root = makeTempDir('trajex-pi-leaf-');
   const dir = join(root, 'sessions', '--project--');
   const path = join(dir, 'fixture.jsonl');
   mkdirSync(dir, { recursive: true });
@@ -167,7 +167,7 @@ test('Pi durable leaf selects the target branch instead of the last physical ent
 });
 
 test('Pi active compaction projects retainedTail messages and discards compacted ancestors', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-retained-tail-'));
+  const root = makeTempDir('trajex-pi-retained-tail-');
   const dir = join(root, 'sessions', '--project--');
   const path = join(dir, 'fixture.jsonl');
   mkdirSync(dir, { recursive: true });
@@ -191,7 +191,7 @@ test('Pi active compaction projects retainedTail messages and discards compacted
 });
 
 test('Pi legacy compaction keeps the firstKeptEntryId boundary', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-first-kept-'));
+  const root = makeTempDir('trajex-pi-first-kept-');
   const dir = join(root, 'sessions', '--project--');
   const path = join(dir, 'fixture.jsonl');
   mkdirSync(dir, { recursive: true });

@@ -1,8 +1,8 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { appendFileSync, mkdtempSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
@@ -34,7 +34,7 @@ class TestDatabase {
 }
 
 test('app indexer records build success without claiming daemon ownership', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-'));
+  const home = makeTempDir('trajex-app-indexer-');
   const claudeDir = join(home, '.claude');
   const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
@@ -92,7 +92,7 @@ test('app indexer records build success without claiming daemon ownership', () =
 });
 
 test('app indexer refreshes unchanged Claude usage when input token semantics change', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-token-semantics-'));
+  const home = makeTempDir('trajex-app-indexer-token-semantics-');
   const claudeDir = join(home, '.claude');
   const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
@@ -147,7 +147,7 @@ test('app indexer refreshes unchanged Claude usage when input token semantics ch
 });
 
 test('force rebuild ignores stale JSONL index_state rows after session tables were cleared', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-force-'));
+  const home = makeTempDir('trajex-app-indexer-force-');
   const claudeDir = join(home, '.claude');
   const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
@@ -182,7 +182,7 @@ test('force rebuild ignores stale JSONL index_state rows after session tables we
 });
 
 test('force rebuild bypasses stale message FTS delete triggers', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-force-fts-'));
+  const home = makeTempDir('trajex-app-indexer-force-fts-');
   const claudeDir = join(home, '.claude');
   const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
@@ -224,7 +224,7 @@ test('force rebuild bypasses stale message FTS delete triggers', () => {
 });
 
 test('force rebuild into a new database preserves existing memories', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-force-preserve-'));
+  const home = makeTempDir('trajex-app-indexer-force-preserve-');
   const claudeDir = join(home, '.claude');
   const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
@@ -280,7 +280,7 @@ test('force rebuild into a new database preserves existing memories', () => {
 });
 
 test('app indexer reports changed workflow JSON as an affected session', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-workflow-'));
+  const home = makeTempDir('trajex-app-indexer-workflow-');
   const claudeDir = join(home, '.claude');
   const project = '-tmp-trajex-app';
   const sessionId = 'session-workflow-1';
@@ -320,7 +320,7 @@ test('app indexer reports changed workflow JSON as an affected session', () => {
 });
 
 test('app indexer marks UI-fallback control messages as meta at ingest time', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-meta-'));
+  const home = makeTempDir('trajex-app-indexer-meta-');
   const claudeDir = join(home, '.claude');
   const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
   mkdirSync(projectDir, { recursive: true });
@@ -359,7 +359,7 @@ test('app indexer marks UI-fallback control messages as meta at ingest time', ()
 });
 
 test('app indexer loads Codex root sessions into the shared schema', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-'));
+  const home = makeTempDir('trajex-app-indexer-codex-');
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -451,7 +451,7 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
 });
 
 test('app indexer accepts Codex changed paths relative to the sessions directory', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-sessions-change-'));
+  const home = makeTempDir('trajex-app-indexer-codex-sessions-change-');
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -499,7 +499,7 @@ test('app indexer accepts Codex changed paths relative to the sessions directory
 });
 
 test('app indexer uses Codex response_item messages only when no visible event message exists', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-response-message-'));
+  const home = makeTempDir('trajex-app-indexer-codex-response-message-');
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -569,7 +569,7 @@ test('app indexer uses Codex response_item messages only when no visible event m
 });
 
 test('app indexer skips Codex guardian review threads', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-guardian-'));
+  const home = makeTempDir('trajex-app-indexer-codex-guardian-');
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -621,7 +621,7 @@ test('app indexer skips Codex guardian review threads', () => {
 });
 
 test('app indexer ignores Codex guardian rows without emitting cleanup', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-guardian-stale-'));
+  const home = makeTempDir('trajex-app-indexer-codex-guardian-stale-');
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -681,7 +681,7 @@ test('app indexer ignores Codex guardian rows without emitting cleanup', () => {
 });
 
 test('app indexer skips Codex child threads and synthetic spawn calls', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-indexer-codex-subagent-'));
+  const home = makeTempDir('trajex-app-indexer-codex-subagent-');
   const claudeDir = join(home, '.claude');
   const codexDir = join(home, '.codex');
   const codexSessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -781,7 +781,7 @@ test('app indexer skips Codex child threads and synthetic spawn calls', () => {
 });
 
 test('app Claude incrementally removes deleted transcripts but preserves the snapshot while projects is missing', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-claude-delete-'));
+  const home = makeTempDir('trajex-app-claude-delete-');
   const claudeDir = join(home, '.claude');
   const projectDir = join(claudeDir, 'projects', '-tmp-claude-delete');
   const jsonlPath = join(projectDir, 'session-delete.jsonl');
@@ -810,7 +810,7 @@ test('app Claude incrementally removes deleted transcripts but preserves the sna
 });
 
 test('app Codex incrementally removes deleted rollouts but preserves the snapshot while sessions is missing', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-codex-delete-'));
+  const home = makeTempDir('trajex-app-codex-delete-');
   const codexDir = join(home, '.codex');
   const sessionDir = join(codexDir, 'sessions', '2026', '06', '15');
   const jsonlPath = join(sessionDir, 'rollout-delete.jsonl');
@@ -840,7 +840,7 @@ test('app Codex incrementally removes deleted rollouts but preserves the snapsho
 });
 
 test('app reports an unavailable Provider root and force rebuild aborts before cleanup', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-force-root-preflight-'));
+  const home = makeTempDir('trajex-app-force-root-preflight-');
   const codexDir = join(home, '.codex');
   const sessionsDir = join(codexDir, 'sessions');
   const rolloutDir = join(sessionsDir, '2026', '06', '15');
@@ -881,7 +881,7 @@ test('app reports an unavailable Provider root and force rebuild aborts before c
 });
 
 test('app temp rebuild preflights Provider roots against provenance from the current database', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-temp-root-preflight-'));
+  const home = makeTempDir('trajex-app-temp-root-preflight-');
   const codexDir = join(home, '.codex');
   const sessionsDir = join(codexDir, 'sessions');
   const rolloutDir = join(sessionsDir, '2026', '06', '15');
@@ -920,7 +920,7 @@ test('app temp rebuild preflights Provider roots against provenance from the cur
 });
 
 test('app force rebuild aborts before cleanup when the indexed Claude projects root is unavailable', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-claude-root-preflight-'));
+  const home = makeTempDir('trajex-app-claude-root-preflight-');
   const claudeDir = join(home, '.claude');
   const projectsDir = join(claudeDir, 'projects');
   const projectDir = join(projectsDir, '-tmp-claude-force');
@@ -953,7 +953,7 @@ test('app force rebuild aborts before cleanup when the indexed Claude projects r
 });
 
 test('app Codex treats a missing descendant directory as an authoritative deletion', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-codex-descendant-delete-'));
+  const home = makeTempDir('trajex-app-codex-descendant-delete-');
   const codexDir = join(home, '.codex');
   const sessionsDir = join(codexDir, 'sessions');
   const rolloutDir = join(sessionsDir, '2026', '06', '15');

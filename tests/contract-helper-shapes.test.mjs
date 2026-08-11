@@ -1,3 +1,4 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Tier 2 contract golden tests (see docs/adr/0002-two-tier-runtime-contract.md).
 //
 // These lock the *composite return shapes* that agents parse and that
@@ -19,8 +20,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createQueryApi, createAttuneApi } from '../packages/core/src/query.ts';
@@ -204,7 +204,7 @@ test('forget() result shape matches api-reference.md', () => {
 });
 
 test('raw() shape matches api-reference.md', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'trajex-raw-'));
+  const dir = makeTempDir('trajex-raw-');
   const jsonlPath = join(dir, 'session.jsonl');
   const line = JSON.stringify({ uuid: 'm-raw', type: 'user', message: { role: 'user', content: 'raw line body' } });
   writeFileSync(jsonlPath, line + '\n');

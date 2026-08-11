@@ -1,8 +1,8 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { acquireWriterLease, writerLockPathFor } from '../packages/core/src/writer-lease.ts';
@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 
 test('a passive query reports when a fresh daemon blocks its schema upgrade', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-daemon-arbitration-'));
+  const home = makeTempDir('trajex-daemon-arbitration-');
   const trajexDir = join(home, '.trajex');
   const dbPath = join(trajexDir, 'trajex.sqlite');
   mkdirSync(trajexDir, { recursive: true });
@@ -37,7 +37,7 @@ test('a passive query reports when a fresh daemon blocks its schema upgrade', ()
 });
 
 test('attune reports when a fresh daemon blocks its schema upgrade', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-daemon-attune-'));
+  const home = makeTempDir('trajex-daemon-attune-');
   const trajexDir = join(home, '.trajex');
   const dbPath = join(trajexDir, 'trajex.sqlite');
   mkdirSync(trajexDir, { recursive: true });
@@ -61,7 +61,7 @@ test('attune reports when a fresh daemon blocks its schema upgrade', () => {
 });
 
 test('a passive query reports when another writer blocks its schema upgrade', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-writer-owned-'));
+  const home = makeTempDir('trajex-writer-owned-');
   const trajexDir = join(home, '.trajex');
   const dbPath = join(trajexDir, 'trajex.sqlite');
   mkdirSync(trajexDir, { recursive: true });
@@ -91,7 +91,7 @@ test('a passive query reports when another writer blocks its schema upgrade', ()
 });
 
 test('a passive query fails closed when daemon ownership cannot be read', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-daemon-ownership-error-'));
+  const home = makeTempDir('trajex-daemon-ownership-error-');
   const trajexDir = join(home, '.trajex');
   const dbPath = join(trajexDir, 'trajex.sqlite');
   mkdirSync(trajexDir, { recursive: true });

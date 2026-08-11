@@ -1,3 +1,4 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5c-2 golden test: pins the codex adapter's parse() record stream.
 // Binding-independent (no database). Covers the event_msg↔response_item dedup,
 // tool call/result, token patching, turn-duration, the 'total' session count,
@@ -5,14 +6,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createCodexProvider, parse } from '../packages/core/src/providers/codex.ts';
 
 function writeFixture(lines) {
-  const dir = mkdtempSync(join(tmpdir(), 'trajex-codex-parse-'));
+  const dir = makeTempDir('trajex-codex-parse-');
   const path = join(dir, 'rollout.jsonl');
   writeFileSync(path, lines.map(l => JSON.stringify(l)).join('\n') + '\n');
   return path;
@@ -147,7 +147,7 @@ test('codex parse() ignores child and fork threads regardless of parent metadata
 });
 
 test('codex discover() returns only root rollout units', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-codex-discover-'));
+  const root = makeTempDir('trajex-codex-discover-');
   const dir = join(root, 'sessions', '2026', '06', '10');
   mkdirSync(dir, { recursive: true });
   const write = (name, payload) => writeFileSync(join(dir, name), `${JSON.stringify({ type: 'session_meta', payload })}\n`);
@@ -162,7 +162,7 @@ test('codex discover() returns only root rollout units', () => {
 });
 
 test('codex provider folds session_index metadata into its canonical session record', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-codex-index-meta-'));
+  const root = makeTempDir('trajex-codex-index-meta-');
   const sessionsDir = join(root, 'sessions', '2026', '06', '10');
   mkdirSync(sessionsDir, { recursive: true });
   const path = join(sessionsDir, `rollout-${META.id}.jsonl`);
@@ -184,7 +184,7 @@ test('codex provider folds session_index metadata into its canonical session rec
 });
 
 test('codex discovery emits a tombstone for a deleted indexed rollout', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-codex-retract-'));
+  const root = makeTempDir('trajex-codex-retract-');
   const sessionsDir = join(root, 'sessions', '2026', '06', '10');
   const path = join(sessionsDir, 'rollout-deleted.jsonl');
   mkdirSync(sessionsDir, { recursive: true });
@@ -204,7 +204,7 @@ test('codex discovery emits a tombstone for a deleted indexed rollout', () => {
 });
 
 test('codex discovery keeps the last snapshot when its sessions root is missing', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-codex-missing-root-'));
+  const root = makeTempDir('trajex-codex-missing-root-');
   const sessionsDir = join(root, 'sessions', '2026', '06', '10');
   const path = join(sessionsDir, 'rollout-kept.jsonl');
   mkdirSync(sessionsDir, { recursive: true });

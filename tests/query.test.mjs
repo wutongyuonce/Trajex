@@ -1,8 +1,8 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createQueryApi, createAttuneApi } from '../packages/core/src/query.ts';
@@ -218,7 +218,7 @@ test('attune api exposes only memory mutation helpers', () => {
 });
 
 test('remember stores absolute project-relative memory path', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'trajex-memory-project-'));
+  const projectDir = makeTempDir('trajex-memory-project-');
   const memoryDir = join(projectDir, '.trajex', 'memories');
   mkdirSync(memoryDir, { recursive: true });
   const memoryPath = join(memoryDir, 'decision.md');
@@ -239,7 +239,7 @@ test('remember stores absolute project-relative memory path', () => {
 });
 
 test('remember updates FTS recall for the registered memory immediately', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'trajex-memory-project-'));
+  const projectDir = makeTempDir('trajex-memory-project-');
   const memoryDir = join(projectDir, '.trajex', 'memories');
   mkdirSync(memoryDir, { recursive: true });
   const memoryPath = join(memoryDir, 'query-plan.md');
@@ -282,7 +282,7 @@ test('forget soft-deletes memory records from active recall', () => {
 });
 
 test('remember requires English summaries', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'trajex-memory-project-'));
+  const projectDir = makeTempDir('trajex-memory-project-');
   const memoryDir = join(projectDir, '.trajex', 'memories');
   mkdirSync(memoryDir, { recursive: true });
   const memoryPath = join(memoryDir, 'decision.md');
@@ -303,7 +303,7 @@ test('remember requires English summaries', () => {
 });
 
 test('remember rejects missing memory files', () => {
-  const projectDir = mkdtempSync(join(tmpdir(), 'trajex-memory-project-'));
+  const projectDir = makeTempDir('trajex-memory-project-');
   const db = memoryDb({ projectPath: projectDir });
   const api = createAttuneApi(db);
 

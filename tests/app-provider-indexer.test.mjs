@@ -1,8 +1,7 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { buildIndex } from '../app/src/main/indexer.ts';
@@ -20,7 +19,7 @@ class TestDatabase {
 }
 
 test('app indexer persists every provider through one registry-driven loop', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-provider-indexer-'));
+  const home = makeTempDir('trajex-provider-indexer-');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');
   const registry = createProviderRegistry([{
     name: 'alpha',

@@ -1,7 +1,6 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -9,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 const coreUrl = pathToFileURL(join(process.cwd(), 'packages/core/src/core.ts')).href;
 
 test('query worker terminates an asynchronously hanging sandbox', { timeout: 35000 }, () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-sandbox-worker-'));
+  const home = makeTempDir('trajex-sandbox-worker-');
   const script = `
     const { executeQuery } = await import(${JSON.stringify(coreUrl)});
     try {

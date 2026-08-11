@@ -1,3 +1,4 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Tier 1 contract golden tests (see docs/adr/0002-two-tier-runtime-contract.md).
 //
 // These lock the four-verb CLI I/O envelope at the process boundary so the
@@ -14,14 +15,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { runCli as runRuntime } from './cli-test-helpers.mjs';
 
 function tempHome() {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-cli-envelope-'));
+  const home = makeTempDir('trajex-cli-envelope-');
   mkdirSync(join(home, '.claude'), { recursive: true });
   return home;
 }

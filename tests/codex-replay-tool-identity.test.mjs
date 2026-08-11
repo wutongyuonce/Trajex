@@ -1,8 +1,8 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { assembleSessionDetail } from '../app/src/shared/session-detail-assembly.mjs';
@@ -30,7 +30,7 @@ function writeRollout(path, meta, source) {
 }
 
 test('Codex root replay is indexed while fork rollout is ignored', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'trajex-codex-replay-'));
+  const dir = makeTempDir('trajex-codex-replay-');
   const parentPath = join(dir, 'parent.jsonl');
   const replayPath = join(dir, 'replay.jsonl');
   writeRollout(parentPath, {

@@ -1,3 +1,4 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5c: exercises the full codex buildIndex path (discover → codex.parse →
 // persist) for both a fresh full build and an incremental rebuild after append.
 // Codex is full-reparse with countMode 'total', so growth must REPLACE the count
@@ -6,8 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, utimesSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, appendFileSync, utimesSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { runCli } from './cli-test-helpers.mjs';
@@ -47,7 +47,7 @@ function codexCounts(home) {
 }
 
 test('codex full build then incremental rebuild replaces the total count without duplicates', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-codex-idx-'));
+  const home = makeTempDir('trajex-codex-idx-');
   const dir = join(home, '.codex', 'sessions', '2026', '06', '15');
   mkdirSync(dir, { recursive: true });
   const jsonl = join(dir, `rollout-2026-06-15T10-00-00-${ID}.jsonl`);
@@ -75,7 +75,7 @@ test('codex full build then incremental rebuild replaces the total count without
 });
 
 test('codex full replay removes rows absent from the current rollout and preserves memories', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-codex-replace-'));
+  const home = makeTempDir('trajex-codex-replace-');
   const dir = join(home, '.codex', 'sessions', '2026', '06', '15');
   mkdirSync(dir, { recursive: true });
   const jsonl = join(dir, `rollout-2026-06-15T10-00-00-${ID}.jsonl`);

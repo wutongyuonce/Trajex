@@ -1,8 +1,8 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, normalize } from 'node:path';
 
 import { runCli as runRuntime } from './cli-test-helpers.mjs';
@@ -11,7 +11,7 @@ const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
 
 function tempHome() {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-runtime-home-'));
+  const home = makeTempDir('trajex-runtime-home-');
   mkdirSync(join(home, '.claude'), { recursive: true });
   return home;
 }

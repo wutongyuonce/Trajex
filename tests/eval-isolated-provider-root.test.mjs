@@ -1,7 +1,7 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const CLI = fileURLToPath(new URL('../packages/cli/src/trajex.ts', import.meta.url));
 
 test('trajex build honors isolated Pi session and database environment roots', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-eval-root-'));
+  const root = makeTempDir('trajex-eval-root-');
   const sessions = join(root, 'history');
   const database = join(root, 'isolated-db');
   mkdirSync(sessions, { recursive: true });

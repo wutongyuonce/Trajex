@@ -1,3 +1,4 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Regression test for the message write semantics (formerly the indexJsonl
 // INSERT-OR-REPLACE vs ON-CONFLICT drift; now enforced through the shared
 // persist layer). Re-indexing a claude session must upsert messages (stable
@@ -7,8 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { parse } from '../packages/core/src/providers/claude.ts';
@@ -19,7 +19,7 @@ const { DatabaseSync } = require('node:sqlite');
 const SCHEMA = readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
 
 function fixtureUnit() {
-  const dir = mkdtempSync(join(tmpdir(), 'trajex-drift-'));
+  const dir = makeTempDir('trajex-drift-');
   const jsonlPath = join(dir, 'sess.jsonl');
   const lines = [
     { uuid: 'u-1', type: 'user', timestamp: '2026-06-10T10:00:00Z', cwd: '/tmp/proj', message: { role: 'user', content: 'first question' } },

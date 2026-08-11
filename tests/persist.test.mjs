@@ -1,3 +1,4 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5b-2a: unit-tests the shared persist layer in isolation (no buildIndex).
 // Feeds claude.parse output into persist against an in-memory node:sqlite db and
 // asserts rows + the drift-fixed session merge semantics.
@@ -5,8 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { parse } from '../packages/core/src/providers/claude.ts';
@@ -17,7 +17,7 @@ const { DatabaseSync } = require('node:sqlite');
 const SCHEMA = readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
 
 function fixtureUnit() {
-  const dir = mkdtempSync(join(tmpdir(), 'trajex-persist-'));
+  const dir = makeTempDir('trajex-persist-');
   const path = join(dir, 'sid-p.jsonl');
   const lines = [
     { type: 'ai-title', aiTitle: 'Persist Session' },

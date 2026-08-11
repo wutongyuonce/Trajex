@@ -1,11 +1,11 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5b golden test: pins the claude adapter's parse() record stream.
 // This is the binding-independent contract — no database is involved. If the
 // per-line parse behavior drifts, this fails before persist ever runs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -16,7 +16,7 @@ import { persist } from '../packages/core/src/persist.ts';
 const SCHEMA = readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
 
 function writeFixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'trajex-claude-parse-'));
+  const dir = makeTempDir('trajex-claude-parse-');
   const path = join(dir, 'sid-x.jsonl');
   const lines = [
     { type: 'ai-title', aiTitle: 'My Session' },
@@ -84,7 +84,7 @@ test('claude parse() yields the expected record stream for a main session', () =
 });
 
 test('claude keeps a small head-tail message preview and a bounded head-tail tool result', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'trajex-claude-tool-result-'));
+  const dir = makeTempDir('trajex-claude-tool-result-');
   const path = join(dir, 'sid-long.jsonl');
   const output = `${'head '.repeat(3000)}middle ${'tail '.repeat(3000)}`;
   writeFileSync(path, `${JSON.stringify({
@@ -136,7 +136,7 @@ test('claude incremental parse stops at a new malformed line and leaves the curs
 });
 
 test('claude discovery emits a tombstone for a deleted indexed transcript', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-claude-retract-'));
+  const root = makeTempDir('trajex-claude-retract-');
   const projectDir = join(root, 'projects', '-proj');
   const path = join(projectDir, 'sid-deleted.jsonl');
   mkdirSync(projectDir, { recursive: true });
@@ -156,7 +156,7 @@ test('claude discovery emits a tombstone for a deleted indexed transcript', () =
 });
 
 test('claude discovery keeps the last snapshot when its projects root is missing', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-claude-missing-root-'));
+  const root = makeTempDir('trajex-claude-missing-root-');
   const projectDir = join(root, 'projects', '-proj');
   const path = join(projectDir, 'sid-kept.jsonl');
   mkdirSync(projectDir, { recursive: true });
@@ -173,7 +173,7 @@ test('claude discovery keeps the last snapshot when its projects root is missing
 });
 
 test('claude provider emits workflow artifacts with an explicit canonical tool edge', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-claude-workflow-'));
+  const root = makeTempDir('trajex-claude-workflow-');
   const projectDir = join(root, 'projects', '-proj');
   const workflowDir = join(projectDir, 'sid-workflow', 'workflows');
   const workflowAgentDir = join(projectDir, 'sid-workflow', 'subagents', 'workflows', 'run-workflow');
@@ -237,7 +237,7 @@ test('claude provider emits workflow artifacts with an explicit canonical tool e
 });
 
 test('claude workflow linkage uses run id when workflow names repeat', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-claude-workflow-link-'));
+  const root = makeTempDir('trajex-claude-workflow-link-');
   const projectDir = join(root, 'projects', '-proj');
   const workflowDir = join(projectDir, 'sid-workflow', 'workflows');
   mkdirSync(workflowDir, { recursive: true });

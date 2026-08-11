@@ -1,3 +1,4 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5b-2b: verifies incremental (resume) indexing through the full rewired
 // buildIndex path (needsReindex → cursor → claude.parse → persist). A force
 // --build re-scans everything (skip=0) and never exercises resume, so this
@@ -8,8 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, utimesSync, statSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync, appendFileSync, utimesSync, statSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { runCli } from './cli-test-helpers.mjs';
@@ -39,7 +39,7 @@ function counts(home) {
 }
 
 test('incremental buildIndex resumes from cursor and accumulates message_count', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-incr-'));
+  const home = makeTempDir('trajex-incr-');
   const projDir = join(home, '.claude', 'projects', '-tmp-proj');
   mkdirSync(projDir, { recursive: true });
   const jsonl = join(projDir, 'sess.jsonl');
@@ -67,7 +67,7 @@ test('incremental buildIndex resumes from cursor and accumulates message_count',
 });
 
 test('schema migration is not skipped by a recent build marker', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-schema-refresh-'));
+  const home = makeTempDir('trajex-schema-refresh-');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');
   mkdirSync(join(home, '.trajex'), { recursive: true });
   const db = new DatabaseSync(dbPath);
@@ -99,7 +99,7 @@ test('schema migration is not skipped by a recent build marker', () => {
 });
 
 test('force build purges sessions for deleted files and preserves memories', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-force-'));
+  const home = makeTempDir('trajex-force-');
   const projDir = join(home, '.claude', 'projects', '-tmp-proj');
   mkdirSync(projDir, { recursive: true });
   const keep = join(projDir, 'keep.jsonl');

@@ -1,8 +1,8 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildIndex } from '../app/src/main/indexer.ts';
@@ -19,7 +19,7 @@ class TestDatabase {
 }
 
 test('app indexes configured Pi sessions through the provider registry', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-pi-'));
+  const home = makeTempDir('trajex-app-pi-');
   const piDir = join(home, '.pi', 'agent');
   const sessionDir = join(piDir, 'sessions', '--tmp-app-pi--');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');
@@ -52,7 +52,7 @@ test('app indexes configured Pi sessions through the provider registry', () => {
 });
 
 test('app Pi replay retracts a replaced identity and a deleted readable session file', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-pi-retract-'));
+  const home = makeTempDir('trajex-app-pi-retract-');
   const piDir = join(home, '.pi', 'agent');
   const sessionDir = join(piDir, 'sessions', '--tmp-app-pi--');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');
@@ -102,7 +102,7 @@ test('app Pi replay retracts a replaced identity and a deleted readable session 
 });
 
 test('app Pi keeps the last snapshot when its configured root is missing', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-pi-missing-root-'));
+  const home = makeTempDir('trajex-app-pi-missing-root-');
   const piRoot = join(home, '.pi', 'agent', 'sessions');
   const sessionDir = join(piRoot, '--tmp-app-pi--');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');
@@ -129,7 +129,7 @@ test('app Pi keeps the last snapshot when its configured root is missing', () =>
 });
 
 test('app force rebuild aborts before cleanup when the indexed Pi session root is unavailable', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-pi-force-root-'));
+  const home = makeTempDir('trajex-app-pi-force-root-');
   const piRoot = join(home, '.pi', 'agent', 'sessions');
   const sessionDir = join(piRoot, '--tmp-app-pi--');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');
@@ -159,7 +159,7 @@ test('app force rebuild aborts before cleanup when the indexed Pi session root i
 });
 
 test('app Pi treats an unreadable descendant directory as an authoritative deletion', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-app-pi-descendant-delete-'));
+  const home = makeTempDir('trajex-app-pi-descendant-delete-');
   const piRoot = join(home, '.pi', 'agent', 'sessions');
   const sessionDir = join(piRoot, '--tmp-app-pi--');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');

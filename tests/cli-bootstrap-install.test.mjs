@@ -1,21 +1,20 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   mkdirSync,
-  mkdtempSync,
   readFileSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 test('install.sh installs and verifies only the CLI', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-install-script-'));
+  const home = makeTempDir('trajex-install-script-');
   const fakeBin = join(home, 'bin');
   const npmCapture = join(home, 'npm-args');
   const trajexCapture = join(home, 'trajex-args');

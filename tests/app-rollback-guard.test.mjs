@@ -1,3 +1,4 @@
+import { makeTempDir } from './temp-dirs.mjs';
 // Regression tests for the write-transaction runner (docs/adr/0006):
 //  - a transient BUSY (auto-rolled-back txn) is retried and recovers;
 //  - a persistent BUSY exhausts retries, and that file is SKIPPED, not fatal;
@@ -5,8 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
@@ -57,7 +57,7 @@ function makeDbClass(shouldPoison) {
 }
 
 function twoFileHome(alphaContent, betaContent) {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-tx-'));
+  const home = makeTempDir('trajex-tx-');
   const projectDir = join(home, '.claude', 'projects', '-tmp-proj');
   mkdirSync(projectDir, { recursive: true });
   mkdirSync(join(home, '.trajex'), { recursive: true });
@@ -71,7 +71,7 @@ function twoFileHome(alphaContent, betaContent) {
 }
 
 function subagentHome(description = 'first description') {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-meta-tx-'));
+  const home = makeTempDir('trajex-meta-tx-');
   const projectDir = join(home, '.claude', 'projects', '-tmp-proj');
   const subagentDir = join(projectDir, 'session', 'subagents');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');

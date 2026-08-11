@@ -1,7 +1,7 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createIndexerService } from '../app/src/main/indexer-service.ts';
@@ -227,7 +227,7 @@ test('indexer service retries watcher setup when the projects directory is missi
 });
 
 test('indexer service watches a source root that appears after startup', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-late-watch-root-'));
+  const home = makeTempDir('trajex-late-watch-root-');
   const existingRoot = join(home, 'existing');
   const missingRoot = join(home, 'missing');
   mkdirSync(existingRoot);
@@ -299,7 +299,7 @@ test('indexer service runs a startup build immediately', async () => {
 });
 
 test('indexer service watches Claude JSON files through chokidar', async () => {
-  const projectsDir = mkdtempSync(join(tmpdir(), 'trajex-chokidar-projects-'));
+  const projectsDir = makeTempDir('trajex-chokidar-projects-');
   const timers = manualTimers();
   const calls = [];
   let watchArgs = null;
@@ -373,7 +373,7 @@ test('indexer service waits for the watcher to close', async () => {
 });
 
 test('indexer service passes changed JSONL paths to the build worker', async () => {
-  const projectsDir = mkdtempSync(join(tmpdir(), 'trajex-changed-paths-'));
+  const projectsDir = makeTempDir('trajex-changed-paths-');
   const timers = manualTimers();
   const calls = [];
   const handlers = {};
@@ -415,8 +415,8 @@ test('indexer service passes changed JSONL paths to the build worker', async () 
 });
 
 test('indexer service watches Claude projects and Codex sessions for app-side indexing', async () => {
-  const claudeProjectsDir = mkdtempSync(join(tmpdir(), 'trajex-watch-claude-'));
-  const codexSessionsDir = mkdtempSync(join(tmpdir(), 'trajex-watch-codex-sessions-'));
+  const claudeProjectsDir = makeTempDir('trajex-watch-claude-');
+  const codexSessionsDir = makeTempDir('trajex-watch-codex-sessions-');
   const timers = manualTimers();
   const calls = [];
   const watchers = [];

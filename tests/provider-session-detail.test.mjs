@@ -1,7 +1,7 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -12,7 +12,7 @@ import { parse as parseCodex } from '../packages/core/src/providers/codex.ts';
 const SCHEMA = readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
 
 function writeCodexFixture(lines) {
-  const dir = mkdtempSync(join(tmpdir(), 'trajex-provider-detail-'));
+  const dir = makeTempDir('trajex-provider-detail-');
   const path = join(dir, 'rollout.jsonl');
   writeFileSync(path, `${lines.map(line => JSON.stringify(line)).join('\n')}\n`);
   return path;

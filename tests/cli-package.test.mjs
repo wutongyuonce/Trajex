@@ -1,8 +1,8 @@
+import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { repoRoot, runCli } from './cli-test-helpers.mjs';
@@ -11,7 +11,7 @@ const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const cliPackage = JSON.parse(readFileSync(join(repoRoot, 'packages', 'cli', 'package.json'), 'utf8'));
 
 test('the packaged trajex command preserves the runtime query envelope', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-cli-package-'));
+  const home = makeTempDir('trajex-cli-package-');
   const query = join(home, 'query.mjs');
   writeFileSync(query, 'return { answer: 42 };');
 
@@ -31,7 +31,7 @@ test('trajex --version reports the installed CLI package version', () => {
 });
 
 test('CLI test process suppresses only Node ExperimentalWarning output', () => {
-  const home = mkdtempSync(join(tmpdir(), 'trajex-cli-warning-'));
+  const home = makeTempDir('trajex-cli-warning-');
   const preload = join(home, 'warnings.cjs');
   writeFileSync(preload, `
     process.emitWarning('simulated SQLite warning', 'ExperimentalWarning');
@@ -49,7 +49,7 @@ test('CLI test process suppresses only Node ExperimentalWarning output', () => {
 });
 
 test('npm pack installs one platform-neutral CLI with its schema resource', () => {
-  const root = mkdtempSync(join(tmpdir(), 'trajex-cli-pack-'));
+  const root = makeTempDir('trajex-cli-pack-');
   const packDir = join(root, 'pack');
   const prefix = join(root, 'prefix');
   const npmCache = join(root, 'npm-cache');

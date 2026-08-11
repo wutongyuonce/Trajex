@@ -11,8 +11,8 @@ test('all transcript providers invalidate the old canonical projection together'
     CODEX_CANONICAL_TRANSCRIPT_MARKER,
     PI_CANONICAL_TRANSCRIPT_MARKER,
   ], [
-    '__claude_canonical_transcript_v3__',
-    '__codex_canonical_transcript_v3__',
-    '__pi_canonical_transcript_v3__',
+    '__claude_canonical_transcript_v4__',
+    '__codex_canonical_transcript_v4__',
+    '__pi_canonical_transcript_v4__',
   ]);
 });

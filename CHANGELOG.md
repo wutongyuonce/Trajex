@@ -12,6 +12,7 @@
 
 ### Changed
 
+- 统一 Claude、Codex 与 Pi 的工具结果投影：`messages.text` 只保留最多 1,000 字符的首尾预览，`tool_results.content` 保留最多 10,000 字符的首尾内容，并通过 v4 canonical marker 自动重建旧投影。
 - 统一 persist 的撤回语义：`retractSessionIds` 在消费 record generator 前清理旧 session 投影，保留 `memories`；空 tombstone unit 只负责触发该清理。
 - Claude 继续按 cursor 增量读取，遇到 cursor 之后的损坏 JSONL 行时提交此前的有效前缀，并把 cursor 停在损坏行之前；Codex、Pi 对变更文件全量重放，但同样只提交损坏行之前的有效前缀。
 - Claude 在检测到文件被重写/截断、旧 cursor 超过当前文件长度时回退到文件开头重新解析，避免把新文件误当作已消费内容。

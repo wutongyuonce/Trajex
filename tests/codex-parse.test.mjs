@@ -83,6 +83,27 @@ test('codex parse() yields a deduped, tool-aware record stream with a total sess
   assert.equal(sessions[0].git_branch, 'main');
 });
 
+test('codex keeps a small head-tail message preview and a bounded head-tail tool result', () => {
+  const output = `${'head '.repeat(3000)}middle ${'tail '.repeat(3000)}`;
+  const path = writeFixture([
+    { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: META },
+    { type: 'response_item', timestamp: '2026-06-10T10:00:01Z', payload: { type: 'function_call_output', call_id: 'call_1', output } },
+  ]);
+
+  const { values } = drain(parse({ key: path, sessionId: '' }, null));
+  const message = values.find(record => record.kind === 'message' && record.content_type === 'tool_result');
+  const result = values.find(record => record.kind === 'tool_result');
+
+  assert.ok(message.text.length <= 1000);
+  assert.match(message.text, /^\[tool result: 30007 chars; showing head and tail\]/);
+  assert.match(message.text, /head head head/);
+  assert.match(message.text, /tail tail tail $/);
+  assert.equal(result.content.length, 10000);
+  assert.match(result.content, /^head head head/);
+  assert.match(result.content, /\.\.\.\[truncated middle\]\.\.\./);
+  assert.match(result.content, /tail tail tail $/);
+});
+
 test('codex full replay stops at a malformed line and returns the valid prefix', () => {
   const path = writeFixture([
     { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: META },

@@ -42,6 +42,8 @@ Codex 和 Claude Code 根据当前真实文件测试得出的 schema 进行处�
 
 Trajex 会把每个 provider 都索引到同一个 SQLite schema 中，而不是维护彼此分离的数据库。数据行会带有 `source` 值；非 Claude 的 ID 会带 provider 前缀，因此不会冲突。
 
+工具结果使用三层投影：`messages.text` 只保留最多 1,000 字符的首尾预览，供 `thread()` 与 FTS 检索；`tool_results.content` 保留最多 10,000 字符，超长时保留首部与尾部；需要完整证据时再通过 `raw()` 分段回读原始 transcript。因此工具结果的中间内容不进入 `messages_fts`。
+
 | Provider | 内部 id 形态 | 原因 |
 |---|---|---|
 | Claude | `e9d4f0a1-…`（原样） | 原生格式 |

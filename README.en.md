@@ -42,6 +42,8 @@ Codex and Claude Code are processed according to schemas derived from testing re
 
 Trajex indexes every provider into the same SQLite schema rather than maintaining separate databases. Rows carry a `source` value; non-Claude IDs are provider-prefixed to avoid collisions.
 
+Tool results use a three-tier projection: `messages.text` keeps at most a 1,000-character head-tail preview for `thread()` and FTS; `tool_results.content` keeps at most 10,000 characters, preserving both the beginning and end when truncated; `raw()` reads the original transcript in windows when complete evidence is required. The middle of a long tool result is therefore not indexed by `messages_fts`.
+
 | Provider | Internal id shape | Reason |
 |---|---|---|
 | Claude | `e9d4f0a1-…` (as-is) | Native format |

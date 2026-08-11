@@ -18,7 +18,7 @@ import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
 
 import {
   extractText, extractContentType, extractMessageIsMeta, isSkillInstructions,
-  filePath, trunc, truncJson, readLines, discoverJsonlFiles, isDir,
+  filePath, trunc, truncJson, truncToolResult, toolResultPreview, readLines, discoverJsonlFiles, isDir,
 } from '../parsing.ts';
 
 import type {
@@ -41,7 +41,7 @@ function cursorToSkip(cursor: Cursor): number {
 }
 
 export const name = 'claude';
-export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v3__';
+export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v4__';
 
 interface ClaudeWorkflowUnitMeta {
   readonly kind: 'workflow';
@@ -351,8 +351,18 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     if (obj.version) sm.version = obj.version;
     sm.n++;
 
-    const text = extractText(msg.content);
     const rawContentType = extractContentType(msg.content);
+    const toolResults: Array<{ block: any; content: string }> = obj.type === 'user' && Array.isArray(msg.content)
+      ? msg.content.flatMap((block: any) => {
+          if (block.type !== 'tool_result' || !block.tool_use_id) return [];
+          const content = typeof block.content === 'string' ? block.content
+            : Array.isArray(block.content) ? block.content.map((item: any) => item.text || '').join('\n') : '';
+          return [{ block, content }];
+        })
+      : [];
+    const text = rawContentType === 'tool_result'
+      ? toolResultPreview(toolResults.map(({ content }) => content).join('\n'))
+      : extractText(msg.content);
     const isMeta = extractMessageIsMeta(obj, text);
     const contentType = isMeta && isSkillInstructions(text) ? 'skill_instructions' : rawContentType;
     const aid = isSubagent ? (unit.agentId ?? null) : (obj.agentId || null);
@@ -376,13 +386,8 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
       }
     }
 
-    if (obj.type === 'user' && Array.isArray(msg.content)) {
-      for (const b of msg.content) {
-        if (b.type !== 'tool_result' || !b.tool_use_id) continue;
-        const rt = typeof b.content === 'string' ? b.content
-          : Array.isArray(b.content) ? b.content.map((c: any) => c.text || '').join('\n') : '';
-        records.push({ kind: 'tool_result', tool_use_id: b.tool_use_id, message_uuid: obj.uuid, session_id: sid, content: trunc(rt), file_path: obj.toolUseResult?.filePath || null, is_error: b.is_error ? 1 : 0 });
-      }
+    for (const { block, content } of toolResults) {
+      records.push({ kind: 'tool_result', tool_use_id: block.tool_use_id, message_uuid: obj.uuid, session_id: sid, content: truncToolResult(content), file_path: obj.toolUseResult?.filePath || null, is_error: block.is_error ? 1 : 0 });
     }
   });
 

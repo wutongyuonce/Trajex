@@ -24,6 +24,7 @@ const CODEX_DIR = join(homedir(), '.codex');
 const PROJECTS_DIR = join(CLAUDE_DIR, 'projects');
 const CODEX_SESSIONS_DIR = join(CODEX_DIR, 'sessions');
 const TEXT_LIMIT = 10000;
+const TOOL_RESULT_PREVIEW_CHARS = 1000;
 
 type JsonRecord = Record<string, any>;
 type JsonValue = any;
@@ -67,6 +68,25 @@ interface CodexLineRecord {
 /** 截断超长字符串到 TEXT_LIMIT，避免把超长消息整体写入索引。 */
 function trunc(s: any): any {
   return typeof s === 'string' && s.length > TEXT_LIMIT ? s.slice(0, TEXT_LIMIT) : s;
+}
+
+/** 保留工具结果的大部分首部和少量尾部，便于同时查看输出与最终错误。 */
+function truncToolResult(s: any): any {
+  if (typeof s !== 'string' || s.length <= TEXT_LIMIT) return s;
+  const marker = '\n...[truncated middle]...\n';
+  const kept = TEXT_LIMIT - marker.length;
+  const head = Math.ceil(kept * 0.8);
+  return s.slice(0, head) + marker + s.slice(-(kept - head));
+}
+
+/** messages/FTS 仅保留工具结果的小型首尾预览；完整投影存在 tool_results。 */
+function toolResultPreview(s: any): any {
+  if (typeof s !== 'string' || s.length <= TOOL_RESULT_PREVIEW_CHARS) return s;
+  const header = `[tool result: ${s.length} chars; showing head and tail]\n`;
+  const marker = '\n...[preview middle omitted]...\n';
+  const kept = TOOL_RESULT_PREVIEW_CHARS - header.length - marker.length;
+  const head = Math.ceil(kept / 2);
+  return header + s.slice(0, head) + marker + s.slice(-(kept - head));
 }
 
 /** 递归截断 JSON 中所有超长字符串再序列化；存储工具入参/输出前的统一处理。 */
@@ -431,8 +451,8 @@ function codexToolOutput(payload: JsonRecord): string | null {
 }
 
 export {
-  CLAUDE_DIR, CODEX_DIR, PROJECTS_DIR, CODEX_SESSIONS_DIR, TEXT_LIMIT,
-  trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, isSkillInstructions, filePath, isDir, readLines,
+  CLAUDE_DIR, CODEX_DIR, PROJECTS_DIR, CODEX_SESSIONS_DIR, TEXT_LIMIT, TOOL_RESULT_PREVIEW_CHARS,
+  trunc, truncToolResult, toolResultPreview, truncJson, extractText, extractContentType, extractMessageIsMeta, isSkillInstructions, filePath, isDir, readLines,
   legacyProjectPathFromSlug, normalizeObservedCwd, projectSlugFromPath, inferProjectPath,
   discoverJsonlFiles, discoverCodexJsonlFiles,
   codexDbId, codexRawId, codexLineUuid, codexCallId, codexParentThreadId, codexIsChildThread, codexIsGuardianThread,

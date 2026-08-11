@@ -4,14 +4,14 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative } from 'node:path';
 
-import { projectSlugFromPath, trunc, truncJson } from '../parsing.ts';
+import { projectSlugFromPath, trunc, truncJson, truncToolResult, toolResultPreview } from '../parsing.ts';
 import type {
   Cursor, DiscoverContext, IndexUnit, IndexedSession, MessageRecord, ProviderAdapter,
   RawLookup, RawRecord, TranscriptRecord,
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v3__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v4__';
 
 type PiEntry = Record<string, any>;
 
@@ -336,8 +336,8 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (message.role === 'toolResult') {
       const text = textParts(message.content, 'text').join('\n');
-      const uuid = addMessage(entry, 'tool', text, 'tool_result', parentUuid, '', entryVisibility);
-      if (typeof message.toolCallId === 'string') records.push({ kind: 'tool_result', tool_use_id: piId(sessionId, message.toolCallId), message_uuid: uuid, session_id: sessionId, content: text, file_path: null, is_error: message.isError ? 1 : 0 });
+      const uuid = addMessage(entry, 'tool', toolResultPreview(text), 'tool_result', parentUuid, '', entryVisibility);
+      if (typeof message.toolCallId === 'string') records.push({ kind: 'tool_result', tool_use_id: piId(sessionId, message.toolCallId), message_uuid: uuid, session_id: sessionId, content: truncToolResult(text), file_path: null, is_error: message.isError ? 1 : 0 });
       continue;
     }
     if (message.role === 'bashExecution') addMessage(entry, 'tool', [message.command ? `$ ${message.command}` : '', message.output, message.exitCode ? `[exit code: ${message.exitCode}]` : ''].filter(value => typeof value === 'string' && value).join('\n'), 'bash', parentUuid, '', entryVisibility);

@@ -215,7 +215,7 @@ guardian 是子线程的特殊变体，标记在 `source.subagent.other`，见�
 | `agent_message` | 11 | 多 agent 消息（`author` / `recipient`），忽略 |
 | 其他 | — | 忽略 |
 
-工具调用与结果通过 `call_id` 关联：`tool_call.id = codex:<threadId>:<call_id>`，`tool_result.tool_use_id` 指向同一值。`output` 可能是字符串（`function_call_output`）或 block 数组（`custom_tool_call_output`）。
+工具调用与结果通过 `call_id` 关联：`tool_call.id = codex:<threadId>:<call_id>`，`tool_result.tool_use_id` 指向同一值。`output` 可能是字符串（`function_call_output`）或 block 数组（`custom_tool_call_output`）。结果 message 只保留最多 1,000 字符的首尾预览，`tool_results.content` 保留最多 10,000 字符的首尾内容。
 
 ```json
 {"timestamp":"2026-07-23T18:22:10.192Z","type":"response_item","payload":{

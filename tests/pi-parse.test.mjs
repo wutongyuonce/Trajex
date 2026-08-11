@@ -10,7 +10,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v3__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v4__');
   const root = mkdtempSync(join(tmpdir(), 'trajex-pi-'));
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -44,6 +44,30 @@ test('Pi indexes every tree branch and projects current context through visibili
     { source: 'branch_summary', content: 'abandoned branch summary' },
   ]);
   assert.deepEqual(records.find(record => record.kind === 'session' && record.id === SESSION_ID), { kind: 'session', id: SESSION_ID, title: 'Pi fixture', project: '-tmp-project', started_at: '2026-07-30T10:00:00.000Z', ended_at: '2026-07-30T10:00:07.000Z', git_branch: null, version: '3', message_count: 6, countMode: 'total', jsonl_path: path, source: 'pi' });
+});
+
+test('Pi keeps a small head-tail message preview and a bounded head-tail tool result', () => {
+  const root = mkdtempSync(join(tmpdir(), 'trajex-pi-tool-result-'));
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'session.jsonl');
+  const output = `${'head '.repeat(3000)}middle ${'tail '.repeat(3000)}`;
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'long-result', timestamp: '2026-07-30T10:00:00.000Z', cwd: '/tmp/project' },
+    { type: 'message', id: 'r1', parentId: null, timestamp: '2026-07-30T10:00:01.000Z', message: { role: 'toolResult', toolCallId: 'call-1', content: [{ type: 'text', text: output }] } },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  const message = records.find(record => record.kind === 'message' && record.content_type === 'tool_result');
+  const result = records.find(record => record.kind === 'tool_result');
+
+  assert.ok(message.text.length <= 1000);
+  assert.match(message.text, /^\[tool result: 30007 chars; showing head and tail\]/);
+  assert.match(message.text, /tail tail tail $/);
+  assert.equal(result.content.length, 10000);
+  assert.match(result.content, /\.\.\.\[truncated middle\]\.\.\./);
+  assert.match(result.content, /tail tail tail $/);
 });
 
 test('Pi discovers standard top-level v3 sessions and ignores a torn final line', () => {

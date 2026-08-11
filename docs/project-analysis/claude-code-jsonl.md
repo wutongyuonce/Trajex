@@ -130,7 +130,7 @@ Trajex 对主 transcript 使用 `mtime:lines` cursor：已成功消费的行会�
 }
 ```
 
-Trajex 用 `tool_use.id` / `tool_result.tool_use_id` 关联两者。`StructuredOutput` 也属于普通 `tool_use`：其 `input` 是结构化结果，后续 `tool_result` 是运行时确认。`input_json` 和结果文本会受索引长度上限限制；它们不是永久、无损的原始存档。
+Trajex 用 `tool_use.id` / `tool_result.tool_use_id` 关联两者。`StructuredOutput` 也属于普通 `tool_use`：其 `input` 是结构化结果，后续 `tool_result` 是运行时确认。纯 `tool_result` message 的 `text` 只保留最多 1,000 字符的首尾预览，`tool_results.content` 保留最多 10,000 字符的首尾内容；它们不是永久、无损的原始存档。
 
 仅 `Read`、`Edit`、`Write`、`NotebookEdit` 会从 tool input 提取标准化 `file_path`。其他工具仍写入 `tool_calls`，但 `file_path` 为 `null`。
 

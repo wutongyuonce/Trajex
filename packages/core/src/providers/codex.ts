@@ -19,7 +19,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative } from 'node:path';
 
 import {
-  trunc, truncJson, readLines,
+  trunc, truncJson, truncToolResult, toolResultPreview, readLines,
   discoverCodexJsonlFiles, normalizeObservedCwd, projectSlugFromPath,
   codexRawId, codexDbId, codexCallId, codexLineUuid, codexIsChildThread,
   codexIsGuardianThread, codexUsage,
@@ -40,7 +40,7 @@ import type {
 } from './types.ts';
 
 export const name = 'codex';
-export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v3__';
+export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v4__';
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
 
@@ -321,8 +321,9 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (['function_call_output', 'custom_tool_call_output', 'tool_search_output'].includes(payload.type) && payload.call_id) {
       const toolId = codexCallId(threadRawId, payload.call_id) as string;
-      const content = trunc(codexToolOutput(payload) || '');
-      const resultUuid = insertMessage({ uuid: lineUuid(currentLine), type: 'user', role: 'user', text: content, contentType: 'tool_result', timestamp: ts });
+      const rawContent = codexToolOutput(payload) || '';
+      const content = truncToolResult(rawContent);
+      const resultUuid = insertMessage({ uuid: lineUuid(currentLine), type: 'user', role: 'user', text: toolResultPreview(rawContent), contentType: 'tool_result', timestamp: ts });
       out.push({ kind: 'tool_result', tool_use_id: toolId, message_uuid: resultUuid, session_id: sessionId, content, file_path: null, is_error: payload.is_error ? 1 : 0 });
     }
   }

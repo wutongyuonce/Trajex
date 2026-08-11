@@ -83,6 +83,27 @@ test('claude parse() yields the expected record stream for a main session', () =
   assert.equal(ret, `${statSync(path).mtimeMs}:6`);
 });
 
+test('claude keeps a small head-tail message preview and a bounded head-tail tool result', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'trajex-claude-tool-result-'));
+  const path = join(dir, 'sid-long.jsonl');
+  const output = `${'head '.repeat(3000)}middle ${'tail '.repeat(3000)}`;
+  writeFileSync(path, `${JSON.stringify({
+    uuid: 'result-message', type: 'user', timestamp: '2026-06-10T10:00:00Z',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: output }] },
+  })}\n`);
+
+  const { values } = drain(parse({ key: path, sessionId: 'sid-long' }, null));
+  const message = values.find(record => record.kind === 'message' && record.content_type === 'tool_result');
+  const result = values.find(record => record.kind === 'tool_result');
+
+  assert.ok(message.text.length <= 1000);
+  assert.match(message.text, /^\[tool result: 30007 chars; showing head and tail\]/);
+  assert.match(message.text, /tail tail tail $/);
+  assert.equal(result.content.length, 10000);
+  assert.match(result.content, /\.\.\.\[truncated middle\]\.\.\./);
+  assert.match(result.content, /tail tail tail $/);
+});
+
 test('claude parse() emits no session record for a subagent transcript', () => {
   const path = writeFixture();
   const { values } = drain(parse({ key: path, sessionId: 'sid-x', isSubagent: true, agentId: 'agent-7' }, null));

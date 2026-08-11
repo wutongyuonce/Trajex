@@ -179,6 +179,9 @@ A message in the conversation. The `message` field contains an `AgentMessage`.
 {"type":"message","id":"b2c3d4e5","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}],"provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop"}}
 {"type":"message","id":"c3d4e5f6","parentId":"b2c3d4e5","timestamp":"2024-12-03T14:00:03.000Z","message":{"role":"toolResult","toolCallId":"call_123","toolName":"bash","content":[{"type":"text","text":"output"}],"isError":false}}
 ```
+
+Trajex 将 `toolResult` 投影为一条 `content_type: "tool_result"` message 和一条独立 `tool_result` record。message 只保留最多 1,000 字符的首尾预览，供 `thread()` 与 FTS 使用；`tool_results.content` 保留最多 10,000 字符的首尾内容。
+
 ### ModelChangeEntry
 Emitted when the user switches models mid-session.
 ```json

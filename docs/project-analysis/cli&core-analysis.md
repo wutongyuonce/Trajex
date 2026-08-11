@@ -630,7 +630,7 @@ type TranscriptRecord =
 | `parent_uuid`                    | 父消息 ID；`null` 表示根节点。`query.trace()` 和 context 会用它回溯对话链。 |
 | `timestamp`                      | 消息时间；可为 `null`。                                      |
 | `role`                           | 对话角色，如 user、assistant、developer；可为 `null`。       |
-| `text`                           | 可检索、可展示的文本投影；可能截断、可能为 `null`。原始完整内容应通过 `raw()` 回源。 |
+| `text`                           | 可检索、可展示的文本投影；工具结果最多保留 1,000 字符的首尾预览，其他消息也可能截断或为 `null`。原始完整内容应通过 `raw()` 回源。 |
 | `content_type`                   | 内容性质，如 text、thinking、tool_use、tool_result、skill_instructions、unknown。它帮助详情层决定怎样组合/渲染。 |
 | `is_meta`                        | `0 | 1`，系统自动插入、命令包装、环境提示、skill 指令等“元消息”。整数而非 boolean 是 SQLite 友好表示。 |
 | `visibility`                     | `visible` / `inactive` / `hidden`；inactive 是保留但不在当前上下文的分支证据，hidden 是来源明确抑制展示的内容；二者默认展示都会排除。 |
@@ -665,7 +665,7 @@ type TranscriptRecord =
 | `tool_use_id`         | 对应的工具调用，关联 `tool_calls.id`。                       |
 | `message_uuid`        | 承载结果的消息，常是 Claude 的 user/tool-result 消息，也可能是其他 Provider 关联出的消息。 |
 | `session_id`          | 所属会话。                                                   |
-| `content`             | 工具返回文本；可能由索引策略截断。                           |
+| `content`             | 工具返回文本；最多 10,000 字符，超长时保留首部与尾部。             |
 | `file_path`           | 结果关联的文件路径；可为空。                                 |
 | `is_error`            | `0 | 1` 错误标记。`query.failures()` 会结合它与 shell 退出信息定位失败。 |
 
@@ -1296,11 +1296,11 @@ message 是承载 Claude 工具调用的锚点，Claude 的工具调用不是单
 
 > 可以发现，除了 `tool_result` 记录之外，工具结果还会保存一条 `content_type = "tool_result"` 的 user `message`，目的是：
 >
-> 1. 进全文索引（最关键） FTS 只挂在 messages 和 memories 上， schema.sql 的 messages_fts 只索引 messages.text ， tool_results 没有任何 FTS 索引 。工具输出里往往藏着最关键的证据——Bash 报错、Read 的文件内容、lint 结果。如果只存 tool_results ，这些内容就永远搜不到；存成 message 后，"Exit code 1" 或某段报错文本就能命中检索。
+> 1. 提供有界的全文索引：FTS 只挂在 messages 和 memories 上，`messages_fts` 会索引工具结果最多 1,000 字符的首尾预览。Bash 起始输出和尾部报错仍可命中，中间内容需要显式查 `tool_results`。
 >
 > 2. 保留会话链/时间线位置 messages 行带 timestamp 、 session_id 、 parent_uuid 、 cwd 、 model 。原文链是 assistant(tool_use) → user(tool_result) ，保留 message 行才能维持 parent_uuid 链完整，让 query.ts 的 context() / trace() 能回溯"这次工具调用之后发生了什么"。 tool_results 表只有 content + tool_use_id，没有这些元数据。
 >
-> 3. 统一检索语义 search() / thread() 都只读 messages ，Agent 脚本写 search(...) 就能命中工具输出，或直接过滤 content_type='tool_result' 查"某次任务的失败输出"，不需要感知 tool_results 表的存在。
+> 3. 统一预览检索语义：`search()` / `thread()` 只读 messages，Agent 可搜索或过滤 `content_type='tool_result'` 获得有界预览；预览不足时再以 `message_uuid` / `tool_use_id` 查 `tool_results`。
 >
 > 4. 统计计数 message_count 等聚合统计依赖 message 行计数。
 >
@@ -1792,7 +1792,7 @@ response_item.*_call
   └── tool_call                                ← 名称、输入、与 tool_result 的关联
 ```
 
-`tool_result` 同时保留规范结果记录，并投影为 user `message`，与 Claude 的查询和 FTS 语义统一。
+`tool_result` 同时保留最多 10,000 字符的首尾结果，并投影为最多 1,000 字符的 user `message` 首尾预览，与 Claude/Pi 的查询和 FTS 语义统一。
 
 #### 原文回查 `rawCodex()`：从规范 UUID 精确回读 JSONL 行
 
@@ -2115,7 +2115,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v3__" / "__codex_canonical_transcript_v3__" / "__pi_canonical_transcript_v3__"
+jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcript_v4__" / "__pi_canonical_transcript_v4__"
               ↑ 不是路径，而是状态 key
 ```
 

@@ -20,7 +20,7 @@ import { acquireWriterLease, writerLockPathFor } from './writer-lease.ts';
 import { runRetryableWriteTransaction, isBeginBusyFailure, hasUnusableTransaction } from './write-coordinator.ts';
 import { createBuiltinProviderRegistry } from './providers/builtins.ts';
 import { coreSchemaNeedsMigration } from './schema-migrations.ts';
-import type { NodeSqliteDb, SqliteRow } from './sqlite-types.ts';
+import type { NodeSqliteDb, SqliteDb, SqliteRow } from './sqlite-types.ts';
 
 /** 单个失败 unit 的摘要：路径 + 错误消息 + 可选 trajex 诊断。 */
 interface SkippedFile {
@@ -59,6 +59,36 @@ function refreshSessionProjectPaths(db: NodeSqliteDb): void {
     const projectPath = inferProjectPath(session.project, cwds);
     if (projectPath) update.run(projectPath, session.id);
   }
+}
+
+/**
+ * 补齐 workflow → Workflow tool_use 的延迟关联。
+ * workflow JSON 可能先于主 transcript 的 tool_result 入库；此时首次解析只能留下 null。
+ * finalize 时 tool_results 已经是完整投影，因此用 run_id 做一次幂等补偿。
+ */
+function healWorkflowParentLinks(db: SqliteDb): void {
+  db.prepare(`
+    UPDATE workflows
+    SET parent_tool_use_id = (
+      SELECT tr.tool_use_id
+      FROM tool_results tr
+      JOIN tool_calls tc ON tc.id = tr.tool_use_id AND tc.session_id = tr.session_id
+      WHERE tr.session_id = workflows.session_id
+        AND tc.name = 'Workflow'
+        AND instr(tr.content, workflows.run_id) > 0
+      ORDER BY tr.rowid
+      LIMIT 1
+    )
+    WHERE parent_tool_use_id IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM tool_results tr
+        JOIN tool_calls tc ON tc.id = tr.tool_use_id AND tc.session_id = tr.session_id
+        WHERE tr.session_id = workflows.session_id
+          AND tc.name = 'Workflow'
+          AND instr(tr.content, workflows.run_id) > 0
+      )
+  `).run();
 }
 
 const BUILD_DEBOUNCE_MS = 30000;
@@ -214,6 +244,7 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
       try {
         runRetryableWriteTransaction(txDb, () => {
           refreshSessionProjectPaths(db);
+          healWorkflowParentLinks(db);
           db.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
           rebuildMemoryFts(db);
           db.prepare("INSERT OR REPLACE INTO index_state (jsonl_path, mtime, lines_processed) VALUES ('__last_build__', ?, 0)").run(Date.now());
@@ -234,4 +265,4 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
   }
 }
 
-export { buildIndex, ensureReadableSchema, inferProjectPath, refreshSessionProjectPaths, shouldSkipBuild };
+export { buildIndex, ensureReadableSchema, healWorkflowParentLinks, inferProjectPath, refreshSessionProjectPaths, shouldSkipBuild };

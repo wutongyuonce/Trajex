@@ -446,6 +446,8 @@ indexer.ts / buildIndex()
   -> runRetryableWriteTransaction(finalize)
     -> indexer.ts / refreshSessionProjectPaths()
       -> parsing.ts / inferProjectPath()
+    -> indexer.ts / healWorkflowParentLinks()
+      -> workflows.run_id → tool_results.content → tool_calls.id
     -> schema.sql：messages_fts rebuild
     -> db.ts / rebuildMemoryFts()
     -> provider-indexing.ts / writeProviderIndexMarkers() // 只写完全无失败且未 stopped 的 Provider marker，避免错误地宣布新投影已完成。
@@ -456,6 +458,7 @@ indexer.ts / buildIndex()
 finalize 只在所有 unit 已提交或被明确跳过后运行；它失败会使 build 失败，不能被当成普通坏文件吞掉。
 
 * `refreshSessionProjectPaths()` 聚合已写入的 `messages.cwd`，再由 `inferProjectPath()` 按出现频率和首次出现顺序选择可靠路径，必要时才回退 slug 反解。
+* `healWorkflowParentLinks()` 处理 Workflow JSON 早于主 transcript `tool_result` 入库的竞态：只对 `parent_tool_use_id IS NULL` 的行，按同一 session 的唯一 `run_id` 找 `Workflow` tool call 并补链；找不到时保持 `NULL`。
 
   > **为什么不直接用文件名 slug？**
   >
@@ -716,6 +719,8 @@ type TranscriptRecord =
 | `agent_count`                  | Provider 报告的 agent 数量，持久化层直接写入该值；当前不会根据 `workflow_agents` 重新计算。 |
 | `duration_ms` / `total_tokens` | 总耗时、总 token；未知为 `null`。                            |
 | `status`                       | 如 running、completed、failed。                              |
+
+Workflow 的父边最终指向 `tool_calls.id`，不是 `tool_results`。Provider 首次解析 workflow JSON 时通过主 transcript 的 `tool_result.tool_use_id` 建立这条边；如果两个文件到达顺序造成首次解析时缺少结果，finalize 阶段的 `healWorkflowParentLinks()` 会在所有 unit 写入后用 `run_id` 再补一次。workflow 名称不参与关联。
 | `workflow_name`                | workflow 名称；可为空。                                      |
 
 8、**`WorkflowAgentRecord` -> `workflow_agents`**

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-import { inferProjectPath, refreshSessionProjectPaths, shouldSkipBuild } from '../packages/core/src/indexer.ts';
+import { healWorkflowParentLinks, inferProjectPath, refreshSessionProjectPaths, shouldSkipBuild } from '../packages/core/src/indexer.ts';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -82,5 +82,26 @@ test('shouldSkipBuild treats a fresh heartbeat alone as daemon write ownership',
 
   assert.equal(shouldSkipBuild(db, { now: 110000 }).skip, false);
   assert.equal(shouldSkipBuild(db, { now: 200000 }).skip, false);
+  db.close();
+});
+
+test('healWorkflowParentLinks repairs delayed workflow results without false matches', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`
+    CREATE TABLE tool_calls (id TEXT PRIMARY KEY, session_id TEXT, name TEXT);
+    CREATE TABLE tool_results (tool_use_id TEXT PRIMARY KEY, session_id TEXT, content TEXT);
+    CREATE TABLE workflows (run_id TEXT PRIMARY KEY, session_id TEXT, parent_tool_use_id TEXT);
+  `);
+  db.prepare('INSERT INTO tool_calls VALUES (?, ?, ?)').run('wf-call', 'sid-1', 'Workflow');
+  db.prepare('INSERT INTO tool_results VALUES (?, ?, ?)').run('wf-call', 'sid-1', 'Run ID: run-1');
+  db.prepare('INSERT INTO workflows VALUES (?, ?, ?)').run('run-1', 'sid-1', null);
+  db.prepare('INSERT INTO workflows VALUES (?, ?, ?)').run('orphan', 'sid-1', null);
+  db.prepare('INSERT INTO tool_calls VALUES (?, ?, ?)').run('bash-call', 'sid-1', 'Bash');
+  db.prepare('INSERT INTO tool_results VALUES (?, ?, ?)').run('bash-call', 'sid-1', 'mentions orphan');
+
+  healWorkflowParentLinks(db);
+
+  assert.equal(db.prepare('SELECT parent_tool_use_id FROM workflows WHERE run_id=?').get('run-1').parent_tool_use_id, 'wf-call');
+  assert.equal(db.prepare('SELECT parent_tool_use_id FROM workflows WHERE run_id=?').get('orphan').parent_tool_use_id, null);
   db.close();
 });

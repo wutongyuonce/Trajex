@@ -216,4 +216,9 @@ JSONL 与主会话按同一规则产出 message、tool call、tool result、summ
 
 workflow 子代理 JSONL 按普通子代理消息规则解析，但同名 `.meta.json` 只补充 `workflow_agent.agent_type` 和 `description`。workflow JSON 提供该 agent 的阶段、模型、状态、耗时、token 和工具调用数。两路记录按相同 `agent_id` upsert 合并。
 
-Trajex 会回扫主 transcript：先找名为 `Workflow` 的 assistant `tool_use`，再在对应 user `tool_result` 的文本中匹配 `runId` 或 workflow 名称，从而写入 `workflows.parent_tool_use_id`。匹配不到并不阻止 workflow 入库，只会得到 `null`。
+Trajex 的 Workflow 关联分两阶段完成：
+
+1. 解析 `workflows/<run-id>.json`，读取 `runId`，并回扫对应的主 transcript。
+2. 在主 transcript 中先收集名为 `Workflow` 的 assistant `tool_use`，再检查对应 user `tool_result`。只有 `tool_result.content` 包含该唯一 `runId` 时，才使用 `tool_result.tool_use_id` 写入 `workflows.parent_tool_use_id`。因此 Workflow 最终挂在 `tool_use` 上，`tool_result` 只是中间凭证；workflow 名称不参与关联，避免同名 workflow 串线。
+
+一次索引中，workflow JSON 和主 transcript 是两个独立 unit，文件到达顺序也可能不同。如果 workflow JSON 先入库，而主 transcript 的 `tool_result` 尚未写入，第一次解析会诚实地留下 `parent_tool_use_id = null`。每次索引 finalize 时，Trajex 会在所有 unit 写入完成后执行一次幂等补偿：从 `workflows.run_id` 匹配同 session 的 `tool_results.content`，并且只接受对应 `tool_calls.name = 'Workflow'` 的结果，再把 `tool_results.tool_use_id` 回填到 `workflows.parent_tool_use_id`。找不到唯一 run ID 的记录继续保持 `null`，不猜测、不按名称兜底。

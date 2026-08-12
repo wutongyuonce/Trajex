@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { createBuiltinProviderRegistry } from '../../../packages/core/src/providers/builtins.ts';
+import { healWorkflowParentLinks } from '../../../packages/core/src/indexer.ts';
 import type { ProviderRegistry } from '../../../packages/core/src/providers/registry.ts';
 import {
   assertRebuildRootsAvailable,
@@ -429,6 +430,7 @@ function buildIndex({
       try {
         runRetryableWriteTransaction(txDb, () => {
           refreshSessionProjectPaths(db);
+          healWorkflowParentLinks(db);
           if (messageFtsTriggersDropped) installSchema(db, schemaPath);
           ftsRebuilt = ensureFtsReady(db, { force });
           writeIndexMarker(db, '__last_build__');

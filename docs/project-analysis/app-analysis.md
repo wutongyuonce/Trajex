@@ -280,7 +280,7 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 4. force/canonical rebuild 先预检现有 Provider 来源根，通过后才清理会话派生表（保留 memories）
 5. 逐项执行 provider plan
    └─ 每个 unit 通过可重试 SQLite 写事务进入数据库
-6. 一个 finalize 事务：补 project_path、保证 FTS、写索引 marker
+6. 一个 finalize 事务：补 project_path、补 Workflow 父链接、保证 FTS、写索引 marker
 7. PASSIVE WAL checkpoint，关闭本次 worker 的数据库连接
 8. 返回 affectedSessionIds，供 UI 精确刷新
 ```
@@ -288,6 +288,8 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 几个容易混淆的点：
 
 - **writer lease** 在独立的 `writer.lock.sqlite` 上保证同一时刻只有一个索引写者，避免 App 与 CLI 抢写。
+
+Workflow 的 `parent_tool_use_id` 最终指向 `tool_calls.id`。App finalize 会调用 Core 的 `healWorkflowParentLinks()`：当 workflow JSON 先入库、主 transcript 的 `tool_result` 后到时，按同一 session 的唯一 `run_id` 从 `tool_results.content` 找到对应的 `Workflow` tool call，并把 `tool_results.tool_use_id` 回填；无法确认时保持 `NULL`，不按 workflow 名称猜测。
 - **deferred 不是失败**。遇到锁忙时 service 会稍后再试，不把数据库并发看成解析错误。
 - `changedPaths` 让 provider plan 尽可能只处理变化的单元；手动 rebuild 的 `force: true` 才走全量重建。
 - force 重建会先读取旧库的 Provider provenance 并预检现有来源根；任一根不可用时在清理前整体失败。通过后才建立临时数据库、复制旧库的 `memories`，成功后原子替换主数据库。因此根目录故障或中途失败都不会替换当前可用索引。

@@ -24,7 +24,9 @@ Parses JSONL history from different providers — Codex, Claude Code, Pi — int
 
 ## Acknowledgements
 
-Trajex is a fork product of [tommy0103/obelisk](https://github.com/tommy0103/obelisk). It substantially reworks the Index core, adds Pi session support and optimize the desktop app according to my taste, including light/dark theme switch, a Codex-like vertical progress rail and local-file link previews.
+Trajex is derived from [tommy0103/obelisk](https://github.com/tommy0103/obelisk), based on the upstream `07f975d` snapshot dated 2026-07-22. It substantially reworks and streamlines the index core, fixes several bugs, and optimizes the desktop app, including its light/dark theme switch, Codex-like vertical progress rail, and local-file link previews.
+
+The implementation foundation for Pi session support comes from upstream [PR #4](https://github.com/tommy0103/obelisk/pull/4); the current session identity, tombstone, and compaction / retained-tail semantics come from upstream [PR #23](https://github.com/tommy0103/obelisk/pull/23). In the future, Trajex may sync subsequent changes from [obelisk](https://github.com/tommy0103/obelisk) where doing so preserves existing functionality and compatibility. We thank the obelisk developers for their contributions to agent infrastructure and agent engineering practice.
 
 ## Two Sides of One Index
 

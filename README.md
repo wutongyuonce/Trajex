@@ -24,7 +24,9 @@
 
 ## Acknowledgements
 
-Trajex 来自 [tommy0103/obelisk](https://github.com/tommy0103/obelisk)。它在此基础上进行了索引核心 core 的改写与精简，修复了一些 bug，增加了 Pi 会话支持，并优化了桌面应用，包括白天/黑夜主题切换、Codex-like 的纵向进度条和本地文件链接预览。
+Trajex 源自 [tommy0103/obelisk](https://github.com/tommy0103/obelisk)，基于上游 `07f975d`（2026-07-22）快照发展而来。Trajex 在此基础上对索引核心进行了改写与精简，修复了一些 bug，并优化了桌面应用，包括白天/黑夜主题切换、Codex-like 的纵向进度条和本地文件链接预览。
+
+Pi 会话支持的实现骨架来自上游 [PR #4](https://github.com/tommy0103/obelisk/pull/4)；当前会话身份、tombstone 以及 compaction / retained tail 等设计语义来自上游 [PR #23](https://github.com/tommy0103/obelisk/pull/23)。未来 Trajex 可能会在不破坏现有功能与兼容性的前提下，同步 [obelisk](https://github.com/tommy0103/obelisk) 的后续改动。感谢 obelisk 的开发者为 Agent 基础设施和智能体工程实践所作出的贡献。
 
 ## 同一个索引的两面
 

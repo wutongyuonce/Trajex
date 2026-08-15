@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5c: exercises the full codex buildIndex path (discover → codex.parse →
 // persist) for both a fresh full build and an incremental rebuild after append.

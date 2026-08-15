@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * 原始日志解析公共辅助模块。
  *

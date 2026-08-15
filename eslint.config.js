@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Flat ESLint config for the Trajex root (Core + CLI + packaging + tests).
 // Scope: the root ESM/TS sources, including packages/core/src/ and
 // packages/cli/src/. The Electron app has its own package and toolchain and is

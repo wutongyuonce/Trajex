@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5c-2 golden test: pins the codex adapter's parse() record stream.
 // Binding-independent (no database). Covers the event_msg↔response_item dedup,

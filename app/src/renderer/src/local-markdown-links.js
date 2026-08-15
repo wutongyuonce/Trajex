@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 const HOVER_DELAY_MS = 300;
 const HIDE_DELAY_MS = 120;
 const cache = new Map();

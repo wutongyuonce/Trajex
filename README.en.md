@@ -28,6 +28,10 @@ Trajex is derived from [tommy0103/obelisk](https://github.com/tommy0103/obelisk)
 
 The implementation foundation for Pi session support comes from upstream [PR #4](https://github.com/tommy0103/obelisk/pull/4); the current session identity, tombstone, and compaction / retained-tail semantics come from upstream [PR #23](https://github.com/tommy0103/obelisk/pull/23). In the future, Trajex may sync subsequent changes from [obelisk](https://github.com/tommy0103/obelisk) where doing so preserves existing functionality and compatibility. We thank the obelisk developers for their contributions to agent infrastructure and agent engineering practice.
 
+## License and copyright
+
+Trajex is distributed under the [GNU AGPL-3.0-only](LICENSE). Copyright in code derived from Obelisk belongs to `tommy0103 and contributors`; Trajex modifications and additions are copyright `wutongyuonce and contributors`. Derivative works must retain applicable copyright and SPDX license notices.
+
 ## Two Sides of One Index
 
 Trajex has two sides sharing the same SQLite index:

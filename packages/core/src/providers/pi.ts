@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Pi JSONL session adapter. One JSONL file is one Pi session. */
 import { readFileSync, readdirSync, statSync, type Dirent } from 'node:fs';
 import { createHash } from 'node:crypto';

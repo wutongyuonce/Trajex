@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5b-2b: verifies incremental (resume) indexing through the full rewired
 // buildIndex path (needsReindex → cursor → claude.parse → persist). A force

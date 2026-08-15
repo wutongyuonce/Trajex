@@ -9,6 +9,7 @@
  * 已打开的 SQLite 连接，不负责索引调度或 VM 执行。
  */
 // Query and attune sandbox helpers for the Core package.
+import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { isAbsolute, normalize, resolve, sep } from 'node:path';
 import { createBuiltinProviderRegistry } from './providers/builtins.ts';
@@ -617,7 +618,7 @@ function createQueryApi(
 /**
  * 创建记忆层的最小写 API。与查询 API 分开，确保 executeAttune() 才能获得写能力。
  */
-function createAttuneApi(db: SqliteDb) {
+function createAttuneApi(db: SqliteDb, runMutation: <T>(work: () => T) => T = work => work()) {
   const resolveMemoryPath = (memoryPath: string, sessionId?: string): string => {
     let base = null;
     if (sessionId) {
@@ -636,18 +637,31 @@ function createAttuneApi(db: SqliteDb) {
     return resolved;
   };
 
-  /** 写入一条记忆（INSERT OR REPLACE），返回新记录的关键字段。 */
+  /** 写入一条记忆；主键冲突时生成新 UUID，绝不覆盖已有记忆。 */
   const remember = ({ path: memoryPath, session_id, message_start, message_end, summary, project }: RememberInput) => {
     if (!memoryPath || !summary) throw new Error('remember() requires path and summary');
     assertEnglishMemoryText(summary, 'remember() summary');
     const normalizedPath = resolveMemoryPath(memoryPath, session_id);
-    const id = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const proj = project || (session_id
       ? db.prepare('SELECT project FROM sessions WHERE id=?').get(session_id)?.project || null
       : null);
     const created_at = new Date().toISOString();
-    db.prepare('INSERT OR REPLACE INTO memories (id, session_id, project, message_start, message_end, path, summary, created_at) VALUES (?,?,?,?,?,?,?,?)').run(
-      id, session_id || null, proj, message_start || null, message_end || null, normalizedPath, summary, created_at);
+    let id = `mem-${randomUUID()}`;
+    runMutation(() => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          db.prepare('INSERT INTO memories (id, session_id, project, message_start, message_end, path, summary, created_at) VALUES (?,?,?,?,?,?,?,?)').run(
+            id, session_id || null, proj, message_start || null, message_end || null, normalizedPath, summary, created_at);
+          return;
+        } catch (error) {
+          if (attempt < 2 && (error as { errcode?: unknown }).errcode === 1555) {
+            id = `mem-${randomUUID()}`;
+            continue;
+          }
+          throw error;
+        }
+      }
+    });
     return { id, path: normalizedPath, project: proj, created_at };
   };
 
@@ -655,14 +669,16 @@ function createAttuneApi(db: SqliteDb) {
   const forget = ({ id, reason }: ForgetInput) => {
     const deletionReason = String(reason || '').trim();
     if (!id || !deletionReason) throw new Error('forget() requires id and reason');
-    const row = db.prepare('SELECT id, deleted_at, deleted_reason FROM memories WHERE id=?').get(id);
-    if (!row) throw new Error(`forget() memory not found: ${id}`);
-    if (row.deleted_at) {
-      return { id, deleted_at: row.deleted_at, deleted_reason: row.deleted_reason, already_deleted: true };
-    }
-    const deleted_at = new Date().toISOString();
-    db.prepare('UPDATE memories SET deleted_at=?, deleted_reason=? WHERE id=?').run(deleted_at, deletionReason, id);
-    return { id, deleted_at, deleted_reason: deletionReason };
+    return runMutation(() => {
+      const row = db.prepare('SELECT id, deleted_at, deleted_reason FROM memories WHERE id=?').get(id);
+      if (!row) throw new Error(`forget() memory not found: ${id}`);
+      if (row.deleted_at) {
+        return { id, deleted_at: row.deleted_at, deleted_reason: row.deleted_reason, already_deleted: true };
+      }
+      const deleted_at = new Date().toISOString();
+      db.prepare('UPDATE memories SET deleted_at=?, deleted_reason=? WHERE id=?').run(deleted_at, deletionReason, id);
+      return { id, deleted_at, deleted_reason: deletionReason };
+    });
   };
 
   return { remember, forget };

@@ -104,13 +104,5 @@ export async function executeQuery(scriptContent: string): Promise<unknown> {
  * 二次检查 daemon heartbeat，避免 CLI 在 App 接管写入时绕过所有权规则。
  */
 export async function executeAttune(scriptContent: string): Promise<unknown> {
-  assertReadableSchema();
-  const build = buildIndex() as { reason?: string } | undefined;
-  if (build?.reason === 'daemon_active') {
-    throw new Error('Trajex daemon owns index writes; attune is read-only until the daemon stops');
-  }
-  if (build?.reason === 'writer_busy' || build?.reason === 'database_busy') {
-    throw new Error('Trajex index writer is busy; attune was not applied');
-  }
   return runInSandboxWorker('attune', scriptContent);
 }

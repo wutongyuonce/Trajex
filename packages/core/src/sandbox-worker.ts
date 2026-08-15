@@ -5,10 +5,10 @@
 import { createContext, runInNewContext } from 'node:vm';
 import { parentPort, workerData } from 'node:worker_threads';
 
-import { DB_PATH, openDb, openReadDb, openWriterLeaseDb } from './db.ts';
+import { openAttuneDb, openReadDb } from './db.ts';
 import { createQueryApi, createAttuneApi } from './query.ts';
-import { shouldSkipBuild } from './indexer.ts';
-import { acquireWriterLease, writerLockPathFor } from './writer-lease.ts';
+import { nodeSqliteTransactionAdapter } from './tx.ts';
+import { runRetryableWriteTransaction } from './write-coordinator.ts';
 
 if (!parentPort) throw new Error('sandbox-worker must run as a worker thread');
 const port = parentPort;
@@ -25,37 +25,15 @@ async function runScript(api: Record<string, unknown>, script: string, timeoutMs
 }
 
 async function runAttune(script: string, timeoutMs: number): Promise<unknown> {
-  const lease = acquireWriterLease({
-    lockPath: writerLockPathFor(DB_PATH),
-    openDb: openWriterLeaseDb,
-    waitMs: 1000,
-  });
-  if (!lease) throw new Error('Trajex index writer is busy; attune was not applied');
-
-  let db: ReturnType<typeof openDb> | null = null;
+  const db = openAttuneDb();
   try {
-    const ownershipDb = openReadDb();
-    try {
-      if (shouldSkipBuild(ownershipDb, { ignoreRecentBuild: true }).reason === 'daemon_active') {
-        throw new Error('Trajex daemon owns index writes; attune is read-only until the daemon stops');
-      }
-    } finally {
-      ownershipDb.close();
-    }
-
-    db = openDb();
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = await runScript(createAttuneApi(db), script, timeoutMs);
-      db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      try { db.exec('ROLLBACK'); } catch { /* worker termination also closes the connection */ }
-      throw error;
-    }
+    const runMutation = <T>(work: () => T): T => runRetryableWriteTransaction(
+      nodeSqliteTransactionAdapter(db), work, { label: 'attune' },
+      { retryOnBeginBusy: true, budgetMs: 5000, retryDelayMs: 100, maxAttempts: 10 },
+    );
+    return await runScript(createAttuneApi(db, runMutation), script, timeoutMs);
   } finally {
-    db?.close();
-    lease.release();
+    db.close();
   }
 }
 

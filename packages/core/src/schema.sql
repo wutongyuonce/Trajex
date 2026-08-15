@@ -1,3 +1,7 @@
+-- Copyright (C) 2026 tommy0103 and contributors.
+-- Copyright (C) 2026 wutongyuonce and contributors.
+-- SPDX-License-Identifier: AGPL-3.0-only
+
 -- Trajex 统一 SQLite 数据模型。
 --
 -- 此文件保存可再生 transcript 索引与人工确认的 memories。Provider 先输出

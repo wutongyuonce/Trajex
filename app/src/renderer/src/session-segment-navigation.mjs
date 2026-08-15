@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 export function createSessionSegments(roundIndexes, capacity) {
   const rounds = [...new Set(roundIndexes)].sort((left, right) => left - right);
   const count = Math.min(rounds.length, Math.max(1, Math.floor(capacity)));

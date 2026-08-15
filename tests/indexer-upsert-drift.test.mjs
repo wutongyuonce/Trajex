@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { makeTempDir } from './temp-dirs.mjs';
 // Regression test for the message write semantics (formerly the indexJsonl
 // INSERT-OR-REPLACE vs ON-CONFLICT drift; now enforced through the shared

@@ -1,3 +1,7 @@
+// Copyright (C) 2026 tommy0103 and contributors.
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { makeTempDir } from './temp-dirs.mjs';
 // Phase 5b golden test: pins the claude adapter's parse() record stream.
 // This is the binding-independent contract — no database is involved. If the

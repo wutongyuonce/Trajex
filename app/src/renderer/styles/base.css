@@ -1,3 +1,7 @@
+/* Copyright (C) 2026 tommy0103 and contributors. */
+/* Copyright (C) 2026 wutongyuonce and contributors. */
+/* SPDX-License-Identifier: AGPL-3.0-only */
+
 :root, [data-theme='dark'] {
   --theme-bg: #000; --theme-bg-2: #000;
   --theme-surface: rgba(255,255,255,0.05); --theme-surface-strong: rgba(255,255,255,0.10); --theme-surface-hi: rgba(255,255,255,0.16);

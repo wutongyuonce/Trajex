@@ -1,3 +1,7 @@
+<!-- Copyright (C) 2026 tommy0103 and contributors. -->
+<!-- Copyright (C) 2026 wutongyuonce and contributors. -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+
 <script setup>
 import { computed, ref, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';

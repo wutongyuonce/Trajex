@@ -9,7 +9,7 @@
  * schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
  */
 // node:sqlite lifecycle and migrations for the Core package.
-import { mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -45,6 +45,22 @@ function openReadDb(): NodeSqliteDb {
   return db;
 }
 
+/** 打开既有记忆层：attune 不创建、迁移或配置索引，避免与 daemon 索引写入争夺所有权。 */
+function openAttuneDb(): NodeSqliteDb {
+  if (!existsSync(DB_PATH)) {
+    throw new Error('Trajex index is not initialized; run an index build before writing approved durable memory');
+  }
+  const db = new DatabaseSync(DB_PATH);
+  configureConnection(db, { busyTimeoutMs: 250 });
+  const required = ['memories', 'memories_fts', 'memories_fts_ai', 'memories_fts_ad', 'memories_fts_au'];
+  const present = new Set(db.prepare("SELECT name FROM sqlite_master WHERE name IN ('memories', 'memories_fts', 'memories_fts_ai', 'memories_fts_ad', 'memories_fts_au')").all().map(row => String(row.name)));
+  if (required.some(name => !present.has(name))) {
+    db.close();
+    throw new Error('Trajex index predates the approved durable memory layer; run an index build first');
+  }
+  return db;
+}
+
 /** 打开独立锁库；该连接只承载 writer lease，不承载业务表。 */
 function openWriterLeaseDb(lockPath: string): NodeSqliteDb {
   return new DatabaseSync(lockPath);
@@ -56,4 +72,4 @@ function rebuildMemoryFts(db: SqliteDb): void {
 }
 
 
-export { CLAUDE_DIR, CODEX_DIR, TRAJEX_DIR, DB_PATH, TEXT_LIMIT, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines };
+export { CLAUDE_DIR, CODEX_DIR, TRAJEX_DIR, DB_PATH, TEXT_LIMIT, openDb, openReadDb, openAttuneDb, openWriterLeaseDb, rebuildMemoryFts, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines };

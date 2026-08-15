@@ -221,6 +221,35 @@ test('attune api exposes only memory mutation helpers', () => {
   db.close();
 });
 
+test('remember regenerates a colliding id instead of replacing an existing memory', () => {
+  const memoryPath = join(makeTempDir('trajex-memory-collision-'), 'memory.md');
+  writeFileSync(memoryPath, '# Memory\n');
+  const attempts = [];
+  let first = true;
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /^INSERT INTO memories/);
+      return { run: (...args) => {
+        attempts.push(args[0]);
+        if (first) {
+          first = false;
+          throw Object.assign(new Error('PRIMARY KEY'), { errcode: 1555 });
+        }
+      } };
+    },
+  };
+
+  const result = createAttuneApi(db).remember({
+    path: memoryPath,
+    project: 'collision-test',
+    summary: 'Decision: a colliding memory identifier never replaces approved durable memory.',
+  });
+
+  assert.equal(attempts.length, 2);
+  assert.notEqual(attempts[0], attempts[1]);
+  assert.equal(result.id, attempts[1]);
+});
+
 test('remember stores absolute project-relative memory path', () => {
   const projectDir = makeTempDir('trajex-memory-project-');
   const memoryDir = join(projectDir, '.trajex', 'memories');

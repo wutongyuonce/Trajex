@@ -6,7 +6,7 @@ import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { acquireWriterLease, writerLockPathFor } from '../packages/core/src/writer-lease.ts';
@@ -40,7 +40,7 @@ test('a passive query reports when a fresh daemon blocks its schema upgrade', ()
   assert.deepEqual(tables, ['index_state']);
 });
 
-test('attune reports when a fresh daemon blocks its schema upgrade', () => {
+test('attune reports an unavailable memory layer without asking a fresh daemon to upgrade it', () => {
   const home = makeTempDir('trajex-daemon-attune-');
   const trajexDir = join(home, '.trajex');
   const dbPath = join(trajexDir, 'trajex.sqlite');
@@ -56,12 +56,36 @@ test('attune reports when a fresh daemon blocks its schema upgrade', () => {
   writeFileSync(attunePath, 'return true;');
   const result = runCli(['--attune', attunePath], { home });
   assert.equal(result.status, 1);
-  assert.match(JSON.parse(result.stdout).error, /schema upgrade is blocked by daemon_active/i);
+  assert.match(JSON.parse(result.stdout).error, /predates the approved durable memory layer/i);
 
   const check = new DatabaseSync(dbPath, { readOnly: true });
   const tables = check.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(row => row.name);
   check.close();
   assert.deepEqual(tables, ['index_state']);
+});
+
+test('attune writes approved durable memory while a fresh daemon owns indexing', () => {
+  const home = makeTempDir('trajex-daemon-attune-memory-');
+  const trajexDir = join(home, '.trajex');
+  const dbPath = join(trajexDir, 'trajex.sqlite');
+  mkdirSync(trajexDir, { recursive: true });
+  const db = new DatabaseSync(dbPath);
+  db.exec(readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8'));
+  db.prepare('INSERT INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)')
+    .run('__app_heartbeat__', Date.now());
+  db.close();
+
+  const memoryPath = join(home, 'decision.md');
+  const attunePath = join(home, 'attune.mjs');
+  writeFileSync(memoryPath, '# Decision\n');
+  writeFileSync(attunePath, `return remember({ path: ${JSON.stringify(memoryPath)}, summary: 'Decision: daemon-owned indexing must not block approved durable memory.' });`);
+
+  const result = runCli(['--attune', attunePath], { home });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const memory = JSON.parse(result.stdout);
+  const check = new DatabaseSync(dbPath, { readOnly: true });
+  assert.equal(check.prepare('SELECT summary FROM memories WHERE id=?').get(memory.id).summary, 'Decision: daemon-owned indexing must not block approved durable memory.');
+  check.close();
 });
 
 test('a passive query reports when another writer blocks its schema upgrade', () => {

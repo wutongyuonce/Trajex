@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 import { nodeSqliteTransactionAdapter, runWriteTransaction } from '../packages/core/src/tx.ts';
-import { hasUnusableTransaction, isBeginBusyFailure, isRetryableWriteFailure } from '../packages/core/src/write-coordinator.ts';
+import { hasUnusableTransaction, isBeginBusyFailure, isRetryableWriteFailure, runRetryableWriteTransaction } from '../packages/core/src/write-coordinator.ts';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -166,4 +166,29 @@ test('a BEGIN failure with an active transaction is not deferrable', () => {
   assert.equal(primary.trajex.transactionActive, true);
   assert.equal(hasUnusableTransaction(primary), true);
   assert.equal(isBeginBusyFailure(primary), false);
+});
+
+test('BEGIN busy retries only when a short transaction opts in', () => {
+  const dbPath = join(makeTempDir('trajex-begin-retry-'), 'index.sqlite');
+  const holder = new DatabaseSync(dbPath);
+  holder.exec('PRAGMA busy_timeout=0; CREATE TABLE t (value TEXT); BEGIN IMMEDIATE');
+  const contender = new DatabaseSync(dbPath);
+  contender.exec('PRAGMA busy_timeout=0');
+  const tx = nodeSqliteTransactionAdapter(contender);
+
+  try {
+    assert.throws(() => runRetryableWriteTransaction(tx, () => {}), isBeginBusyFailure);
+    const result = runRetryableWriteTransaction(
+      tx,
+      () => { contender.exec("INSERT INTO t VALUES ('memory')"); return 'done'; },
+      {},
+      { retryOnBeginBusy: true, sleep: () => holder.exec('ROLLBACK') },
+    );
+    assert.equal(result, 'done');
+    assert.equal(contender.prepare('SELECT COUNT(*) AS c FROM t').get().c, 1);
+  } finally {
+    try { holder.exec('ROLLBACK'); } catch { /* released by retry */ }
+    holder.close();
+    contender.close();
+  }
 });

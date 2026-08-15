@@ -39,7 +39,10 @@ test('runtime attune scripts expose only memory mutation helpers', () => {
   const home = tempHome();
   const memoryPath = join(home, 'memory.md');
   const scriptPath = join(home, 'attune.mjs');
+  const initPath = join(home, 'init.mjs');
   writeFileSync(memoryPath, '# Memory\n');
+  writeFileSync(initPath, "return 'init';");
+  assert.equal(runRuntime(['--query', initPath], { home }).status, 0);
   writeFileSync(scriptPath, `
     return {
       rememberType: typeof remember,

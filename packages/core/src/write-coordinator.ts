@@ -23,6 +23,8 @@ interface TransactionDiagnostics {
 }
 
 export interface WriteRetryOptions {
+  /** BEGIN 尚未执行 work，只有明确选择的短事务可重试此类忙锁。 */
+  retryOnBeginBusy?: boolean;
   maxAttempts?: number;
   budgetMs?: number;
   retryDelayMs?: number;
@@ -82,6 +84,7 @@ export function isRetryableWriteFailure(error: unknown): boolean {
  * 与未知存活事务交给调用方处理，避免重试造成重复或覆盖。
  */
 export function runWithWriteRetry<T>(operation: () => T, {
+  retryOnBeginBusy = false,
   maxAttempts = 3,
   budgetMs = 1000,
   retryDelayMs = 25,
@@ -95,7 +98,7 @@ export function runWithWriteRetry<T>(operation: () => T, {
     } catch (error) {
       const info = diagnostics(error);
       if (info) info.attempts = attempt;
-      if (!isRetryableWriteFailure(error) || attempt >= maxAttempts) throw error;
+      if (!(isRetryableWriteFailure(error) || (retryOnBeginBusy && isBeginBusyFailure(error))) || attempt >= maxAttempts) throw error;
       const remaining = budgetMs - (now() - startedAt);
       if (remaining <= 0) throw error;
       sleep(Math.min(retryDelayMs * attempt, remaining));

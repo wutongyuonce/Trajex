@@ -7,6 +7,10 @@
 - 支持通过 `PI_CODING_AGENT_SESSION_DIR` 与 `TRAJEX_DIR` 为 CLI/Core 指定隔离的 Pi 会话根和索引目录，便于评测或临时任务避免触碰默认用户数据。
 - 测试统一清理通过 `mkdtempSync` 创建的临时目录，避免重复运行测试后耗尽系统临时目录空间。
 
+### Fixed
+
+- 修复 App daemon 运行时 `trajex --attune` 无法写入已初始化的 approved durable memory：记忆变更现在使用独立短事务、有界 SQLite 锁重试，并避免 ID 冲突覆盖已有记忆。
+
 ## [0.2.5] - 2026-08-11
 
 ### Added

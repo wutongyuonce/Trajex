@@ -331,8 +331,9 @@ function createWindow() {
   });
 
   win.webContents.on('will-navigate', (event, url) => {
-    if (url.startsWith('file:')) event.preventDefault();
+    event.preventDefault();
   });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   if (isDev) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL || process.env.TRAJEX_DEV_SERVER_URL || 'http://localhost:5173');
@@ -602,6 +603,18 @@ ipcMain.handle('local-link:open', async (event, href) => {
   if (response !== 1) return { exists: true, opened: false };
   const error = await shell.openPath(filePath);
   return { exists: true, opened: !error, error: error || undefined };
+});
+
+ipcMain.handle('web-link:open', async (_, href) => {
+  if (typeof href !== 'string') return false;
+  try {
+    const url = new URL(href);
+    if (!['http:', 'https:'].includes(url.protocol)) return false;
+    await shell.openExternal(url.href);
+    return true;
+  } catch {
+    return false;
+  }
 });
 
 ipcMain.handle('db:archiveMemory', (_, id, reason) => {

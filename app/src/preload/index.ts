@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('trajex', {
   readMemoryFile: (path: string) => ipcRenderer.invoke('db:readMemoryFile', path),
   previewLocalMarkdownLink: (href: string) => ipcRenderer.invoke('local-link:preview', href),
   openLocalMarkdownLink: (href: string) => ipcRenderer.invoke('local-link:open', href),
+  openWebMarkdownLink: (href: string) => ipcRenderer.invoke('web-link:open', href),
   archiveMemory: (id: string, reason?: string) => ipcRenderer.invoke('db:archiveMemory', id, reason),
   restoreMemory: (id: string) => ipcRenderer.invoke('db:restoreMemory', id),
   getProjects: () => ipcRenderer.invoke('db:getProjects'),

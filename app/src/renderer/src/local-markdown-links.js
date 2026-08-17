@@ -15,8 +15,15 @@ function isLocalHref(href) {
 }
 
 function markdownLink(target) {
-  const link = target instanceof Element ? target.closest('.markdown-msg a, .markdown-body a, .markdown-compact a') : null;
-  return link && isLocalHref(link.getAttribute('href')) ? link : null;
+  return target instanceof Element ? target.closest('.markdown-msg a, .markdown-body a, .markdown-compact a') : null;
+}
+
+export function isWebHref(href) {
+  try {
+    return ['http:', 'https:'].includes(new URL(href).protocol);
+  } catch {
+    return false;
+  }
 }
 
 function hidePreview() {
@@ -56,7 +63,7 @@ async function previewLink(link) {
 
 function onPointerOver(event) {
   const link = markdownLink(event.target);
-  if (!link || link.contains(event.relatedTarget)) return;
+  if (!link || !isLocalHref(link.getAttribute('href')) || link.contains(event.relatedTarget)) return;
   clearTimeout(hideTimer);
   hideTimer = null;
   clearTimeout(hoverTimer);
@@ -66,7 +73,7 @@ function onPointerOver(event) {
 
 function onPointerOut(event) {
   const link = markdownLink(event.target);
-  if (link && !link.contains(event.relatedTarget)) {
+  if (link && isLocalHref(link.getAttribute('href')) && !link.contains(event.relatedTarget)) {
     clearTimeout(hideTimer);
     hideTimer = setTimeout(hidePreview, HIDE_DELAY_MS);
   }
@@ -75,9 +82,14 @@ function onPointerOut(event) {
 function onClick(event) {
   const link = markdownLink(event.target);
   if (!link) return;
-  event.preventDefault();
   const href = link.getAttribute('href');
-  if (href) void window.trajex?.openLocalMarkdownLink?.(href);
+  if (isLocalHref(href)) {
+    event.preventDefault();
+    void window.trajex?.openLocalMarkdownLink?.(href);
+  } else if (isWebHref(href)) {
+    event.preventDefault();
+    void window.trajex?.openWebMarkdownLink?.(href);
+  }
 }
 
 export function installLocalMarkdownLinkHandlers() {

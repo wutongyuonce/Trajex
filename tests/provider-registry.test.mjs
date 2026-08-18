@@ -75,6 +75,7 @@ test('built-in provider registry exposes every source without caller-side branch
   assert.deepEqual(registry.watchRoots(), [
     '/sources/claude/projects',
     '/sources/codex/sessions',
+    '/sources/codex/archived_sessions',
     '/sources/codex/session_index.jsonl',
     '/sources/pi',
   ]);

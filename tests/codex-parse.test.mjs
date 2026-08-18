@@ -187,6 +187,25 @@ test('codex provider folds session_index metadata into its canonical session rec
   assert.equal(session.ended_at, '2026-06-10T11:00:00Z');
 });
 
+test('codex provider discovers, watches, and reads archived sessions', () => {
+  const root = makeTempDir('trajex-codex-archive-');
+  const archiveDir = join(root, 'archived_sessions');
+  mkdirSync(archiveDir, { recursive: true });
+  const path = join(archiveDir, `rollout-${META.id}.jsonl`);
+  writeFileSync(path, [
+    JSON.stringify({ type: 'session_meta', timestamp: META.timestamp, payload: META }),
+    JSON.stringify({ type: 'event_msg', timestamp: '2026-06-10T10:00:01Z', payload: { type: 'user_message', message: 'archived Codex sentinel' } }),
+    '',
+  ].join('\n'));
+
+  const provider = createCodexProvider({ rootDir: root });
+  const units = provider.discover({ lastCursor: () => '9999999999999:1', changedPaths: [path] });
+  assert.deepEqual(units.map(unit => unit.key), [path]);
+  assert.deepEqual(provider.watchRoots(root), [join(root, 'sessions'), archiveDir, join(root, 'session_index.jsonl')]);
+  const raw = provider.raw({ messageUuid: `codex:${META.id}:000002`, agentId: 'codex:archive-agent', session: null, source: 'codex' });
+  assert.match(raw.text, /archived Codex sentinel/);
+});
+
 test('codex discovery emits a tombstone for a deleted indexed rollout', () => {
   const root = makeTempDir('trajex-codex-retract-');
   const sessionsDir = join(root, 'sessions', '2026', '06', '10');

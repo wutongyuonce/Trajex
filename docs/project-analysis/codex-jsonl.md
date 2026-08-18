@@ -17,7 +17,7 @@ Codex 把一个线程（thread）保存为一个 **rollout JSONL 文件**：一�
 ```
 
 - 文件名：`rollout-<UTC时间戳>-<uuid片段>.jsonl`，天然可排序。
-- 日期目录按 `YYYY/MM/DD` 分层；Trajex 的 `discoverCodexJsonlFiles()` 递归枚举 `sessions/` 下的全部 `*.jsonl`。**`archived_sessions/` 不在发现范围内**，被归档的线程不会被索引（`watchRoots` 也只监听 `sessions/` 和 `session_index.jsonl`）。
+- 日期目录按 `YYYY/MM/DD` 分层；Trajex 的 `discoverCodexJsonlFiles()` 递归枚举 `sessions/` 和可选 `archived_sessions/` 下的全部 `*.jsonl`，并监听这两个目录及 `session_index.jsonl`。
 - `session_index.jsonl` 每行是 `{"id":"<thread-id>","thread_name":"…","updated_at":"…"}`，提供标题与最后更新时间；它不是 transcript。Trajex 用它给 session 提供 `title` 和 `ended_at`。
 - 可用环境变量 `CODEX_SESSIONS_DIR` 覆盖默认位置（Trajex 的默认根目录是 `~/.codex`）。
 
@@ -257,7 +257,7 @@ guardian 是子线程的特殊变体，标记在 `source.subagent.other`，见�
 ### 9.1 发现（discover）
 
 - 读取 `session_index.jsonl`，构建 `Map<rawId, {title, updatedAt}>`；每行解析为 `{id, thread_name, updated_at}`。
-- 递归枚举 `sessions/` 下全部 `*.jsonl`。有 `changedPaths` 时只检查 watcher 指出的路径；否则用存储 cursor 与文件 mtime 跳过未变更文件。
+- 递归枚举 `sessions/` 和 `archived_sessions/` 下全部 `*.jsonl`。有 `changedPaths` 时只检查 watcher 指出的路径；否则用存储 cursor 与文件 mtime 跳过未变更文件。
 - 对每个候选文件读首行 `session_meta`；**有父 ID 的 rollout 一律不索引**（`discoverAt` 直接跳过，与 Claude 把子代理转录也索引的做法不同）。
 - 产出 `IndexUnit`：`sessionId = codex:<rawId>`，携带 `indexedTitle` / `indexedUpdatedAt`。
 - 发现阶段同时读取已索引的 session 路径清单。只有当 `sessions/` 本身可读，且旧路径从当前清单中明确消失时，才产出带 `retractSessionIds` 的 tombstone unit；如果根目录暂时不存在或不可读，则不产出 tombstone，保留上一次快照。

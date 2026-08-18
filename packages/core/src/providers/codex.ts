@@ -45,6 +45,7 @@ import type {
 
 export const name = 'codex';
 export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v4__';
+const CODEX_TRANSCRIPT_DIRS = ['sessions', 'archived_sessions'] as const;
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
 
@@ -63,8 +64,12 @@ function messageVisibility(role: string, text: string | null): 'visible' | 'hidd
     : 'visible';
 }
 
+function codexTranscriptDirs(rootDir: string): string[] {
+  return CODEX_TRANSCRIPT_DIRS.map((dir) => join(rootDir, dir));
+}
+
 function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
-  const sessionsDir = join(rootDir, 'sessions');
+  const [sessionsDir, archivedSessionsDir] = codexTranscriptDirs(rootDir);
   const sessionIndexPath = normalize(join(rootDir, 'session_index.jsonl'));
   const sessionIndex = new Map<string, { title: string; updatedAt: string | null }>();
   if (existsSync(sessionIndexPath)) {
@@ -88,26 +93,33 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
       ? normalize(changedPath)
       : normalize(join(rootDir, changedPath));
     if (rootRelative === sessionIndexPath) sessionIndexChanged = true;
-    const absolute = isAbsolute(changedPath)
-      ? normalize(changedPath)
-      : normalize(join(sessionsDir, changedPath));
-    const inside = relative(sessionsDir, absolute);
-    if (!inside || inside.startsWith('..') || isAbsolute(inside)) continue;
-    changedScopes.push(absolute);
-    if (absolute.toLowerCase().endsWith('.jsonl')) changedFiles.add(absolute);
+    for (const transcriptDir of [sessionsDir, archivedSessionsDir]) {
+      const absolute = isAbsolute(changedPath)
+        ? normalize(changedPath)
+        : normalize(join(transcriptDir, changedPath));
+      const inside = relative(transcriptDir, absolute);
+      if (!inside || inside.startsWith('..') || isAbsolute(inside)) continue;
+      changedScopes.push(absolute);
+      if (absolute.toLowerCase().endsWith('.jsonl')) changedFiles.add(absolute);
+    }
   }
   // A missing/unreadable sessions directory is not a complete inventory. Do
   // not turn an empty scan into deletion until the directory is readable.
   let inventoryComplete = true;
-  const discoveredFiles = discoverCodexJsonlFiles(sessionsDir, (issue) => {
-    inventoryComplete = false;
-    ctx.reportUnavailableRoot?.(issue);
-  });
+  const discoveredFiles = [
+    ...discoverCodexJsonlFiles(sessionsDir, (issue) => {
+      inventoryComplete = false;
+      ctx.reportUnavailableRoot?.(issue);
+    }),
+    // archived_sessions is optional on older/new installations.
+    ...discoverCodexJsonlFiles(archivedSessionsDir),
+  ];
   const currentFiles = new Set(discoveredFiles.map(file => normalize(file.path)));
   const units = discoveredFiles.flatMap((file) => {
-    if (ctx.changedPaths !== undefined && !sessionIndexChanged && !changedFiles.has(normalize(file.path))) return [];
+    const fileChanged = changedFiles.has(normalize(file.path));
+    if (ctx.changedPaths !== undefined && !sessionIndexChanged && !fileChanged) return [];
     const cursor = ctx.lastCursor(file.path);
-    if (!sessionIndexChanged && cursor !== null && Number(cursor.split(':')[0]) >= statSync(file.path).mtimeMs) {
+    if (!sessionIndexChanged && !fileChanged && cursor !== null && Number(cursor.split(':')[0]) >= statSync(file.path).mtimeMs) {
       return [];
     }
     let meta: any = null;
@@ -137,7 +149,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   const tombstones = (ctx.indexedSessions?.() ?? [])
     .filter(session => {
       const path = normalize(session.jsonlPath);
-      if (!pathWithin(normalize(sessionsDir), path) || currentFiles.has(path)) return false;
+      if (!codexTranscriptDirs(rootDir).some((dir) => pathWithin(normalize(dir), path)) || currentFiles.has(path)) return false;
       return ctx.changedPaths === undefined || changedPathCovers(changedScopes, path);
     })
     .map(session => ({
@@ -343,7 +355,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
 }
 
 function findCodexFile(rootDir: string, rawThreadId: string): string | null {
-  const stack = [join(rootDir, 'sessions')];
+  const stack = codexTranscriptDirs(rootDir);
   while (stack.length > 0) {
     const current = stack.pop()!;
     if (!existsSync(current)) continue;
@@ -403,7 +415,10 @@ export function createCodexProvider({ rootDir = join(homedir(), '.codex') }: { r
     name,
     descriptor: { id: name, name: 'Codex', vendor: 'OpenAI', defaultRoot: rootDir, color: '#10a37f' },
     indexVersionMarker: CODEX_CANONICAL_TRANSCRIPT_MARKER,
-    watchRoots: (configuredRoot) => [join(configuredRoot, 'sessions'), join(configuredRoot, 'session_index.jsonl')],
+    watchRoots: (configuredRoot) => [
+      ...codexTranscriptDirs(configuredRoot),
+      join(configuredRoot, 'session_index.jsonl'),
+    ],
     discover: (ctx) => discoverAt(rootDir, ctx),
     parse,
     raw: (input) => rawCodex(rootDir, input),

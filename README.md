@@ -40,7 +40,7 @@ Trajex 有两面，它们共享同一个 SQLite 索引：
 
 **App 侧** — Electron 桌面 app，供人浏览 sessions、管理 memories，以及查看使用统计。
 
-两者都读取同一个 `~/.trajex/trajex.sqlite` 数据库。索引器会读取 `~/.claude/projects` 中的 Claude Code transcripts、`~/.codex/sessions` 中的 Codex transcripts，以及 `~/.pi/agent/sessions` 中的 Pi sessions。
+两者都读取同一个 `~/.trajex/trajex.sqlite` 数据库。索引器会读取 `~/.claude/projects` 中的 Claude Code transcripts、`~/.codex/sessions` 和 `~/.codex/archived_sessions` 中的 Codex transcripts，以及 `~/.pi/agent/sessions` 中的 Pi sessions。
 
 ## 多 Provider 支持
 

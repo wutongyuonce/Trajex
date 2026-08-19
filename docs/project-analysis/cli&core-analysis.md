@@ -1,83 +1,101 @@
-## 项目定位
+# Trajex CLI & Core 架构分析
 
-> CodeAct 代表了一种先进的 AI 智能体设计范式，它通过将 **“编写可执行代码”** 作为核心行动方式，极大地增强了 AI 处理复杂任务、操作数据和与外部世界交互的能力。
+## 阅读导航
 
-Trajex 是“Coding Agent 的显式记忆基础设施”（Claude Code、Codex、Pi）：
+这份文档按“结论 → 主路径 → 细节 → 横切不变量”组织：
 
-1. 读取本机已有的 Agent 会话历史。
+1. 先读「项目定位」「五个架构结论」和「三条主路径」，建立全局模型。
+2. 然后读「各文件定位」与「CLI 入口核心调用链」，找到代码边界。
+3. Provider、schema、persist、query 和 session-detail 章节是逐字段的实现参考，可按需查阅。
+4. 文末的「并发」「重放」「记忆生命周期」「扩展检查表」用于二开和故障排查。
 
-2. 把不同供应商的日志格式统一成一套 canonical(规范的) transcript records。
+## 项目定位：显式记忆，而非自动召回
 
-3. 持久化到 `~/.trajex/trajex.sqlite` 并索引，提供 FTS5 全文搜索和记忆管理能力。
+Trajex 把本机 Coding Agent 的会话日志变成一层可查询、可回溯的证据：
 
-4. 提供两类访问方式：
+1. 读取 Claude Code、Codex 和 Pi 的本地会话历史。
+2. 在 Provider 边界内消化格式差异，统一为规范的 `TranscriptRecord` 记录流。
+3. 将可再生的证据投影到 `~/.trajex/trajex.sqlite`，通过 SQLite FTS5 和结构化 JOIN 检索。
+4. 以 CLI/Skill 服务 Agent，以 Electron App 服务人；两端复用同一份 Core 语义。
+5. 将经人确认、值得长期保留的判断注册为 memory。
 
-   - Agent 侧：`trajex` Skill 通过 CLI 让 Agent 用 JS 查询历史证据。
+它刻意区分三类常被混称为“memory”的能力：
 
-     ```js
-     const hits = search("auth bug", { limit: 10 });
-     const details = hits.map(h => context(h.message.uuid));
-     return { hits, details };
-     ```
+| 层次 | 含义 | Trajex 的选择 |
+|---|---|---|
+| 隐式记忆 | 自动注入上下文，静默影响 Agent | **不做** |
+| 可查询的会话记忆 | Agent 在需要时主动调查原始会话、工具调用与子代理 | **做** |
+| 人确认的长期记忆 | 可读、可撤回、可审计的结论 | **做** |
 
-     这里 JS 是编排语言，`search/context/sessions/failures/fileHistory` 等是预设查询 API；脚本在独立的 **Node.js Worker Thread + `node:vm` context** 中执行。
+因此，Trajex 优化的不是“无感地想起来”，而是“带着当前问题去调查历史”。查询会占用当前 Agent 的 context，但这个成本、检索词和证据链都是可见的。
 
-   - 人类侧：Electron 桌面 app 浏览 session、memory、activity。
+Agent 侧的核心不是十几个对外 tool，而是 CodeAct：Agent 提交一小段 JavaScript，在数据侧组合、过滤和裁剪结果，最后只把必要 JSON 带回 context。
 
-核心设计不是“为每个 provider 写一套 app/CLI 逻辑”，而是：
-
-```text
-Provider 适配器解析不同格式原始日志 (claude.ts / codex.ts / pi.ts)
-    │  统一流式 yield TranscriptRecord，结束时 return Cursor
-    ▼
-persist.ts (写库 SQLite)
-    │  INSERT / UPDATE / DELETE
-    ▼
-┌────────────────────────────────────────────────────┐
-│  sessions  ← 工具调用时用到的文件路径索引             │
-│  messages  ← 触发器 -> messages_fts (FTS 全文搜索)    │
-│  tool_calls  工具调用与结果关联                       │
-│  tool_results  ↓                                    │
-│  subagents    子代理（含 workflow_agents）            │
-│  workflows    ↓                                     │
-│  workflow_agents                                   │
-│  summaries                                         │
-├────────────────────────────────────────────────────┤
-│  index_state  ← 索引进度追踪（__last_build__ 等）     │
-├────────────────────────────────────────────────────┤
-│  memories  ← 人工写入 -> memories_fts (FTS 记忆搜索)  │
-│              (attend API: remember / forget)        │
-└────────────────────────────────────────────────────┘
-    ▲
-query.ts (查询 API)
-    │  search() / context() / sessions() / memories()
-    │  sql() / overview() / raw()
-    ▼
-CLI / Electron App
+```js
+const hits = search('auth bug', { limit: 10 });
+return hits.map(hit => ({
+  hit,
+  detail: context(hit.message.uuid),
+}));
 ```
 
-这个设计的稳定中心是 `TranscriptRecord`，不是数据库表，也不是某个 provider 的 JSONL 格式。
+`search()`、`context()`、`sessions()` 等 helper 只存在于 `--query` 沙箱内；`remember()` / `forget()` 只存在于独立的 `--attune` 沙箱内。读能力和写能力在 API 工厂、数据库连接与 writer lease 三处分开。
 
-## 心智模型
+## 五个架构结论
 
-Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有三条稳定边界：
+### 1. `TranscriptRecord` 是语义支点
 
-1. provider adapter 边界
-   - 每个 provider 自己理解原始日志。
-   - 输出统一 `TranscriptRecord`。
-   - Codex 的去重、root-thread 筛选和全量重建都在这里完成。
+Provider 产出的不是数据库行，消费者也不重新解析原始 JSONL。`TranscriptRecord` 刚好处在“来源语义已经完整、存储取舍尚未发生”的位置：
 
-2. persist 写入/query 检索边界
-   - persist 是唯一写库语义。
-   - SQLite 是证据层，不是 provider 语义源头。
-   - query sandbox 给 Agent 一个可编程、只读、证据优先的检索面。
+```text
+Provider 专有格式                    Provider 无关语义
+Claude / Codex / Pi JSONL
+        │
+        └── adapter ──> TranscriptRecord ──┬──> persist ──> SQLite
+                                                └──> session-detail ──> UI
+```
 
-3. app presentation 边界
-   - app 不直接理解 Codex wire format。
-   - app 从 DB rows 或 canonical records assembly 出可读 timeline。
-   - 实时刷新通过 daemon、worker、patch、虚拟列表保证体验。
+数据库是这套语义的序列化投影，不是 transcript 语义的源头。要理解 Trajex 认为“一次会话由什么构成”，应先读 `providers/types.ts`，再读 `schema.sql`。
 
-二开时最重要的是守住这三条边界：provider 差异留在 provider，写库语义留在 persist，改用户可见检索能力应落在 query，阅读体验留在 assembly/renderer。这样新增 provider 或扩展 Codex 时，改动面会很小，也不会让 app、CLI、query API 被 provider-specific 逻辑污染。
+### 2. Provider 轴与 Consumer 轴正交
+
+```text
+Claude ─┐
+Codex  ─┼──> TranscriptRecord ─┬──> persist / SQLite / query
+Pi     ─┘                         └──> session-detail / App
+```
+
+新增 Provider 不应要求 query 或 UI 认识新的 wire format；新增消费者也不应要求每个 Provider 新增一条输出路径。复杂度因此是 N + M，而不是 N × M。
+
+### 3. 可再生证据与不可再生判断分层
+
+| 数据 | 性质 | 故障/重建语义 |
+|---|---|---|
+| `sessions` 等 8 张 transcript 表 | 来源日志的投影 | 可清空后重放 |
+| `index_state` | 游标、心跳、版本标记与防抖信号 | 随索引策略重算 |
+| `memories` | 人已确认的结论注册 | force rebuild 和 `delete-session` 都不删 |
+
+能重算的东西可以用简单、可自愈的重放协议；无法从源日志重算的人类判断必须受额外保护。
+
+### 4. 显式差异优于下游猜测
+
+`countMode`、`visibility`、`content_type`、`parent_tool_use_id` 这些字段不是冗余，而是将差异明说：Claude 提供 delta，Codex/Pi 提供 total；展示层读取可见性，而不用文本正则猜测。好的共同语言不是消灭差异，而是能够表达差异。
+
+### 5. 未知时保守，局部失败时可恢复
+
+单个损坏 unit 可记录后跳过，其游标不前进，下次自然重试；但事务状态不明、所有权不明或 finalize 失败时必须停止。这是不对称风险下的选择：少索引一次下次可补，两个进程同时写或半完成的收尾则可能破坏一致性。
+
+## 三条主路径
+
+```text
+写入：Provider 日志 → discover → parse → TranscriptRecord → persist → SQLite
+检索：用户问题 → schema 就绪/增量索引 → 只读 DB → query helper → JSON
+展示：SQLite 多表行 → canonical record → session-detail → 可读时间线
+```
+
+三条路径不完全并列：`searchText()` / `executeQuery()` / `executeAttune()` 会先通过 schema 就绪门，再尝试 `buildIndex()`，所以索引新鲜度是查询的显式前置步骤。`recent_build` 只能跳过 Provider 扫描，不能跳过 schema 可读性检查。
+
+Provider 差异必须留在 adapter，canonical transcript 的写入语义必须留在 persist，检索能力必须留在 query，阅读体验必须留在 assembly/renderer。出现 `if (source === 'codex')` 之类的下游分支时，首先应检查 Provider 是否漏掉了应显式表达的语义。
 
 ## 各文件定位与关系
 
@@ -101,7 +119,7 @@ Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有
     persist.ts                 ← TranscriptRecord -> SQLite 行   
                │                                                
   1、数据库契约与工具层                                            
-    db.ts 数据库生命周期管理 / schema.sql DDL 定义 / schema-migrations.ts 渐进式列迁移 / sqlite-types.ts SQLite 抽象接口 / tx.ts 事务抽象、write-lease.ts 跨进程单 writer 锁、write-coordinator.ts 可重试写入协调器
+    db.ts 数据库生命周期管理 / schema.sql DDL 定义 / schema-migrations.ts 渐进式列迁移 / sqlite-types.ts SQLite 抽象接口 / tx.ts 事务抽象、writer-lease.ts 跨进程单 writer 锁、write-coordinator.ts 可重试写入协调器
     parsing.ts                 ← 纯工具函数库：文件发现、JSONL、文本、Codex ID   
                                                                 
 三、读取与投影
@@ -112,41 +130,14 @@ Trajex 的主线不是“解析 JSONL 然后展示”。更准确地说，它有
     session-detail.ts      ← 会话详情组装：canonical transcript / SQLite rows -> SessionDetailSnapshot，被桌面应用或渲染层使用
 ```
 
-```text
-query() / search() / attune()
-  │
-  ├─ ensureReadableSchema()：先检查当前程序能否读取现有 schema
-  │    ├─ 已可读：继续
-  │    ├─ 需要迁移：尊重 daemon heartbeat，再竞争 writer lease
-  │    └─ 被占用：明确返回 daemon_active / writer_busy，不执行查询或记忆写入
-  │
-  └─ schema 就绪后再调用 buildIndex()；recent_build 只跳过 Provider 数据扫描
-
-buildIndex()
-  │
-  ├─ writer-lease.ts：取得跨进程唯一写入权
-  │    └─ 拿不到：返回 writer_busy，不进行写入
-  │
-  ├─ db.ts：打开主数据库并完成初始化
-  │    ├─ 配置 WAL、busy timeout 等连接参数
-  │    ├─ schema-migrations.ts：给旧数据库补充缺失列
-  │    ├─ schema.sql：创建缺失的表、索引、FTS 表等
-  │    └─ 再执行一次列迁移，兼容刚新建的表
-  │
-  ├─ sqlite-types.ts：约束“数据库连接应提供哪些方法”
-  │
-  └─ tx.ts + write-coordinator.ts：执行原子、可重试的写入
-       └─ BEGIN IMMEDIATE -> SQL 写入 -> COMMIT
-          出错 -> ROLLBACK
-```
-
 ### @trajex/core（核心包）
 
 1、统一入口
 
 | 文件       | 定位                             | 提供内容 / 作用                                               | 关键关系                                                     |
 | ---------- | -------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
-| core.ts    | **Core 的聚合面**                | 对外暴露构建、搜索、查询脚本与记忆操作等高层函数。             | 依赖 `db.ts`、`indexer.ts`、`query.ts`、`writer-lease.ts`；被 CLI 的 `trajex.ts` 直接 `import`。 |
+| core.ts    | **Core 的聚合面**                | 对外暴露构建、搜索、查询脚本与记忆操作等高层函数；为脚本创建、监督 Worker Thread。 | 依赖 `db.ts`、`indexer.ts`、`query.ts`、`sandbox-worker.ts`；被 CLI 的 `trajex.ts` 直接 `import`。 |
+| sandbox-worker.ts | **脚本执行边界** | 在独立 Worker Thread 内创建 `node:vm` context；query 持有只读连接，attune 持有 writer lease 和写事务。 | 由 `core.ts` 启动；依赖 `db.ts`、`query.ts`、`writer-lease.ts`、`indexer.ts`。 |
 | persist.ts | **唯一写数据库的持久化层**       | 消费 `TranscriptRecord` 流，并将会话、消息、工具等事实写入 SQLite。 | 被 `provider-indexing.ts` 调用；依赖 `sqlite-types.ts` 和 `providers/types.ts`。 |
 
 2、数据库层
@@ -222,6 +213,8 @@ export interface ProviderIndexItem {
 export interface ProviderIndexPlan {
   readonly items: ProviderIndexItem[];
   readonly pendingMarkers: ReadonlyMap<string, string>;
+  readonly fullRebuild: boolean;
+  readonly inventoryIssues: readonly ProviderInventoryRootIssue[];
 }
 
 /** 执行结果：已提交项、失败 Provider 集合；stopped 表示数据库忙等原因中途停止的位置。 */
@@ -254,6 +247,7 @@ export interface ProviderIndexResult {
 | providers/builtins.ts | **内置 Provider 组装工厂** | 将内置 Provider 组合成单一注册表。                            | 被 `indexer.ts` 在构建时、被 `query.ts` 在创建查询 API 时调用。 |
 | providers/claude.ts   | **Claude Code 适配器**    | 发现 `~/.claude/projects/` 下的 JSONL；逐行解析并生成 `TranscriptRecord` 流。 | 依赖 `parsing.ts`，实现 `ProviderAdapter`；由注册表路由至索引流程。 |
 | providers/codex.ts    | **Codex 适配器**          | 发现 `~/.codex/sessions/` 下的 JSONL；全量重解析并关联 `event_msg` / `response_item`。 | 依赖 `parsing.ts`，实现 `ProviderAdapter`；由注册表路由至索引流程。 |
+| providers/pi.ts       | **Pi 适配器**             | 发现 Pi v3 session JSONL；按 durable leaf、branch、compaction 与 visibility 全量重放当前投影。 | 依赖 `parsing.ts`，实现 `ProviderAdapter`；由注册表路由至索引流程。 |
 
 ### @trajex-apps/cli（CLI 包）
 
@@ -478,6 +472,89 @@ finalize 只在所有 unit 已提交或被明确跳过后运行；它失败会�
 * 随后重建 messages 与 memories 的 FTS 倒排索引，写入成功 Provider 的版本 marker 和 `__last_build__` debounce 标记。
 * 最后无论成功、跳过还是抛错，都会关闭 `DatabaseSync` 并 `lease.release()`，释放数据库连接与跨进程写锁。
 
+## 搜索、查询、记忆链路
+
+> CodeAct 代表了一种先进的 AI 智能体设计范式，它通过将 **“编写可执行代码”** 作为核心行动方式，极大地增强了 AI 处理复杂任务、操作数据和与外部世界交互的能力。
+>
+> 1. **接收任务**：智能体收到用户的自然语言指令，例如：“分析这份销售数据并生成趋势图”。
+> 2. **生成代码**：智能体（大语言模型）根据指令，生成一段可执行的 **JavaScript 代码**作为它的“行动”。
+> 3. **执行代码**：这段代码会被发送到一个**沙盒环境**（一个安全的隔离执行空间）中运行。
+> 4. **获取反馈**：智能体收到代码执行的**结果**，可能是正确的输出，也可能是报错信息。
+> 5. **迭代优化**：如果结果不正确或出现错误，智能体会根据反馈**动态修改**代码并重新执行，直到问题解决。
+
+1、搜索流程
+
+```ts
+trajex.ts --search "xxx"
+  -> core.ts searchText("xxx")
+	-> refreshQueryIndex()  // 读取前确保当前 schema 可读
+		-> assertReadableSchema();  // 只读检查发现旧结构 → 协调写锁 → 调用 openDb() 完成幂等加列
+    	-> buildIndex()  // 先索引最新数据
+    -> openReadDb()
+    -> createQueryApi(db).search("xxx")
+      -> 在 messages_fts 中全文搜索
+    -> db.close()
+```
+
+2、查询流程
+
+```ts
+trajex --query <file.js>
+  -> core.ts executeQuery(scriptContent)
+    -> refreshQueryIndex()  // 读取前确保当前 schema 可读
+		-> assertReadableSchema();  // 只读检查发现旧结构 → 协调写锁 → 调用 openDb() 完成幂等加列
+    	-> buildIndex()  // 先索引最新数据
+    -> runInSandboxWorker()  // 启动 sandbox worker
+      -> worker openReadDb()
+      -> createQueryApi(db)
+      -> node:vm 在受限 context 中执行脚本
+         -> 沙箱内提供 sql(), search(), context(), sessions(), etc.
+      -> worker finally 关闭 db
+    -> 主线程接收结果并 emit() 序列化 stdout JSON
+  	-> Agent 根据 JSON 回答自然语言
+```
+
+3、记忆操作流程
+
+```ts
+trajex.ts --attune <file.js>
+  -> core.ts executeAttune(scriptContent)
+	-> assertReadableSchema();  // 只读检查发现旧结构 → 协调写锁 → 调用 openDb() 完成幂等加列
+    -> buildIndex()
+    -> runInSandboxWorker()  // 启动 sandbox worker
+      -> acquireWriterLease()         // worker 内获取写入锁
+      -> 锁内再次检查 daemon 活跃状态
+      -> openDb()
+      -> BEGIN IMMEDIATE
+      -> node:vm 在受限 context 中执行脚本
+        -> 沙箱内仅提供 remember() / forget()
+      -> COMMIT；失败则 ROLLBACK
+      -> 关闭 db 并 release()
+```
+
+```ts
+searchText ：无脚本 → 无沙箱；只读 → 无锁
+executeQuery：有脚本 → 沙箱；只读 → 无锁
+executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
+```
+
+* 是否沙箱 = 是否有用户代码
+
+  - searchText 没有用户代码，只是个固定内置操作 `createQueryApi(db).search(...)` 直接调，不需要 VM；
+
+  - executeQuery / executeAttune 跑的是用户提供的脚本，必须 runInSandbox 隔离全局。
+
+* 是否拿锁 = 是否写库
+
+  - searchText / executeQuery 都只使用 `openReadDb()`（只读连接；executeQuery 由 sandbox worker 打开），不可能改数据，所以不需要 lease；
+
+  - executeAttune 要写 memories，先由主线程执行 buildIndex 检查，再由 sandbox worker 完成 acquireWriterLease → 锁内复查 heartbeat → openDb → 事务执行脚本 → 关库放锁。
+
+> vm sandbox 本质就是：Node 把 V8 的 context 单独开一个，把自己注入的全局全部撤掉。
+>
+> - V8 自带的东西（ JSON 、 Math 、 Array 、 Date …）在任何 context 里都在；
+> - process 、 require 、 module 、 fs 、 Buffer 这些是 Node 层加进全局的，不是 V8 的 ——所以新 context 里默认没有，脚本才碰不到文件系统。sandbox 的隔离就是"去掉 Node 的注入，只留 V8 的核心"。
+
 ## 一、Provider Adapter 与统一事实流的完整契约 `providers/types.ts`
 
 `types.ts` 的作用是规定跨模块传递的数据形状。可以把它看成 Trajex 的“海关申报单”：Claude、Codex、Pi 各自带着不同的原始文件格式进来，但一旦越过 Provider 的解析边界，后面的索引和写库只消费这份统一申报单，不再判断原始 JSONL 是谁生成的。查询、CLI 与 Electron 主要消费 SQLite 投影；只有需要证据回源时，才经 `raw()` 回到 Provider。
@@ -636,7 +713,7 @@ type TranscriptRecord =
 | `text`                           | 可检索、可展示的文本投影；工具结果最多保留 1,000 字符的首尾预览，其他消息也可能截断或为 `null`。原始完整内容应通过 `raw()` 回源。 |
 | `content_type`                   | 内容性质，如 text、thinking、tool_use、tool_result、skill_instructions、unknown。它帮助详情层决定怎样组合/渲染。 |
 | `is_meta`                        | `0 | 1`，系统自动插入、命令包装、环境提示、skill 指令等“元消息”。整数而非 boolean 是 SQLite 友好表示。 |
-| `visibility`                     | `visible` / `inactive` / `hidden`；inactive 是保留但不在当前上下文的分支证据，hidden 是来源明确抑制展示的内容；二者默认展示都会排除。 |
+| `visibility`                     | `visible` / `inactive` / `hidden`；inactive 是保留但不在当前上下文的分支证据，hidden 是来源明确抑制展示的内容。query helper 默认只取 visible，`includeInactive` 可额外包含 inactive；session-detail 只直接过滤 hidden，保留 inactive 标记供 UI 决定呈现。 |
 | `model`                          | 模型名称；来源未报告时为 `null`。                            |
 | `agent_id`                       | 所属子 Agent ID；主线消息为 `null`。关联 `subagents.agent_id` 或 workflow agent 身份。 |
 | `input_tokens` / `output_tokens` | 归一化 token 用量；输入包含 Provider 报告的缓存输入。没有可靠数字时为 `null`，不能伪造 0。 |
@@ -800,14 +877,14 @@ interface ProviderDescriptor {
 
 | 字段           | 含义                                                         |
 | -------------- | ------------------------------------------------------------ |
-| `text`         | 本次请求应展示的文本片段。必填，即使为空也以空字符串表达。   |
-| `totalLength?` | 完整文本总长度；当前内置 adapter 返回整行时等于 `text.length`。 |
-| `offset?`      | 此片段在完整文本中的起始位置；当前内置 adapter 固定为 `0`。  |
-| `limit?`       | 本次返回长度；当前内置 adapter 固定为整行长度。              |
-| `hasMore?`     | 后面是否还有内容；当前内置 adapter 固定为 `false`。          |
+| `text`         | Provider 回读的原始文本。当前内置 adapter 返回完整原始行，公开 `query.raw()` 再对它分片。 |
+| `totalLength?` | Provider 若已知完整文本长度可以显式提供；query 层否则使用 `text.length`。 |
+| `offset?`      | Provider 级响应的可选片段位置；当前公开分片主要由 query 层完成。 |
+| `limit?`       | Provider 级响应的可选长度元数据。 |
+| `hasMore?`     | Provider 级响应的可选后续标记。 |
 | `messageText?` | Provider 投影的完整消息体，可为 `null`；用于展示完整解析消息，不一定等于原始行的 `text`。 |
 
-这些字段为分页响应预留了形状，但 `RawLookup` 尚无 `offset` / `limit` 请求参数，Claude、Codex、Pi 的当前实现也都读取并返回完整 JSONL 行；因此它现在不是可协商的分页协议。若原始行长度成为问题，应先给 `RawLookup` 加请求范围，再让 adapter 按范围返回并设置这四个字段。
+要区分两层“分片”：沙箱公开的 `raw(uuid, { offset, limit })` 已经支持分片，但它是先让 adapter 读回完整文本，再在 `query.ts` 中执行 `slice()`。`RawLookup` 本身还没有 `offset` / `limit`，所以这不是 Provider 端的按需 I/O 协议。若单行原文大到读取成为瓶颈，需要先扩展 `RawLookup`，再让 adapter 真正按范围回源。
 
 #### `ProviderAdapter`：完整可注册对象
 
@@ -2149,7 +2226,7 @@ jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcrip
 | `deleted_at`     | TEXT    | 删除时间（软删除）     |
 | `deleted_reason` | TEXT    | 删除原因               |
 
-`memories` / `memories_fts` 也不由 Provider 产出。它们属于用户批准的长期记忆域，`createAttuneApi()` 的 `remember()` / `forget()` 写入或软删除；`query.memories()` 搜索它。二者与 Provider 事实库的连接来自 session/message anchor，而不是 `TranscriptRecord.kind = 'memory'`。这条分离保证强制重建来源索引时不会把人工记忆误当作可重放数据清空。
+`memories` / `memories_fts` 也不由 Provider 产出。它们属于用户批准的长期记忆域，`createAttuneApi()` 的 `remember()` / `forget()` 写入或软删除；`query.memories()` 搜索它。它们通过 `session_id`、`message_start` 和 `message_end` 与 Provider 证据关联，而不是 `TranscriptRecord.kind = 'memory'`；`anchors` 已是仅为老库保留的 legacy 列。这条分离保证强制重建来源索引时不会把人工记忆误当作可重放数据清空。
 
 #### B-Tree 索引：加速 messages、memories 常用查询路径
 
@@ -2690,82 +2767,6 @@ ON CONFLICT(agent_id) DO UPDATE SET
 
 ## 五、query helpers `query.ts`
 
-> CodeAct 代表了一种先进的 AI 智能体设计范式，它通过将 **“编写可执行代码”** 作为核心行动方式，极大地增强了 AI 处理复杂任务、操作数据和与外部世界交互的能力。
->
-> 1. **接收任务**：智能体收到用户的自然语言指令，例如：“分析这份销售数据并生成趋势图”。
-> 2. **生成代码**：智能体（大语言模型）根据指令，生成一段可执行的 **JavaScript 代码**作为它的“行动”。
-> 3. **执行代码**：这段代码会被发送到一个**沙盒环境**（一个安全的隔离执行空间）中运行。
-> 4. **获取反馈**：智能体收到代码执行的**结果**，可能是正确的输出，也可能是报错信息。
-> 5. **迭代优化**：如果结果不正确或出现错误，智能体会根据反馈**动态修改**代码并重新执行，直到问题解决。
-
-1、搜索流程
-
-```ts
-trajex.ts --search "xxx"
-  -> core.ts searchText("xxx")
-    -> buildIndex()                    // 先索引最新数据
-    -> openReadDb()
-    -> createQueryApi(db).search("xxx")
-      -> 在 messages_fts 中全文搜索
-    -> db.close()
-```
-
-2、查询流程
-
-```ts
-trajex --query <file.js>
-  -> core.ts executeQuery(scriptContent)
-    -> buildIndex()
-    -> 启动 sandbox worker
-      -> worker openReadDb()
-      -> createQueryApi(db)
-      -> node:vm 在受限 context 中执行脚本
-         -> 沙箱内提供 sql(), search(), context(), sessions(), etc.
-      -> worker finally 关闭 db
-    -> 主线程接收结果并 emit() 序列化 stdout JSON
-  	-> Agent 根据 JSON 回答自然语言
-```
-
-3、记忆操作流程
-
-```ts
-trajex.ts --attune <file.js>
-  -> core.ts executeAttune(scriptContent)
-    -> buildIndex()
-    -> 启动 sandbox worker
-      -> acquireWriterLease()         // worker 内获取写入锁
-      -> 锁内再次检查 daemon 活跃状态
-      -> openDb()
-      -> BEGIN IMMEDIATE
-      -> node:vm 在受限 context 中执行脚本
-        -> 沙箱内仅提供 remember() / forget()
-      -> COMMIT；失败则 ROLLBACK
-      -> 关闭 db 并 release()
-```
-
-```ts
-searchText ：无脚本 → 无沙箱；只读 → 无锁
-executeQuery：有脚本 → 沙箱；只读 → 无锁
-executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
-```
-
-* 是否沙箱 = 是否有用户代码
-
-  - searchText 没有用户代码，只是个固定内置操作 `createQueryApi(db).search(...)` 直接调，不需要 VM；
-
-  - executeQuery / executeAttune 跑的是用户提供的脚本，必须 runInSandbox 隔离全局。
-
-* 是否拿锁 = 是否写库
-
-  - searchText / executeQuery 都只使用 `openReadDb()`（只读连接；executeQuery 由 sandbox worker 打开），不可能改数据，所以不需要 lease；
-
-  - executeAttune 要写 memories，先由主线程执行 buildIndex 检查，再由 sandbox worker 完成 acquireWriterLease → 锁内复查 heartbeat → openDb → 事务执行脚本 → 关库放锁。
-
-> vm sandbox 本质就是：Node 把 V8 的 context 单独开一个，把自己注入的全局全部撤掉。
->
-> - V8 自带的东西（ JSON 、 Math 、 Array 、 Date …）在任何 context 里都在；
-> - process 、 require 、 module 、 fs 、 Buffer 这些是 Node 层加进全局的，不是 V8 的 ——所以新 context 里默认没有，脚本才碰不到文件系统。sandbox 的隔离就是"去掉 Node 的注入，只留 V8 的核心"。
-
 ### Query API：只读证据检索
 
 `createQueryApi(db)` 创建 16 个只读方法注入沙箱。全部是闭包捕获 `db`（查询 worker 打开的只读连接，生命周期由 worker 的 `finally` 管理）；返回值都是纯数据对象，脚本 `return` 后由 CLI 序列化为 JSON。
@@ -2919,3 +2920,167 @@ interface SessionDetailSnapshot {
 4. **assistant 普通正文**：吸收后面紧跟的 tool_use 的 `tool_calls`，形成"正文 + 工具调用"的一条消息；没有可吸收的调用时删除空的 `tool_calls` 字段。
 
 这正是为什么 provider 层只需产出规范 records——最终的 UI 可读结构（合并、折叠、嵌套）全部收敛在 assembly 这一层。
+
+## 七、并发与写入所有权
+
+Trajex 有多种可能的写者：App daemon 的增量构建、App 手动重建、CLI 查询前的被动构建、App 心跳以及 `attune` 记忆写入。它们共享一个主库，因此并发正确性不能只靠 `busy_timeout`。
+
+```text
+心跳（policy）       现在应该由谁写？
+      ↓
+writer lease（mutex） 无论心跳是否过期，写者都不能重叠
+      ↓
+写事务（atomicity） BEGIN IMMEDIATE → work → COMMIT / ROLLBACK
+      ↓
+有界重试（policy）   只重放已确认结束且幂等的整个事务
+```
+
+### 心跳是软所有权，租约是硬互斥
+
+App 默认每 30 秒写入一次 `__app_heartbeat__`，Core 将 60 秒内的心跳视为新鲜。心跳新鲜时 CLI 可以只读查询，但不应建表、迁移、索引或 attune。
+
+writer lease 使用独立的 `writer.lock.sqlite`。获取时在锁库上执行 `BEGIN IMMEDIATE`，保持该事务直到 `release()`；进程崩溃或连接关闭时 SQLite 自然释放锁。独立锁库让 `node:sqlite` 和 `better-sqlite3` 共享同一套跨平台互斥语义，也避免主库业务事务与锁的生命周期耦合。
+
+检查顺序是不可交换的：
+
+```text
+1. 只读检查 heartbeat
+2. heartbeat 新鲜 → 退回只读
+3. 尝试获取 writer lease
+4. 持有 lease 后再检查一次 heartbeat
+5. 仍无活跃 daemon → 才打开写连接
+```
+
+第 4 步关闭了首次检查与取锁之间的 TOCTOU 窗口。`buildIndex()` 和 attune worker 都遵守这个顺序。
+
+### 事务原语与重试策略分开
+
+`tx.ts` 只执行一次 `BEGIN IMMEDIATE → work → COMMIT`，不自行重试。`BEGIN IMMEDIATE` 在 work 之前就取写锁，将竞争失败提前到尚未产生副作用的位置。
+
+失败时始终重新抛出原始异常；rollback 失败只作为 `error.trajex` 中的诊断信息，不能覆盖主异常。`write-coordinator.ts` 再根据失败阶段、`SQLITE_BUSY*` 和事务是否明确已结束决定是否重试：
+
+| 状态 | 决策 |
+|---|---|
+| `BEGIN` 阶段 busy | 当前 build 停止/延后，因为 work 尚未开始 |
+| work/commit busy，且事务明确不活跃 | 最多 3 次、1 秒总预算，重放整个幂等事务 |
+| 事务仍活跃或状态不明 | 立即抛出，连接不再可安全复用 |
+| 非 busy 错误 | 不重试 |
+
+`busy_timeout` 只是短暂等待，不是正确性方案：它不能修复过期快照，更不能保证部分执行后重试单条 SQL 的安全。
+
+## 八、增量、重放与自愈
+
+Trajex 有三个不同尺度的“重新来过”：
+
+| 层次 | 触发 | 作用范围 | 主要用途 |
+|---|---|---|---|
+| Cursor | unit 发生变化或上次失败 | 单个 `IndexUnit` | 增量恢复和自然重试 |
+| Provider 版本标记 | 解析语义的 marker 缺失，且库中已有该来源数据 | 当前实现会进入全局 canonical rebuild | 用重放取代复杂的派生数据迁移 |
+| Force rebuild | 用户执行 `trajex --build` | 全部 transcript 派生表 | 清理遗留投影、恢复索引一致性 |
+
+### Cursor 同时是进度与重试队列
+
+`parse()` 的 generator 在产出全部 record 后 `return Cursor`。`persist()` 只在 generator 正常结束后写回该 cursor，而 parse、persist 和 cursor 写回在同一 unit 事务中。因此：
+
+- 成功：记录与新游标一起提交。
+- 失败：记录回滚，游标留在原地，下次 discover 自然再安排。
+
+当前 `Cursor` 的 TypeScript 类型虽是 `string | null`，但持久化协议实际限制为 `"mtime:lines"`：`persist()` 拆成 `index_state.mtime` / `lines_processed`，`storedProviderCursor()` 再拼回。内容语义归 Provider，存储外形并不完全不透明。
+
+### 版本标记是投影协议，不是 schema 版本
+
+当 Provider 的去重、可见性、分支选择或 ID 策略发生变化时，仅修改代码不会自动修复已有 SQLite 投影。正确做法是提升 `indexVersionMarker`。当新 marker 缺失且旧数据存在时，计划层使用空游标全量重放；只有该 Provider 的所有 unit 都成功且构建未中途停止，新 marker 才会写入。
+
+当前 `createProviderIndexPlan()` 将任一已有 Provider 的 marker 升级视为 `fullRebuild`，所有 Provider 都用空游标重放。文档中不应再把它表述为“只重放某一个 Provider”。
+
+### 破坏性清理前先证明来源清单完整
+
+全量重建前，`assertRebuildRootsAvailable()` 检查库中已有 Provider 的来源根是否可完整枚举。如果根目录暂时挂载失败或无法读取，构建在清表前终止。这区分了两种外观相似、后果相反的情况：
+
+- 已完整枚举根目录，某个旧文件确认消失：可通过 `retractSessionIds` 产生 tombstone，原子撤回旧投影。
+- 根目录自身不可用：没有证据说明旧会话已删除，必须保留快照并稍后重试。
+
+`force` 清理的是 8 张 transcript 派生表和相关索引状态，不清理 `memories`。这不只是实现细节，而是数据分类的执行结果。
+
+## 九、记忆层的生命周期
+
+Trajex 的 memory 不是数据库中的大段正文，而是“**已存在的文件 + `memories` 注册记录**”：
+
+```text
+原始证据 → Agent 归纳结论 → 用户确认并写文件
+                                  ↓
+                   remember(path, summary, evidence range)
+                                  ↓
+                      memories / memories_fts
+                                  ↓
+          memories() 先召回摘要 → 确实相关时再读文件
+                                  ↓
+                  forget(id, reason) 软删除/归档
+```
+
+`remember()` 强制 `path` 指向已存在的普通文件，并要求英文 summary。attune 沙箱本身没有文件写入能力，因此内容的生成/审批必须先发生在普通文件写入路径。`forget()` 要求理由，只填充 `deleted_at` / `deleted_reason`，不删数据库行，也不删文件。
+
+当前 API 故意没有 `updateMemory()`。如果结论变化，使用“归档旧记忆 + 注册新记忆”保留认知演化历史。
+
+批准边界可概括为：
+
+- 是否在当前答案里使用某条已有 memory：Agent 自己判断，无需额外批准。
+- 用户明确要求记住、忘记或替换某条结论：该请求本身是对精确对象的批准，无歧义时不要二次确认。
+- Agent 自己发现可能过时或冲突：先展示证据并询问，不擅自改变 memory 状态。
+
+Memory 是以前的笔记，不是最终权威。当答案正确性依赖它时，应回到 session/message/raw 证据核对。
+
+## 十、二开检查表与已知边界
+
+### 改动应该落在哪里
+
+| 需求 | 主改动点 | 不应出现的绕行 |
+|---|---|---|
+| 新增 Provider | `providers/<name>.ts` + `builtins.ts` | 让 query/UI 解析该 Provider 的 JSONL |
+| 修正某来源的语义 | 该 adapter + 提升 `indexVersionMarker` | 只修已有 SQLite 行或只在 UI 打补丁 |
+| 新增查询能力 | `query.ts` + 同步 Skill/API 文档 | 在 CLI 或 App 里复制 SQL |
+| 改 transcript 写语义 | `persist.ts` | 让 adapter 直接操作 DB |
+| 改展示组装 | `session-detail.ts` | 引入 `source` 分支或重新猜测 wire 语义 |
+| 加列 | `schema.sql` + `schema-migrations.ts` | 只改新库 DDL，不照顾老库 |
+
+### 新增/修改 Provider 时必须回答
+
+1. 一个 `IndexUnit` 是文件、目录，还是其他稳定身份？
+2. 可以尾部增量，还是必须全量重放？`countMode` 应是 `delta` 还是 `total`？
+3. 删除、undo、分支替换如何表达？是 `delete-session`、`retractSessionIds` 还是可见性变化？
+4. 哪些消息是 `visible` / `inactive` / `hidden`？这个判断必须在 adapter 内完成。
+5. ID 如何加 Provider 前缀并在重放后保持稳定？
+6. `raw()` 如何从规范 UUID 回到原始证据？
+7. 根目录不可用时如何报告 inventory issue？什么证据才足以判定旧 session 确已删除？
+8. 解析语义改变时是否同步提升 marker？
+
+### 三条没有类型保护的脆弱规则
+
+1. Provider adapter 和 `parsing.ts` 不能引入 `node:sqlite`，否则 CLI 可能正常而 Electron 运行时失败。
+2. `messages` upsert 不能把 `turn_duration_ms` 加入普通 message 的更新列清单，否则全量重放会清空由 `message-turn-duration` 独立补写的值。
+3. `fullReindex` 时必须忽略 `changedPaths`，否则“全量重放”会静默退化为局部重放。
+
+### 已知边界
+
+- Cursor 在语义上归 Provider，在持久化上仍被约束为两个数字字段；不能直接容纳任意 opaque token。
+- `index_state` 同时充当 unit cursor 表、Provider 版本标记表和进程间信号板，务实但命名与职责已有漂移。
+- schema 没有外键，以允许多 unit 乱序、部分到达；代价是 `deleteSession()` 必须手写删除顺序与级联范围。
+- 检索投影会将长文本裁剪到可控规模（通用上限 10,000 字符，不同字段可用更小预览）；需要完整证据时应通过支持 `offset` / `limit` 的 `raw()` 回源。源日志已删除时，裁剪掉的部分无法从索引恢复。
+- `schema.sql` 是新库的意图，老库的实际状态由 `PRAGMA table_info` / `sqlite_master` 决定。由于迁移只追加列，新旧库的列顺序必然可能不同，所有代码都应按列名访问。
+- 单 writer 模型以吞吐上限换取简单与安全。对本地索引这是合理取舍；只有实测成为瓶颈时才值得引入更细粒度并发写。
+
+## 十一、建议的源码阅读顺序
+
+```text
+1. packages/cli/src/trajex.ts                 看四个公共动词与 transport 边界
+2. packages/core/src/core.ts                  看 schema 就绪门、被动索引和 Worker 调度
+3. packages/core/src/providers/types.ts       看共同语言与 Provider 契约
+4. packages/core/src/schema.sql               看序列化投影，不要反过来当成语义源头
+5. packages/core/src/persist.ts                看 record 如何变成行
+6. packages/core/src/provider-indexing.ts      看计划、游标、版本标记与 unit 事务
+7. packages/core/src/indexer.ts                看一次 build 如何收敛
+8. packages/core/src/providers/claude.ts       先读行增量，再对照 Codex/Pi 全量重放
+9. packages/core/src/query.ts                  看 CodeAct helper 与 memory API
+10. packages/core/src/session-detail.ts        看 provider 无关的展示投影
+11. packages/core/src/tx.ts / writer-lease.ts  最后读横切并发不变量
+```

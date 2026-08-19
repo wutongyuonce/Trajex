@@ -10,24 +10,38 @@ Trajex App 是一个 Electron 桌面程序：它在本机持续监听 Claude Cod
 
 ```text
 Agent 写本机历史文件
+Claude、Codex、Pi 等工具各自会把会话、消息、执行记录写到本地文件。
+这一步是“原始数据产生”，Trajex 不需要让 Agent 改接自己的接口。
         │
         ▼
-Electron 主进程的文件监听服务（chokidar）
-        │  收集变化、等待文件写完、去抖
-        ▼
-Node worker thread（app/src/main/indexer-worker.ts）
-        │  调用 core 的 provider / persist 能力
-        ▼
-~/.trajex/trajex.sqlite
+Electron 主进程监听文件（chokidar）
+App 像一个后台观察员，盯着这些历史目录有没有新增或修改文件。
+它会等文件写完、合并短时间内连续变化，避免 Agent 正在写文件时就读到半截内容。
         │
         ▼
-Electron main 的 IPC handler（SQL 查询、组装详情）
+Node Worker Thread 做索引
+监听服务发现稳定变化后，把处理工作交给后台 worker。
+Worker 负责读取历史、识别不同 Agent 的格式、提取会话和消息，并把数据存起来；放在 worker 中可避免卡住 Electron 主进程和界面。
         │
         ▼
-preload 注入的 window.trajex 白名单 API
+~/.trajex/trajex.sqlite 本地数据库
+这是 Trajex 的“统一记忆库”。
+原始历史可能是很多工具、很多格式、很多文件；数据库把它们整理成可查询的结构，并保存索引、摘要、关系或标记等衍生信息。
         │
         ▼
-Vue renderer（列表、详情、Memory、Activity、Settings）
+Electron main 的 IPC handler 查询与组装
+页面不能直接随意访问本机文件或数据库，因此会向主进程发请求，例如“给我最近会话”“加载这个会话详情”。
+主进程执行 SQL、补齐关联数据，再返回页面真正需要的结果。
+        │
+        ▼
+preload 注入 window.trajex 白名单 API
+这是安全闸门。网页界面只拿到明确允许的少量能力，例如 listSessions()、getSession()；它拿不到 Node、文件系统或任意 SQL 权限。
+所以即使页面代码出问题，危害范围也更小。
+        │
+        ▼
+Vue renderer 渲染界面
+最后 Vue 把 API 返回的数据变成列表、详情、Memory、Activity、Settings。
+它负责展示和用户交互，不负责直接读文件、建索引或操作数据库。
 ```
 
 因此，排查问题时先问它属于哪一层：
@@ -62,11 +76,6 @@ Electron 同时具备「桌面程序」和「网页」能力，但它不会把�
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **main process**：程序的「后端」。`app/src/main/index.ts` 是入口。这里可以调用 `fs`、SQLite、Electron 的 `BrowserWindow`、文件选择框等。
-- **renderer**：窗口里的网页。Vue 代码在 `app/src/renderer/src/`，写法就是普通 Vue 3 单页应用。
-- **preload**：夹在两者之间的桥。它既能使用 Electron 的 `ipcRenderer`，又能安全地向网页暴露非常小的一组函数。
-- **worker thread**：不是第四种 UI 进程，而是 main 创建的后台 Node 线程。索引可能很慢，放进 worker 后主进程仍能响应窗口和 IPC。
-
 ### 1.2 为什么 renderer 不能直接 `import fs`
 
 创建窗口时，main 明确设置：
@@ -87,7 +96,7 @@ const sessions = await window.trajex.getSessions({ source: 'all' });
 
 ### 1.3 IPC 是什么
 
-IPC（Inter-Process Communication）就是进程间调用：
+IPC（Inter-Process Communication）就是**进程间调用**：
 
 ```text
 renderer: window.trajex.getSessions()
@@ -170,6 +179,106 @@ npm run test:local-links       # 本地 Markdown 链接纯 Node 测试
 ```
 
 打包时 `schema.sql` 会被作为额外资源带入应用；`better-sqlite3` 被解包，以便它的原生模块能被 Electron 加载。
+
+### 3.1 安装后的 `.app`：二进制、代码和原生模块分别是什么
+
+macOS 打包完成后，Trajex 的 `.app` 大致是下面这个样子（省略图标、框架和签名文件）：
+
+```text
+Trajex.app/
+└── Contents/
+    ├── MacOS/Electron                 Electron 宿主二进制
+    └── Resources/
+        ├── app.asar                   打包后的 App JS / HTML / CSS 等资源
+        ├── app.asar.unpacked/         需要真实文件路径的原生模块
+        │   └── node_modules/better-sqlite3/.../*.node
+        └── scripts/schema.sql         extraResources 带入的数据库 schema
+```
+
+- **`Electron` 宿主二进制**：是真正的机器码。Electron 在编译时已组合 Chromium、Node.js 和 Electron 自身的原生能力；它启动后负责创建 main process 和 renderer process。
+- **`app.asar`**：是应用资源归档，不是把 TypeScript/JavaScript 编译成机器码。Electron/Node 会从中读取构建后的 JavaScript，再由 V8 在运行时执行。它的作用主要是整理和打包应用资源，不是安全边界。
+- **`better-sqlite3` 的 `.node` 文件**：是提前用 C/C++ 编译的原生动态库。系统动态加载器需要真实的磁盘文件路径，因此 `app/package.json` 用 `asarUnpack` 把它放到 `app.asar.unpacked/`，而不是只留在归档内。
+- **`schema.sql`**：不是运行时代码，而是 App 创建或迁移 SQLite 时要读取的数据文件；项目通过 `extraResources` 将它放进 `Resources/scripts/`。
+
+启动链路可以理解成：**宿主二进制启动 → 读取 `app.asar` 中的 main 入口 JS 解析为机器码指令→ main 创建窗口和后台服务 → Chromium 加载 renderer 页面**。开发模式下 renderer 来自 Vite 开发服务器；生产模式下来自构建后的本地 `index.html`。
+
+### 3.2 main、preload、renderer、worker 实际在哪运行
+
+它们都能写 JavaScript，但不是同一个执行环境，也不应互相越权：
+
+```text
+Electron 宿主进程
+│
+├─ main process（一个 Node/Electron 主进程）
+│  ├─ 创建 BrowserWindow、监听文件、访问 SQLite、处理 IPC
+│  └─ 启动 Node worker thread 做索引
+│
+└─ BrowserWindow
+   └─ Chromium renderer process（每个窗口一个网页进程）
+      ├─ preload 的 isolated world：可用 ipcRenderer，只做安全桥
+      └─ renderer 的 main world：Vue、DOM、CSS，只能用 window.trajex
+```
+
+- **main process** 是桌面 App 的后端：本项目入口是 `app/src/main/index.ts`。它有 Node 和 Electron 的系统权限。
+
+- **renderer process** 是窗口里的 Chromium 网页进程。Vue 应用运行在这里；每个 `BrowserWindow` 都会有独立的 renderer process。
+
+- **preload** 不是另一个进程。它和 Vue 同在 renderer process，但运行在 Chromium 的 **isolated world**（独立 JavaScript world/全局对象）中，页面脚本不能直接取得它的 `ipcRenderer`。
+
+- **Node worker thread** 也不是一个新 Electron 窗口或一个独立命令行程序；它是 main process 用 Node.js `worker_threads` 开出的后台线程。它有自己的 V8 isolate，适合文件扫描、JSONL 解析和 SQLite 写入，避免阻塞 main 的窗口与 IPC 工作。
+
+  ```ts
+  import { Worker } from 'node:worker_threads'
+  new Worker('indexer-worker.ts')
+  ```
+
+可以粗略说「Electron 各层都由 V8 执行 JavaScript」，但不要把它理解为一个共享的 V8 实例：main、worker、renderer 都有独立的 JavaScript 执行环境；preload 与页面则是同一 renderer process 内的不同 world。
+
+### 3.3 这套设置如何限制权限
+
+`createWindow()` 使用了下面的配置：
+
+```ts
+webPreferences: {
+  preload: path.join(__dirname, '..', 'preload', 'index.js'),
+  contextIsolation: true,
+  nodeIntegration: false,
+}
+```
+
+- `nodeIntegration: false`：Vue 页面没有 `require`、Node `process`、`fs` 等 Node 全局能力，不能直接读写用户文件。
+- `contextIsolation: true`：preload 和页面脚本的 JavaScript 上下文相互隔离。页面即使覆盖自己的 `window` 属性，也不能取得 preload 内部持有的 `ipcRenderer`。
+- `preload`：项目用 `contextBridge.exposeInMainWorld('trajex', {...})` 只暴露 `window.trajex` 中列出的函数。例如 `getSessions()` 只能请求 `db:getSessions`，它既不能执行任意 SQL，也不能任意调用 Node API。
+
+完整请求方向是：
+
+```text
+Vue renderer
+  window.trajex.getSessions()
+      ↓ contextBridge 暴露的包装函数
+preload isolated world
+  ipcRenderer.invoke('db:getSessions')
+      ↓ Electron IPC
+main process
+  ipcMain.handle('db:getSessions', handler)
+      ↓
+SQLite / 文件系统；结果按 Promise 原路返回
+```
+
+因此，preload 的 API 是权限白名单，而不是方便 Vue 调用 Electron 的普通工具文件。新增能力时应由 main 校验输入并处理实际操作，再显式加到 preload；不要把 `ipcRenderer`、`fs` 或数据库连接直接暴露给页面。
+
+### 3.4 本项目构建设置与运行时的对应关系
+
+`app/electron.vite.config.ts` 将源码拆成三份产物：main 输出到 `out/main/`，preload 输出为 Electron 可加载的 CommonJS `out/preload/index.js`，renderer 输出为静态网页资源。worker 也被列为独立 main entry，才能在打包后由 `new Worker(.../indexer-worker.js)` 加载。
+
+`app/package.json` 中和上述结构直接相关的配置是：
+
+| 配置 | 当前作用 |
+| --- | --- |
+| `main: "out/main/index.js"` | 指定 Electron 启动的 main 入口 |
+| `files: ["out/**"]` | 将三个构建产物带入安装包 |
+| `asarUnpack: ["node_modules/better-sqlite3/**/*"]` | 让 `better-sqlite3` 原生 `.node` 模块留在真实文件系统中 |
+| `extraResources` | 将 Core 的 `schema.sql` 复制到应用 Resources 目录 |
 
 ## 4. 从启动到看到页面：完整启动链路
 
@@ -600,19 +709,7 @@ App 的测试不要求 UI 截图，而是验证最容易回归的机制：
 
 非 UI 逻辑变动时，优先补最小可运行测试到对应目录；纯一行样式或文案不必强行添加测试。更完整的 provider、schema、persist、query 测试在根目录和 `packages/core`，见 `cli&core-analysis.md`。
 
-## 14. Electron、Tauri、Electrobun：为什么这里是 Electron
-
-这不是当前 App 的运行机制必读内容，但保留作技术选型背景。
-
-| 框架 | 后端运行时 | 页面内核 | 取舍 |
-| --- | --- | --- | --- |
-| Electron（本项目） | Node.js | 自带 Chromium | 体积较大，但前端/Node 生态成熟，跨平台渲染一致 |
-| Tauri | Rust | 系统 WebView | 包体小，但需要 Rust，且不同系统 WebView 要额外验证 |
-| Electrobun | Bun / TypeScript | 通常系统 WebView，可选 Chromium | TypeScript 体验轻，生态仍较年轻 |
-
-Trajex 需要本地文件监听、SQLite 原生模块、Node worker thread 和成熟的桌面 API。对一个 Vue/Node 团队，Electron 的「主进程 + preload + renderer」模型直接匹配现有技术栈；代价是安装包通常比系统 WebView 方案大。
-
-## 15. 最后再记住四条原则
+## 14. 最后再记住四条原则
 
 1. **Core 管事实，App 管常驻索引和阅读体验。** Provider 原始格式不要泄漏进 Vue。
 2. **main 有权限，renderer 没权限，preload 是门卫。** 新能力走白名单 IPC。

@@ -12,3 +12,5 @@ HANDOFF.md
 .obelisk/
 app/build/
 app/scripts/
+third_party/
+eval/runs

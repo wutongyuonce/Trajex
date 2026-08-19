@@ -7,6 +7,12 @@
 - 支持通过 `PI_CODING_AGENT_SESSION_DIR` 与 `TRAJEX_DIR` 为 CLI/Core 指定隔离的 Pi 会话根和索引目录，便于评测或临时任务避免触碰默认用户数据。
 - 支持索引、监听和读取 `~/.codex/archived_sessions` 中的 Codex 归档会话。
 - 测试统一清理通过 `mkdtempSync` 创建的临时目录，避免重复运行测试后耗尽系统临时目录空间。
+- 新增 `eval/longmemeval/` 评测 harness：包含 LongMemEval 抽样与 session 转换脚本、四个记忆 arm（`none` / `full` / `rag_raw` / `trajex_active`）的 runner、官方 judge 与 Pi judge、正式/烟雾 lock，以及写出独立 run bundle、telemetry 和 `summary.md` 的实验总脚本。
+
+### Changed
+
+- 新增 `eval/README.md` 统一说明三类记忆评测面板与 LongMemEval 的完整运行步骤；当前真正落地的评测代码仅覆盖 LongMemEval，LoCoMo 与 SWE retry 仍是文档中的预留/规划项。
+- `.gitignore` 现在忽略 `third_party/` 外部依赖与 `eval/runs/` 实验产物，避免把官方基准仓库和本地评测输出误纳入版本控制。
 
 ### Fixed
 

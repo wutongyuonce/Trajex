@@ -1,0 +1,28 @@
+{
+  "longmemeval": {
+    "input": "../../third_party/LongMemEval/data/longmemeval_s_cleaned.json",
+    "manifest": "manifest.jsonl",
+    "work": "work",
+    "runs": "runs/longmemeval",
+    "sample": {
+      "size": 500,
+      "seed": "trajex-v1"
+    },
+    "pi": {
+      "model": "<Pi model name>",
+      "command": "pi"
+    },
+    "arms": ["none", "full", "rag_raw", "trajex_active"],
+    "trajex_command": "trajex",
+    "embedding": {
+      "base_url": "https://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "model": "text-embedding-v4"
+    },
+    "judge": {
+      "kind": "official",
+      "evaluator_dir": "../../third_party/LongMemEval/src/evaluation",
+      "model": "gpt-4o",
+      "python": "../../third_party/LongMemEval/.venv/bin/python"
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "longmemeval": {
+    "input": "../../third_party/LongMemEval/data/longmemeval_s_cleaned.json",
+    "manifest": "manifest.jsonl",
+    "work": "work",
+    "runs": "runs/longmemeval",
+    "sample": { "size": 10, "seed": "trajex-smoke-10-v1" },
+    "pi": { "model": "deepseek-v4-flash" },
+    "arms": ["none", "full", "trajex_active"],
+    "embedding": {
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "text-embedding-v4"
+    },
+    "judge": { "kind": "pi" }
+  }
+}

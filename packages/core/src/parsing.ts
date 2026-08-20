@@ -126,8 +126,8 @@ function readLines(filePath: string, callback: (line: string) => boolean | void)
   let bytesRead;
   try {
     while ((bytesRead = readSync(fd, buf, 0, bufSize, null)) > 0) {
-      const chunk = remainder + decoder.write(buf.subarray(0, bytesRead));
-      const lines = chunk.split('\n');
+      const lines = decoder.write(buf.subarray(0, bytesRead)).split('\n');
+      lines[0] = remainder + lines[0];
       remainder = lines.pop() ?? '';
       for (const line of lines) {
         if (line && callback(line) === false) return;

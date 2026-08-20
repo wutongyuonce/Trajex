@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- 修复读取超长 JSONL 行时重复拼接导致的性能退化问题，改为线性处理。
 - 修复 Markdown 中的 HTTP(S) 链接会替换 Trajex 当前页面的问题；现在统一在系统默认浏览器打开。
 - 修复 App 主进程打包遗漏 Core schema 导致索引模块启动时报 `schema.sql` 不存在的问题。
 - 修复 App daemon 运行时 `trajex --attune` 无法写入已初始化的 approved durable memory：记忆变更现在使用独立短事务、有界 SQLite 锁重试，并避免 ID 冲突覆盖已有记忆。

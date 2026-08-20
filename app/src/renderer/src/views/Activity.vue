@@ -676,6 +676,12 @@ onUnmounted(() => stopUsageUpdates());
   transition: opacity 0.1s;
 }
 .chart-tooltip.show { opacity: 1; }
+[data-theme='light'] .chart-tooltip {
+  background: var(--surface);
+  border-color: var(--hairline-strong);
+  color: var(--fg);
+  box-shadow: 0 4px 12px rgba(28, 28, 30, 0.12);
+}
 
 /* Session activity ledger */
 .session-activity { margin-top: 28px; }

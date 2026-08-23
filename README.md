@@ -28,10 +28,6 @@ Trajex 源自 [tommy0103/obelisk](https://github.com/tommy0103/obelisk)，基于
 
 Pi 会话支持的实现骨架来自上游 [PR #4](https://github.com/tommy0103/obelisk/pull/4)；当前会话身份、tombstone 以及 compaction / retained tail 等设计语义来自上游 [PR #23](https://github.com/tommy0103/obelisk/pull/23)。未来 Trajex 可能会在不破坏现有功能与兼容性的前提下，同步 [obelisk](https://github.com/tommy0103/obelisk) 的后续改动。感谢 obelisk 的开发者为 Agent 基础设施和智能体工程实践所作出的贡献。
 
-## 许可证与版权
-
-Trajex 采用 [GNU AGPL-3.0-only](LICENSE) 许可证发布。源自 Obelisk 的代码版权归 `tommy0103 and contributors` 所有；Trajex 的修改和新增代码版权归 `wutongyuonce and contributors` 所有。衍生作品须保留适用的版权与 SPDX 许可证声明。
-
 ## 同一个索引的两面
 
 Trajex 有两面，它们共享同一个 SQLite 索引：
@@ -343,3 +339,7 @@ docs/adr/                     # Architecture decision records（0001–0006）
 - `packages/core/dist/` 由 `npm run build:core` 生成。它是编译后的内部 `@trajex/core` workspace：JavaScript、type declarations 和 `schema.sql`。
 - `packages/cli/dist/` 由 `npm run build:cli` 生成。它是可发布的 `@trajex-apps/cli` payload：薄命令 shell、可读的 compiled Core，以及 `schema.sql`。
 - `packages/cli/dist/` 是生成产物，不应该手动编辑。Electron app 会直接 import `packages/core/src/`，以便 electron-vite 可以 bundle Core。
+
+## 许可证与版权
+
+Trajex 采用 [GNU AGPL-3.0-only](LICENSE) 许可证发布。

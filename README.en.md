@@ -15,8 +15,6 @@
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-<sub>[Website](https://trajex-web.vercel.app) · [Documentation](https://trajex-web.vercel.app/#/tutorials) · [Download App](https://github.com/wutongyuonce/Trajex/releases/latest)</sub>
-
 </div>
 
 Parses JSONL history from different providers — Codex, Claude Code, Pi — into one canonical record set persisted in SQLite, with millisecond-scale history retrieval via the FTS5 full-text index.

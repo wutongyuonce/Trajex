@@ -15,8 +15,6 @@
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-<sub>[项目网站](https://trajex-web.vercel.app) · [项目教程](https://trajex-web.vercel.app/#/tutorials) · [下载 App](https://github.com/wutongyuonce/Trajex/releases/latest)</sub>
-
 </div>
 
 将来自不同 provider —— Codex、Claude Code、Pi 的 JSONL 历史解析为同一套 canonical record 并持久化至 SQLite，通过 FTS5 全文索引实现毫秒级历史检索。

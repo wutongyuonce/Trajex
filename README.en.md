@@ -1,26 +1,30 @@
-<p align="right">
-  <a href="README.md">中文</a> &nbsp;|&nbsp; <a href="README.en.md">English</a>
-</p>
-
 <div align="center">
+
+<sub><a href="README.md">中文</a> · <strong><a href="README.en.md">English</a></strong></sub>
+
+<br><br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trajex-wordmark-d.svg">
-  <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="540">
+  <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="460">
 </picture>
+
+### A general-purpose local session-memory platform for agents
 
 <a href="https://github.com/wutongyuonce/Trajex/stargazers"><img src="https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square" alt="stars"></a>
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-**[Trajex](https://github.com/wutongyuonce/Trajex) | A general-purpose local session-memory platform for agents**
+<br>
+
+[Website](https://trajex-web.vercel.app) · [Documentation](https://trajex-web.vercel.app/#/tutorials) · [Download App](https://github.com/wutongyuonce/Trajex/releases/latest)
+
+</div>
 
 Parses JSONL history from different providers — Codex, Claude Code, Pi — into one canonical record set persisted in SQLite, with millisecond-scale history retrieval via the FTS5 full-text index.
 
 * Built on the **CodeAct agent design paradigm**, with a programmable JS Query API that lets agents make **“writing executable code”** their core mode of action
 * Ships with an Electron + Vue desktop app that turns the same index into a readable session timeline for humans to browse
-
-</div>
 
 ## Acknowledgements
 

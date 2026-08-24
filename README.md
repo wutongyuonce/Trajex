@@ -1,26 +1,30 @@
-<p align="right">
-  <a href="README.md">中文</a> &nbsp;|&nbsp; <a href="README.en.md">English</a>
-</p>
-
 <div align="center">
+
+<sub><strong><a href="README.md">中文</a></strong> · <a href="README.en.md">English</a></sub>
+
+<br><br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trajex-wordmark-d.svg">
-  <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="540">
+  <img src=".github/assets/trajex-wordmark-l2.svg" alt="Trajex" width="460">
 </picture>
+
+### 面向 Agent 的通用本地会话记忆平台
 
 <a href="https://github.com/wutongyuonce/Trajex/stargazers"><img src="https://img.shields.io/github/stars/wutongyuonce/Trajex?style=flat-square" alt="stars"></a>
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-**[Trajex](https://github.com/wutongyuonce/Trajex)｜面向 Agent 的通用本地会话记忆平台**
+<br>
+
+[项目网站](https://trajex-web.vercel.app) · [项目教程](https://trajex-web.vercel.app/#/tutorials) · [下载 App](https://github.com/wutongyuonce/Trajex/releases/latest)
+
+</div>
 
 将来自不同 provider —— Codex、Claude Code、Pi 的 JSONL 历史解析为同一套 canonical record 并持久化至 SQLite，通过 FTS5 全文索引实现毫秒级历史检索。
 
 * 采用 **CodeAct 智能体设计范式**，提供可编程 JS Query API，让 Agent 将 **“编写可执行代码”** 作为核心行动方式
 * 配套 Electron + Vue 桌面端，将同一份索引转化为可读的会话时间线，用户可通过 App 直观浏览
-
-</div>
 
 ## Acknowledgements
 

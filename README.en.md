@@ -2,7 +2,7 @@
 
 <sub><a href="README.md">中文</a> · <strong><a href="README.en.md">English</a></strong></sub>
 
-<br><br>
+<br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/trajex-wordmark-d.svg">
@@ -15,9 +15,7 @@
 <a href="https://github.com/wutongyuonce/Trajex/releases"><img src="https://img.shields.io/github/v/tag/wutongyuonce/Trajex?label=version&style=flat-square" alt="version"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="license"></a>
 
-<br>
-
-[Website](https://trajex-web.vercel.app) · [Documentation](https://trajex-web.vercel.app/#/tutorials) · [Download App](https://github.com/wutongyuonce/Trajex/releases/latest)
+<sub>[Website](https://trajex-web.vercel.app) · [Documentation](https://trajex-web.vercel.app/#/tutorials) · [Download App](https://github.com/wutongyuonce/Trajex/releases/latest)</sub>
 
 </div>
 

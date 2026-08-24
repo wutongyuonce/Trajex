@@ -250,6 +250,30 @@ guardian 是子线程的特殊变体，标记在 `source.subagent.other`，见�
 
 ## 8. event_msg ↔ response_item 去重
 
+```
+模型/运行时产生原始响应
+        │
+        ├── response_item：协议层原始记录
+        │     ├── message
+        │     ├── reasoning
+        │     ├── function_call
+        │     └── function_call_output
+        │
+        └── event_msg：Codex 面向 UI/事件订阅者的事件流
+              ├── user_message
+              ├── agent_message
+              ├── agent_reasoning
+              ├── token_count
+              └── task_complete
+response_item
+  = API/模型层的事实记录
+  = 工具调用和结果的主要来源
+
+event_msg
+  = Codex runtime/UI 层事件
+  = 文本消息、token、耗时、工具状态通知
+```
+
 同一内容在文件里有两份镜像：`event_msg`（客户端可见事件）与 `response_item`（API 原始响应），配对行相距 ±1 行但**顺序不定**。Trajex 的 `parse` 先整文件读入，第一遍收集所有可见 `event_msg` 的 `(role, text)` 键（`codexVisibleMessageKey`），第二遍遇到 `response_item.message` 时，若 `(role, text)` 已存在则丢弃——**event_msg 优先，response_item 兜底**。
 
 ## 9. Trajex 的处理
@@ -275,8 +299,8 @@ guardian 是子线程的特殊变体，标记在 `source.subagent.other`，见�
    - `session_meta` / `turn_context`：更新 `currentCwd` / `currentModel` / `git_branch` / `version`。
    - `event_msg.context_compacted` → summary `"已 compact"`；`task_complete` → 上一条 assistant 文本消息的 `message-turn-duration`；`token_count` → 会话 token 总和 + 回填上一条 assistant 文本消息 token；`thread_name_updated` → 会话标题。
    - `response_item.message`（`role !== 'developer'`）→ 去重未命中时产生消息。
-   - 工具调用 → 先产生一条 `content_type: 'tool_use'` 的 assistant 消息（`text` 为 null），再写 `tool_call`；`name` 取 `payload.name || payload.tool`，入参序列化进 `input_json`，`file_path` 恒为 null。
-   - 工具结果 → 产生 `content_type: 'tool_result'` 的 user 消息 + `tool_result`。
+   - `response_item` 的 `payload.type` 为 `function_call`、`custom_tool_call`、`tool_search_call` 或带 `call_id` 的 `web_search_call` 时，先产生一条 `content_type: 'tool_use'` 的 assistant 消息（`text` 为 null），再写 `tool_call`；`name` 取 `payload.name || payload.tool`，入参从 `payload.arguments` / `payload.input` / 搜索 action 提取后序列化进 `input_json`，`file_path` 恒为 null。`event_msg` 中的 `patch_apply_end`、`mcp_tool_call_end`、`web_search_end` 等只是生命周期通知，当前不作为独立 `tool_call` 来源。
+   - `response_item` 的 `payload.type` 为 `function_call_output`、`custom_tool_call_output` 或 `tool_search_output` 时，产生 `content_type: 'tool_result'` 的 user 消息 + `tool_result`，通过 `payload.call_id` 关联对应调用。
 5. 结尾产出 `session` record：`started_at` 取最早时间戳，`ended_at` 优先 `session_index.updated_at`，`title` 优先 `session_index.thread_name`，`countMode: 'total'`。
 
 ### 9.3 会话聚合

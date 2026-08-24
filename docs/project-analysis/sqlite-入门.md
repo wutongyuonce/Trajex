@@ -344,12 +344,3 @@ if (!columns.has('source')) {
 5. 查询：根据真实 `WHERE` / `ORDER BY` 添加索引，结果始终限制数量。
 6. 搜索：文本检索使用 FTS5；改动 content-backed 表后确认 FTS 是否同步或需要 rebuild。
 7. 多写者：写入放进事务；出现跨进程写入时再引入 lease 和明确重试策略。
-
-## 12. 进一步阅读
-
-- [数据库生命周期](../packages/core/src/db.ts)
-- [驱动无关结构类型](../packages/core/src/sqlite-types.ts)
-- [完整 schema](../packages/core/src/schema.sql)
-- [持久化 SQL](../packages/core/src/persist.ts)
-- [事务与连接配置](../packages/core/src/tx.ts)
-- [并发设计 ADR](../adr/0003-write-transaction-rollback-and-concurrency.md)

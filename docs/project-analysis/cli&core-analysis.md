@@ -796,9 +796,9 @@ type TranscriptRecord =
 | `agent_count`                  | Provider 报告的 agent 数量，持久化层直接写入该值；当前不会根据 `workflow_agents` 重新计算。 |
 | `duration_ms` / `total_tokens` | 总耗时、总 token；未知为 `null`。                            |
 | `status`                       | 如 running、completed、failed。                              |
+| `workflow_name`                | workflow 名称；可为空。                                      |
 
 Workflow 的父边最终指向 `tool_calls.id`，不是 `tool_results`。Provider 首次解析 workflow JSON 时通过主 transcript 的 `tool_result.tool_use_id` 建立这条边；如果两个文件到达顺序造成首次解析时缺少结果，finalize 阶段的 `healWorkflowParentLinks()` 会在所有 unit 写入后用 `run_id` 再补一次。workflow 名称不参与关联。
-| `workflow_name`                | workflow 名称；可为空。                                      |
 
 8、**`WorkflowAgentRecord` -> `workflow_agents`**
 
@@ -1854,7 +1854,7 @@ source.subagent.parent_thread_id
 {"type":"response_item","payload":{"type":"tool_search_call","call_id":"…","arguments":"…"}}
 ```
 
-三类调用都会产生一条 assistant `message(content_type: 'tool_use')` 和一条 `tool_call`。调用 ID 同样加 thread 命名空间：`codex:<thread-id>:<call-id>`；`arguments` / `input` 会尽可能解析为 JSON，再保存为 `input_json`。
+这些 `response_item` 调用都会产生一条 assistant `message(content_type: 'tool_use')` 和一条 `tool_call`。调用 ID 同样加 thread 命名空间：`codex:<thread-id>:<call-id>`；`function_call` / `tool_search_call` 从 `payload.arguments` 取入参，`custom_tool_call` 从 `payload.input` 取入参，并尽可能解析为 JSON 后保存为 `input_json`。`event_msg` 中的 `patch_apply_end`、`mcp_tool_call_end`、`web_search_end` 等只是运行时生命周期通知，当前不作为独立 `tool_call` 来源。
 
 `web_search_call` 也走同一分支，但前提是 payload 有 `call_id`；否则当前不会投影。工具输出只处理下列带 `call_id` 的行：
 

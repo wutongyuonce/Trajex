@@ -1,346 +1,201 @@
-# Pi Session File Format（官方文档副本）
+# Pi v3 Session JSONL
 
-> 来源：Pi 官方仓库 `earendil-works/pi` 的 [`packages/coding-agent/docs/session-format.md`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md)
-> 获取日期：2026-08-07。以下为原文副本，保留原始内容以便离线查阅；上游更新时请以官方仓库为准。
+> Pi 官方 v3 session 文件的格式说明，结合 Trajex 当前 `packages/core/src/providers/pi.ts` 的实际消费行为整理。这里只保留索引、查询和 Session Detail 所需要的内容；完整上游定义见 [Pi session-format.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md)。
 
-## Trajex indexing behavior
+## 1. 文件与索引边界
 
-Trajex treats each official v3 file as a full-replay unit because the active
-context depends on the durable leaf, branches, and compaction checkpoints. A
-malformed line stops the replay at the valid prefix; that prefix is persisted
-and the cursor remains before the bad line. When the configured session
-directory can be enumerated at its root, discovery can emit a tombstone for an
-indexed file that disappeared, retracting only its regenerable projection. A
-temporarily missing or root-unreadable session directory preserves the previous
-snapshot. Once root enumeration succeeds, missing or unreadable descendant
-directories are treated as empty subtrees.
+Pi 的一个 `.jsonl` 文件就是一个 session。默认位置是：
 
-# Session File Format
-Sessions are stored as JSONL (JSON Lines) files. Each line is a JSON object with a `type` field. Session entries form a tree structure via `id`/`parentId` fields, enabling in-place branching without creating new files.
-## File Location
-```
-~/.pi/agent/sessions/--<path>--/<timestamp>_<uuid>.jsonl
-```
-Where `<path>` is the working directory with `/` replaced by `-`.
-## Deleting Sessions
-Sessions can be removed by deleting their `.jsonl` files under `~/.pi/agent/sessions/`.
-Pi also supports deleting sessions interactively from `/resume` (select a session and press `Ctrl+D`, then confirm). When available, pi uses the `trash` CLI to avoid permanent deletion.
-## Session Version
-Sessions have a version field in the header:
-- **Version 1**: Linear entry sequence (legacy, auto-migrated on load)
-- **Version 2**: Tree structure with `id`/`parentId` linking
-- **Version 3**: Renamed `hookMessage` role to `custom` (extensions unification)
-Existing sessions are automatically migrated to the current version (v3) when loaded.
-## Source Files
-Source on GitHub ([pi-mono](https://github.com/earendil-works/pi-mono)):
-- [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/session-manager.ts) - Session entry types and SessionManager
-- [`packages/coding-agent/src/core/messages.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/messages.ts) - Extended message types (BashExecutionMessage, CustomMessage, etc.)
-- [`packages/ai/src/types.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
-- [`packages/agent/src/types.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/agent/src/types.ts) - AgentMessage union type
-For TypeScript definitions in your project, inspect `node_modules/@earendil-works/pi-coding-agent/dist/` and `node_modules/@earendil-works/pi-ai/dist/`.
-## Message Types
-Session entries contain `AgentMessage` objects. Understanding these types is essential for parsing sessions and writing extensions.
-### Content Blocks
-Messages contain arrays of typed content blocks:
-```typescript
-interface TextContent {
-  type: "text";
-  text: string;
-}
-interface ImageContent {
-  type: "image";
-  data: string;      // base64 encoded
-  mimeType: string;  // e.g., "image/jpeg", "image/png"
-}
-interface ThinkingContent {
-  type: "thinking";
-  thinking: string;
-}
-interface ToolCall {
-  type: "toolCall";
-  id: string;
-  name: string;
-  arguments: Record<string, any>;
-}
-```
-### Base Message Types (from pi-ai)
-```typescript
-interface UserMessage {
-  role: "user";
-  content: string | (TextContent | ImageContent)[];
-  timestamp: number;  // Unix ms
-}
-interface AssistantMessage {
-  role: "assistant";
-  content: (TextContent | ThinkingContent | ToolCall)[];
-  api: string;
-  provider: string;
-  model: string;
-  usage: Usage;
-  stopReason: "stop" | "length" | "toolUse" | "error" | "aborted";
-  errorMessage?: string;
-  timestamp: number;
-}
-interface ToolResultMessage {
-  role: "toolResult";
-  toolCallId: string;
-  toolName: string;
-  content: (TextContent | ImageContent)[];
-  details?: any;      // Tool-specific metadata
-  usage?: Usage;      // Nested LLM work performed by the tool
-  isError: boolean;
-  timestamp: number;
-}
-interface Usage {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  cost: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-    total: number;
-  };
-}
-```
-The exported pi-ai `StopReason` type also includes `"pending"`, but that value is reserved for partial messages in streaming events. Terminal `done`/`error` messages replace it with a completion reason before pi persists the assistant message, so `"pending"` should never appear in session JSONL.
-### Extended Message Types (from pi-coding-agent)
-```typescript
-interface BashExecutionMessage {
-  role: "bashExecution";
-  command: string;
-  output: string;
-  exitCode: number | undefined;
-  cancelled: boolean;
-  truncated: boolean;
-  fullOutputPath?: string;
-  excludeFromContext?: boolean;  // true for !! prefix commands
-  timestamp: number;
-}
-interface CustomMessage {
-  role: "custom";
-  customType: string;            // Extension identifier
-  content: string | (TextContent | ImageContent)[];
-  display: boolean;              // Show in TUI
-  details?: any;                 // Extension-specific metadata
-  timestamp: number;
-}
-interface BranchSummaryMessage {
-  role: "branchSummary";
-  summary: string;
-  fromId: string;                // Entry we branched from
-  timestamp: number;
-}
-interface CompactionSummaryMessage {
-  role: "compactionSummary";
-  summary: string;
-  tokensBefore: number;
-  timestamp: number;
-}
-```
-### AgentMessage Union
-```typescript
-type AgentMessage =
-  | UserMessage
-  | AssistantMessage
-  | ToolResultMessage
-  | BashExecutionMessage
-  | CustomMessage
-  | BranchSummaryMessage
-  | CompactionSummaryMessage;
-```
-## Entry Base
-All entries (except `SessionHeader`) extend `SessionEntryBase`:
-```typescript
-interface SessionEntryBase {
-  type: string;
-  id: string;           // 8-char hex ID
-  parentId: string | null;  // Parent entry ID (null for first entry)
-  timestamp: string;    // ISO timestamp
-}
-```
-## Entry Types
-### SessionHeader
-First line of the file. Metadata only, not part of the tree (no `id`/`parentId`).
-```json
-{"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project"}
-```
-For sessions with a parent (created via `/fork`, `/clone`, or `newSession({ parentSession })`):
-```json
-{"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project","parentSession":"/path/to/original/session.jsonl"}
-```
-### SessionMessageEntry
-A message in the conversation. The `message` field contains an `AgentMessage`.
-```json
-{"type":"message","id":"a1b2c3d4","parentId":"prev1234","timestamp":"2024-12-03T14:00:01.000Z","message":{"role":"user","content":"Hello"}}
-{"type":"message","id":"b2c3d4e5","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi!"}],"provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop"}}
-{"type":"message","id":"c3d4e5f6","parentId":"b2c3d4e5","timestamp":"2024-12-03T14:00:03.000Z","message":{"role":"toolResult","toolCallId":"call_123","toolName":"bash","content":[{"type":"text","text":"output"}],"isError":false}}
+```text
+~/.pi/agent/sessions/--<project-path>--/<timestamp>_<uuid>.jsonl
 ```
 
-Trajex 将 `toolResult` 投影为一条 `content_type: "tool_result"` message 和一条独立 `tool_result` record。message 只保留最多 1,000 字符的首尾预览，供 `thread()` 与 FTS 使用；`tool_results.content` 保留最多 10,000 字符的首尾内容。
+Trajex 的 Pi provider 接收配置后的最终 session directory，不再追加 `sessions` 子目录；它递归发现其中的 `*.jsonl`，但只接受官方 v3 文件：
 
-### ModelChangeEntry
-Emitted when the user switches models mid-session.
 ```json
-{"type":"model_change","id":"d4e5f6g7","parentId":"c3d4e5f6","timestamp":"2024-12-03T14:05:00.000Z","provider":"openai","modelId":"gpt-4o"}
+{"type":"session","version":3,"id":"session-id","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/project"}
 ```
-### ThinkingLevelChangeEntry
-Emitted when the user changes the thinking/reasoning level.
+
+第一行是 session header，不属于消息树。其余带 `id` 的 entry 通过 `parentId` 组成树。Pi 可以在同一个文件中保存分支，不会为每个分支新建文件。
+
+Trajex 对 Pi 文件采用全量 replay：active context 依赖 durable `leaf`、分支和 compaction checkpoint，不能只从上次行号继续解析。每次 replay 先删除该 session 的旧投影，再写入完整事实，`session.countMode` 为 `total`。
+
+- 根目录暂时不可枚举时，保留上一次快照。
+- 根目录可枚举但某个 session 文件消失时，发出 tombstone，清理该文件的可再生索引数据。
+- JSONL 中出现损坏行时，只提交损坏行以前的有效前缀，cursor 停在损坏行之前。
+
+## 2. 树结构
+
+除 header 外，entry 通常具有以下公共字段：
+
 ```json
-{"type":"thinking_level_change","id":"e5f6g7h8","parentId":"d4e5f6g7","timestamp":"2024-12-03T14:06:00.000Z","thinkingLevel":"high"}
-```
-### CompactionEntry
-Created when context is compacted. Stores a summary of earlier messages.
-```json
-{"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"2024-12-03T14:10:00.000Z","summary":"User discussed X, Y, Z...","firstKeptEntryId":"c3d4e5f6","tokensBefore":50000}
-```
-Newer harness-generated compactions embed the retained post-compaction context directly on the entry, instead of `firstKeptEntryId`:
-```json
-{"type":"compaction","id":"f6g7h8i9","parentId":"e5f6g7h8","timestamp":"2024-12-03T14:10:00.000Z","summary":"User discussed X, Y, Z...","tokensBefore":50000,"retainedTail":[{"role":"user","content":"latest request"},{"role":"assistant","content":[{"type":"text","text":"latest reply"}],"provider":"anthropic","model":"claude-sonnet-4-5","usage":{...},"stopReason":"stop"}]}
-```
-Optional fields:
-- `usage`: LLM usage from generating the summary; included in session token and cost totals
-- `retainedTail`: Materialized `AgentMessage[]` kept after compaction. This is optional only for backward compatibility with older sessions. Newer harness-generated compactions include it so we can rebuild context from this checkpoint without walking older entries before the compaction entry.
-- `details`: Implementation-specific data (e.g., `{ readFiles: string[], modifiedFiles: string[] }` for default, or custom data for extensions)
-- `fromHook`: `true` if generated by an extension, `false`/`undefined` if pi-generated (legacy field name)
-- `firstKeptEntryId`: for compatibility with old entry format.
-### BranchSummaryEntry
-Created when switching branches via `/tree` with an LLM generated summary of the left branch up to the common ancestor. Captures context from the abandoned path.
-```json
-{"type":"branch_summary","id":"g7h8i9j0","parentId":"a1b2c3d4","timestamp":"2024-12-03T14:15:00.000Z","fromId":"f6g7h8i9","summary":"Branch explored approach A..."}
-```
-Optional fields:
-- `usage`: LLM usage from generating the summary; included in session token and cost totals
-- `details`: File tracking data (`{ readFiles: string[], modifiedFiles: string[] }`) for default, or custom data for extensions
-- `fromHook`: `true` if generated by an extension, `false`/`undefined` if pi-generated (legacy field name)
-### CustomEntry
-Extension state persistence. Does NOT participate in LLM context.
-```json
-{"type":"custom","id":"h8i9j0k1","parentId":"g7h8i9j0","timestamp":"2024-12-03T14:20:00.000Z","customType":"my-extension","data":{"count":42}}
-```
-Use `customType` to identify your extension's entries on reload. Interactive mode can render custom entries via `pi.registerEntryRenderer(customType, renderer)`, but they still do not participate in LLM context.
-### CustomMessageEntry
-Extension-injected messages that DO participate in LLM context.
-```json
-{"type":"custom_message","id":"i9j0k1l2","parentId":"h8i9j0k1","timestamp":"2024-12-03T14:25:00.000Z","customType":"my-extension","content":"Injected context...","display":true}
-```
-Fields:
-- `content`: String or `(TextContent | ImageContent)[]` (same as UserMessage)
-- `display`: `true` = show in TUI with distinct styling, `false` = hidden
-- `details`: Optional extension-specific metadata (not sent to LLM)
-### LabelEntry
-User-defined bookmark/marker on an entry.
-```json
-{"type":"label","id":"j0k1l2m3","parentId":"i9j0k1l2","timestamp":"2024-12-03T14:30:00.000Z","targetId":"a1b2c3d4","label":"checkpoint-1"}
-```
-Set `label` to `undefined` to clear a label.
-### SessionInfoEntry
-Session metadata (e.g., user-defined display name). Set via `/name`, `--name` / `-n`, or `pi.setSessionName()` in extensions.
-```json
-{"type":"session_info","id":"k1l2m3n4","parentId":"j0k1l2m3","timestamp":"2024-12-03T14:35:00.000Z","name":"Refactor auth module"}
-```
-The session name is displayed in the session selector (`/resume`) instead of the first message when set.
-## Tree Structure
-Entries form a tree:
-- First entry has `parentId: null`
-- Each subsequent entry points to its parent via `parentId`
-- Branching creates new children from an earlier entry
-- The "leaf" is the current position in the tree
-```
-[user msg] ─── [assistant] ─── [user msg] ─── [assistant] ─┬─ [user msg] ← current leaf
-                                                            │
-                                                            └─ [branch_summary] ─── [user msg] ← alternate branch
-```
-## Context Building
-`buildContextEntries()` walks from the current leaf to the root, producing the active entry list while honoring compaction:
-1. Collects all entries on the path
-2. If a `CompactionEntry` is on the path:
-   - Includes the compaction entry first
-   - If `retainedTail` is present, it acts as a self-contained checkpoint and entries after the compaction are included
-   - Otherwise entries from `firstKeptEntryId` to the compaction are included
-   - Then entries after compaction are included
-3. Preserves non-message entries in the selected range so interactive mode can render them
-`buildSessionContext()` builds on that entry list to produce the message list for the LLM:
-1. Extracts current model and thinking level settings from the full path
-2. Converts selected entries to messages:
-   - `message` -> stored `AgentMessage`
-   - `compaction` -> `compactionSummary` plus `retainedTail` when present
-   - `branch_summary` -> `branchSummary`
-   - `custom_message` -> `CustomMessage`
-   - `custom` -> no context message
-This makes newer compactions act like self-contained checkpoints. `retainedTail` is optional only so older sessions that only store `firstKeptEntryId` continue to load correctly.
-## Parsing Example
-```typescript
-import { readFileSync } from "fs";
-const lines = readFileSync("session.jsonl", "utf8").trim().split("\n");
-for (const line of lines) {
-  const entry = JSON.parse(line);
-  switch (entry.type) {
-    case "session":
-      console.log(`Session v${entry.version ?? 1}: ${entry.id}`);
-      break;
-    case "message":
-      console.log(`[${entry.id}] ${entry.message.role}: ${JSON.stringify(entry.message.content)}`);
-      break;
-    case "compaction":
-      console.log(`[${entry.id}] Compaction: ${entry.tokensBefore} tokens summarized`);
-      break;
-    case "branch_summary":
-      console.log(`[${entry.id}] Branch from ${entry.fromId}`);
-      break;
-    case "custom":
-      console.log(`[${entry.id}] Custom (${entry.customType}): ${JSON.stringify(entry.data)}`);
-      break;
-    case "custom_message":
-      console.log(`[${entry.id}] Extension message (${entry.customType}): ${entry.content}`);
-      break;
-    case "label":
-      console.log(`[${entry.id}] Label "${entry.label}" on ${entry.targetId}`);
-      break;
-    case "model_change":
-      console.log(`[${entry.id}] Model: ${entry.provider}/${entry.modelId}`);
-      break;
-    case "thinking_level_change":
-      console.log(`[${entry.id}] Thinking: ${entry.thinkingLevel}`);
-      break;
-  }
+{
+  "type":"message",
+  "id":"a1b2c3d4",
+  "parentId":"上一条-entry-id",
+  "timestamp":"2024-12-03T14:00:01.000Z"
 }
 ```
-## SessionManager API
-Key methods for working with sessions programmatically.
-### Static Creation Methods
-- `SessionManager.create(cwd, sessionDir?)` - New session
-- `SessionManager.open(path, sessionDir?)` - Open existing session file
-- `SessionManager.continueRecent(cwd, sessionDir?)` - Continue most recent or create new
-- `SessionManager.inMemory(cwd?)` - No file persistence
-- `SessionManager.forkFrom(sourcePath, targetCwd, sessionDir?)` - Fork session from another project
-### Static Listing Methods
-- `SessionManager.list(cwd, sessionDir?, onProgress?)` - List sessions for a directory
-- `SessionManager.listAll(onProgress?)` - List all sessions across all projects
-### Instance Methods - Session Management
-- `newSession(options?)` - Start a new session (options: `{ parentSession?: string }`)
-- `setSessionFile(path)` - Switch to a different session file
-- `createBranchedSession(leafId)` - Extract branch to new session file
-### Instance Methods - Appending (all return entry ID)
-- `appendMessage(message)` - Add message
-- `appendThinkingLevelChange(level)` - Record thinking change
-- `appendModelChange(provider, modelId)` - Record model change
-- `appendCompaction(summary, firstKeptEntryId, tokensBefore, details?, fromHook?)` - Add compaction
-- `appendCustomEntry(customType, data?)` - Extension state (not in context)
-- `appendSessionInfo(name)` - Set session display name
-- `appendCustomMessageEntry(customType, content, display, details?)` - Extension message (in context)
-- `appendLabelChange(targetId, label)` - Set/clear label
-### Instance Methods - Tree Navigation
-- `getLeafId()` - Current position
-- `getLeafEntry()` - Get current leaf entry
-- `getEntry(id)` - Get entry by ID
-- `getBranch(fromId?)` - Walk from entry to root
-- `getTree()` - Get full tree structure
-- `getChildren(parentId)` - Get direct children
-- `getLabel(id)` - Get label for entry
-- `branch(entryId)` - Move leaf to earlier entry
-- `resetLeaf()` - Reset leaf to null (before any entries)
-- `branchWithSummary(entryId, summary, details?, fromHook?)` - Move leaf with a branch summary
+
+当前上下文由最后一个 durable leaf 决定：
+
+```json
+{"type":"leaf","id":"leaf-1","parentId":"a2","targetId":"a2"}
+```
+
+解析器从 leaf 指向的 target 沿 `parentId` 回溯到根，再反转为时间顺序。没有 leaf 时，使用文件中最后一个物理 entry 作为当前位置。
+
+示意：
+
+```text
+user ── assistant ── user ── assistant ── leaf → 当前上下文
+                    └─ branch_summary ── 另一条分支（inactive）
+```
+
+当前路径上的消息为 `visible`；仍在文件中但不属于当前 leaf 路径的分支证据为 `inactive`。来源明确要求不展示的 custom message 为 `hidden`。
+
+## 3. 与 Trajex 有关的 entry 类型
+
+### 3.1 普通消息：`message`
+
+```json
+{"type":"message","id":"u1","parentId":null,
+ "message":{"role":"user","content":"检查项目"}}
+
+{"type":"message","id":"a1","parentId":"u1",
+ "message":{"role":"assistant","content":[
+   {"type":"thinking","thinking":"先查看目录"},
+   {"type":"toolCall","id":"call-1","name":"Read","arguments":{"file_path":"/tmp/a"}}
+ ]}}
+
+{"type":"message","id":"r1","parentId":"a1",
+ "message":{"role":"toolResult","toolCallId":"call-1","toolName":"Read",
+ "content":[{"type":"text","text":"file body"}],"isError":false}}
+```
+
+Trajex 当前处理的 message role：
+
+| 原始 role / content | Trajex 投影 |
+|---|---|
+| `user` 文本 | `message(role='user', content_type='text')` |
+| `assistant` 的 `text` | `message(role='assistant', content_type='text')` |
+| `assistant` 的 `thinking` | `message(role='assistant', content_type='thinking')` |
+| `assistant` 的 `toolCall` | 空文本的 `message(content_type='tool_use')` + `tool_call` |
+| `toolResult` | `message(role='tool', content_type='tool_result')` + `tool_result` |
+| `bashExecution` | `message(role='tool', content_type='bash')` |
+
+同一个 assistant entry 可能包含多个 content part，Trajex 会按 part 拆成多条消息，用 `:<part-index>` 区分 UUID，并保持 parent chain。tool call 的 ID 会加 session 命名空间：`pi:<session-hash>:<tool-call-id>`。
+
+工具结果的时间线 message 只保存最多 1,000 字符的首尾预览；`tool_results.content` 保存最多 10,000 字符的首尾内容。这样既能在 `thread()` / FTS 中检索，也避免把大工具输出直接塞进消息列表。
+
+### 3.2 Compact：`compaction`
+
+旧格式只保存保留边界：
+
+```json
+{"type":"compaction","id":"c1","parentId":"r1",
+ "timestamp":"2024-12-03T14:10:00.000Z",
+ "summary":"此前讨论了 X、Y、Z。",
+ "firstKeptEntryId":"a1",
+ "tokensBefore":50000}
+```
+
+新格式把 compact 后仍要保留的消息直接嵌进同一条 entry：
+
+```json
+{"type":"compaction","id":"c1","parentId":"r1",
+ "summary":"此前讨论了 X、Y、Z。",
+ "tokensBefore":50000,
+ "retainedTail":[
+   {"role":"user","content":"最近的问题"},
+   {"role":"assistant","content":[{"type":"text","text":"最近的回答"}]}
+ ]}
+```
+
+对 Trajex 来说：
+
+- `summary` 产生一条独立 `summary(source='compaction')`。
+- `retainedTail` 会被合成为消息，显示在 compact checkpoint 后面。
+- `retainedTail` 中的合成消息没有独立物理 JSONL 行；回查原文时只能命中 compaction entry 本身。
+- 有 `retainedTail` 时，compact 之前的 active ancestor 被截断；没有它时，使用 `firstKeptEntryId` 确定保留边界。
+- compact 之后的真实物理 `message` 继续沿 `parentId=compaction.id` 写入。
+
+因此 Pi 的实际链路是：
+
+```text
+旧消息树
+  → compaction.summary
+  → compaction.retainedTail（嵌套消息，可选）
+  → 后续真实 message
+  → leaf
+```
+
+### 3.3 分支摘要：`branch_summary`
+
+```json
+{"type":"branch_summary","id":"b1","parentId":"a1",
+ "timestamp":"2024-12-03T14:15:00.000Z",
+ "fromId":"a1","summary":"废弃分支尝试了方案 A。"}
+```
+
+Trajex 将 `summary` 投影为 `summary(source='branch_summary')`。如果它不在当前 leaf 路径上，相关消息保留为 `inactive`，便于查看历史分支但不污染默认会话上下文。
+
+### 3.4 扩展消息：`custom_message`
+
+```json
+{"type":"custom_message","id":"m1","parentId":"a1",
+ "customType":"my-extension","content":"注入给模型的上下文","display":false}
+```
+
+这类 entry 会参与 Pi 的上下文构建。Trajex 将其投影为 role `custom` 的消息：`display=false` 时为 `hidden`，否则沿当前分支显示，并标记为 meta/扩展内容。
+
+普通 `custom` entry 是扩展状态持久化，不参与 LLM context；当前 Trajex 不把它当普通 conversation message。`session_info` 只更新 session 标题；`model_change` 和 `thinking_level_change` 只影响 Pi 运行时状态，当前不产出独立消息。
+
+## 4. 当前上下文与历史分支
+
+Pi 的物理文件是完整树，不等于当前 LLM 看到的线性上下文。Trajex 同时保留两层信息：
+
+```text
+原始树：所有 message / branch / compaction entry
+             │
+             └─ leaf + compaction 规则
+                   │
+                   ├─ visible：当前上下文
+                   ├─ inactive：被分支替代但仍保留的证据
+                   └─ hidden：来源明确不展示的内容
+```
+
+详情页和普通 `thread()` 默认只展示 `visible`。调查被替代的 Pi 分支时，需要显式请求 inactive 记录。
+
+## 5. Trajex 解析流程
+
+`packages/core/src/providers/pi.ts` 的处理顺序如下：
+
+1. 读取整个 JSONL，遇到损坏行停止。
+2. 找到 v3 session header，计算 `session_id = pi:<raw-id>:<cwd-hash>`。
+3. 建立 `id → entry` 索引，解析 durable leaf 和 active path。
+4. 找到 active path 上最新的 compaction，计算 suppressed ancestor。
+5. 如果存在 `retainedTail`，在 compaction entry 后合成可见消息。
+6. 遍历保留的物理 entry，产生消息、tool call、tool result 和 summary。
+7. 根据 active path 设置 `visible` / `inactive` / `hidden`。
+8. 最后产生 `session(countMode='total')`。
+
+Trajex 不从 message 文本猜分支关系，也不把时间顺序当作当前上下文；`parentId` 和 `leaf` 才是 Pi 的结构事实。
+
+## 6. 与其他 JSONL provider 的关键区别
+
+| | Pi | Codex | Claude |
+|---|---|---|---|
+| 文件结构 | 一文件一 session，entry 是树 | 一文件一 rollout，追加式事件流 | 一文件一 session，主要按行增量解析 |
+| 当前上下文 | `leaf` + `parentId` + compaction | 文件事件顺序 | transcript 顺序 |
+| 分支 | 同文件树内保存，inactive 投影 | 通常由独立 thread 表达 | 主要通过 transcript / workflow 关联 |
+| compact | 明文 `summary`，可带 `retainedTail` | `compacted` 替换记录 + `context_compacted` 事件 | compact summary 消息 |
+| 工具调用 | `message.role=assistant` 的 `toolCall` | `response_item.*_call` | assistant content block |
+| 工具结果 | `message.role=toolResult` | `response_item.*_call_output` | user tool-result 消息 |
+
+## 7. 相关实现位置
+
+- Provider 解析：[packages/core/src/providers/pi.ts](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/packages/core/src/providers/pi.ts)
+- Provider 测试：[tests/pi-parse.test.mjs](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/tests/pi-parse.test.mjs)
+- Canonical session detail：[packages/core/src/session-detail.ts](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/packages/core/src/session-detail.ts)
+- Pi v3 compaction ADR：[docs/adr/0006-pi-v3-context-projection-and-visibility.md](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/docs/adr/0006-pi-v3-context-projection-and-visibility.md)

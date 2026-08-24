@@ -97,7 +97,7 @@ h1, h2, h3, h4, p { margin-top: 0; }
 
 .article-head { padding: 24px 0 20px; border-bottom: 1px solid var(--line); }
 .back-link { color: var(--orange); }
-.article-layout { display: grid; grid-template-columns: minmax(0, 860px) 250px; justify-content: center; align-items: start; gap: 30px; padding: 18px 0 110px; }
+.article-layout { display: grid; grid-template-columns: minmax(0, 860px) 240px; justify-content: center; align-items: start; gap: 60px; padding: 18px 0 110px; }
 .markdown { width: 100%; color: var(--body); }
 .article-toc { position: sticky; top: 94px; max-height: calc(100vh - 124px); padding: 5px 0 5px 18px; overflow-y: auto; border-left: 1px solid var(--line); scrollbar-width: thin; }
 .article-toc > p { margin: 0 0 15px; color: var(--ink); font: 500 12px/1.4 var(--mono); letter-spacing: .14em; text-transform: uppercase; }

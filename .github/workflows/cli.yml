@@ -27,6 +27,13 @@ jobs:
       - name: Verify CLI package and runtime contract
         run: node --experimental-test-module-mocks --test tests/cli-package.test.mjs tests/runtime-cli-envelope.test.mjs tests/runtime.test.mjs
 
+      - name: Verify Electron main schema asset
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          npm --prefix app ci
+          npm --prefix app run test:main-schema
+
       - name: Verify POSIX bootstrap installer
         if: runner.os != 'Windows'
         run: node --test tests/cli-bootstrap-install.test.mjs

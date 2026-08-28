@@ -9,6 +9,9 @@ import vue from '@vitejs/plugin-vue';
 
 const copyCoreSchemaPlugin = {
   name: 'copy-core-schema',
+  buildStart() {
+    this.addWatchFile(resolve('../packages/core/src/schema.sql'));
+  },
   writeBundle() {
     copyFileSync(resolve('../packages/core/src/schema.sql'), resolve('out/main/schema.sql'));
   },

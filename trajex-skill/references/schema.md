@@ -203,8 +203,9 @@ Indexer progress and sentinel state.
 | Column | Meaning |
 | --- | --- |
 | `jsonl_path` | Source path or synthetic sentinel key |
-| `mtime` | Last indexed mtime |
-| `lines_processed` | Stored line-count component of the `mtime:lines` cursor. Claude uses it for incremental resume; Codex and Pi currently record it for compatibility/inspection but full-replay the file. |
+| `mtime` | Numeric first cursor component retained for compatibility, ordering, and sentinel timestamps |
+| `lines_processed` | Numeric second cursor component. Claude uses it for incremental resume; Codex and Pi currently record it for compatibility/inspection but full-replay the file. |
+| `cursor` | Provider cursor preserved verbatim. Old rows with `NULL` here fall back to `mtime:lines`; current shared persistence still requires the first two cursor segments to be numeric. |
 
 Sentinel keys include `__last_build__`, `__app_heartbeat__`,
 `__app_last_successful_build__`, `__indexer_owner_app__`, and

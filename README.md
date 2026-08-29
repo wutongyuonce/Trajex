@@ -55,13 +55,13 @@ Trajex 会把每个 provider 都索引到同一个 SQLite schema 中，而不是
 > * Claude / Codex：它们的 id 是"会话级全局唯一"的;
 > * Pi：默认 id 也是全局唯一的（uuidv7），但 Pi 支持显式传入 --session-id 这类项目局部 id（不校验唯一性），且同一份会话文件可能出现在多个项目目录下。所以只靠原始 id 跨项目可能撞，把 cwd 哈希并进主键是防御性兜底（同时让文件移动后身份保持稳定）。
 
-三个内置 Provider 的解析边界不同：Claude 用 `mtime:lines` cursor 从上次位置增量读取；Codex 为了在 `event_msg` 与 `response_item` 之间去重，Pi 为了重算树状分支、durable leaf 和 compaction，都会对变更文件全量重放。三者遇到损坏 JSONL 行都只提交该行之前的有效前缀，cursor 停在损坏行之前，修复源文件后下一次索引会继续处理。对删除，Provider 的来源根目录是唯一回退边界：根目录缺失或根层无法枚举时，普通 build 保留该 Provider 的上一次快照；根层可枚举后，本次清单即有权威性，缺失或不可读的子目录按空子树处理并清理对应旧索引。清理只作用于可重新生成的 transcript 派生数据，`memories` 不会被删除。
+三个内置 Provider 的解析边界不同：Claude 用包含 mtime、行数、文件大小、ctime 和 inode 的 cursor 从上次位置增量读取；Codex 为了在 `event_msg` 与 `response_item` 之间去重，Pi 为了重算树状分支、durable leaf 和 compaction，都会对变更文件全量重放。三者遇到损坏 JSONL 行都只提交该行之前的有效前缀，cursor 停在损坏行之前，修复源文件后下一次索引会继续处理。对删除，Provider 的来源根目录是唯一回退边界：根目录缺失或根层无法枚举时，普通 build 保留该 Provider 的上一次快照；根层可枚举后，本次清单即有权威性，缺失或不可读的子目录按空子树处理并清理对应旧索引。清理只作用于可重新生成的 transcript 派生数据，`memories` 不会被删除。
 
 Codex 只索引根 thread 为普通 Trajex session。带有 `parent_thread_id`、`forked_from_id` 或其他 parent-thread metadata 的 child/fork/subagent thread（包括 guardian/auto-review thread）全部忽略，不挂接到 `subagents` 表。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。Codex 和 Pi 一样对变更文件做全量重放：先删除该 session 的旧派生投影，再从当前 JSONL 全量重建。
 
 每个 Pi 官方 v3 session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，Trajex 会根据 durable leaf 和 compaction（包括 retained tail）计算当前上下文：当前记录为 `visible`，已被取代但保留的分支证据为 `inactive`，来源明确隐藏的 transport context 为 `hidden`。详情页默认只展示 visible 记录，其他分支可显式展开。
 
-为了支持 app 实时刷新，Trajex 会监听每个已注册 provider 声明的 roots：Claude 的 `~/.claude/projects`、Codex 的 `~/.codex/sessions`（外加 `session_index.jsonl`）和 Pi 默认的 `~/.pi/agent/sessions`。App Settings 中 Claude 与 Codex 配置的是各自的 provider root（默认 `~/.claude` / `~/.codex`），Trajex 会在此基础上追加 `projects` / `sessions` 进行发现和监听；Pi 配置的则是最终 session directory，Trajex 不再追加任何路径，可直接填写由 `PI_CODING_AGENT_SESSION_DIR` 解析出的目录，或由 `PI_CODING_AGENT_DIR` 解析出的目录下的 `sessions` 子目录（即 `$PI_CODING_AGENT_DIR/sessions`）。Trajex 不读取环境变量或 CLI 参数。Codex 的 `session_index.jsonl` 在索引期间只作为轻量 title/update metadata 使用，而不是消息 transcript 来源。如果 App 启动时某个已有快照的来源根暂时不可用，daemon 会保留旧快照，从 30 秒开始指数退避全量重试，最长间隔 10 分钟；目录恢复后会补建 watcher 并立即重新清点。
+为了支持 app 实时刷新，Trajex 会按 provider 声明的 typed targets 监听目录和精确文件：目录交给 `@parcel/watcher`，精确文件用有上限的 stat 轮询；macOS 还会轮询最近活跃的最多 64 个 transcript。App 每 5 分钟再做一次完整清点。Claude 的目标包括 `~/.claude/projects` 与 `history.jsonl`，Codex 包括 `~/.codex/sessions`、`archived_sessions` 与 `session_index.jsonl`，Pi 默认是 `~/.pi/agent/sessions`。App Settings 中 Claude 与 Codex 配置的是各自的 provider root（默认 `~/.claude` / `~/.codex`），Pi 配置最终 session directory。Trajex 不读取环境变量或 CLI 参数。如果某个已有快照的来源根暂时不可用，daemon 会保留旧快照并重试；目录恢复后会立即重新清点。
 
 ## App 与 CLI 的关系
 
@@ -69,11 +69,11 @@ Codex 只索引根 thread 为普通 Trajex session。带有 `parent_thread_id`�
 
 * CLI 没有运行时 npm dependencies，并使用 Node 22 内置的 `node:sqlite` 与 FTS5。
 
-* App 有运行时 npm dependencies：`better-sqlite3`（SQLite 驱动）和 `chokidar`（文件监听）。这是因为 Electron 侧没有使用 Node 的 `node:sqlite`，而是使用原生 SQLite 驱动。
+* App 有运行时 npm dependencies：`better-sqlite3` 作为 Electron 侧的 SQLite 驱动，`@parcel/watcher` 提供跨平台递归目录事件。两者都包含需要在打包时保留真实磁盘路径的原生模块。
 
 第一次打开 App 或者第一次运行 CLI 查询 `/trajex --build` 会构建索引，其中一方已完成后，另一方复用同一份索引，通常只做增量检查/更新。100 个 sessions 通常需要约 5 秒。之后会进行增量重建。
 
-只有新增或修改过的 JSONL 文件会被重新解析。删除清理遵循上面的来源根边界；force rebuild 会先检查现有索引中每个 Provider 的来源根，任一根缺失或根层不可读就会在清理前整体中止，原数据库保持不变。全部通过后才强制重建全库派生索引。CLI 和 App 的 rebuild 层级不同：CLI 的 `/trajex --build` 清空 sessions、messages 等派生表，并从当前磁盘文件重新索引（record 级重建），不会重建 SQLite 文件本身，需要彻底重建文件时得先删除 `~/.trajex/trajex.sqlite` 再重新构建；App 的手动重建则先构建全新的临时数据库、复制旧库的 memories，成功后原子替换主数据库文件，等于重建 SQLite 文件并套用当前 schema。两种 rebuild 都会保留人工确认的 memories 层。另外，schema 列的新增由打开数据库时的迁移（schema-migrations）幂等处理；迁移只增加新列，不删除旧列。查询、原文读取和 attune 会先独立确认 schema 可读，最近构建标记只决定是否扫描 Provider 数据，不能跳过必要迁移；迁移若被 daemon 或其他 writer 阻塞，会返回明确诊断而不是继续产生 `no such column`。旧列只有在 rebuild 生成新数据库时才会消失。当可选 app 正在运行时，它就是 active indexer：它监听 project files，并在 worker thread 中构建索引。仅凭新鲜的 `__app_heartbeat__` 就意味着 daemon 拥有写入职责，因此 CLI 调用会保持只读；另有一个独立的 SQLite writer lease 防止跨进程写入重叠。`__app_last_successful_build__` marker 不参与写入判断，记录的是 App 索引新鲜度，仅用于观测记录。
+普通增量构建只会重新解析受变化路径影响的 transcript；周期 reconcile 会重做完整 Provider discovery，但不会强制重放每个未变 transcript。删除清理遵循上面的来源根边界；force rebuild 会先检查现有索引中每个 Provider 的来源根，任一根缺失或根层不可读就会在清理前整体中止，原数据库保持不变。全部通过后才强制重建全库派生索引。CLI 和 App 的 rebuild 层级不同：CLI 的 `/trajex --build` 清空 sessions、messages 等派生表，并从当前磁盘文件重新索引（record 级重建），不会重建 SQLite 文件本身，需要彻底重建文件时得先删除 `~/.trajex/trajex.sqlite` 再重新构建；App 的手动重建则先构建全新的临时数据库、复制旧库的 memories，成功后原子替换主数据库文件，等于重建 SQLite 文件并套用当前 schema。两种 rebuild 都会保留人工确认的 memories 层。另外，schema 列的新增由打开数据库时的迁移（schema-migrations）幂等处理；迁移只增加新列，不删除旧列。查询、原文读取和 attune 会先独立确认 schema 可读，最近构建标记只决定是否扫描 Provider 数据，不能跳过必要迁移；迁移若被 daemon 或其他 writer 阻塞，会返回明确诊断而不是继续产生 `no such column`。旧列只有在 rebuild 生成新数据库时才会消失。当可选 app 正在运行时，它就是 active indexer：它监听 Provider targets，并在 worker thread 中构建索引。仅凭新鲜的 `__app_heartbeat__` 就意味着 daemon 拥有写入职责，因此 CLI 调用会保持只读；另有一个独立的 SQLite writer lease 防止跨进程写入重叠。`__app_last_successful_build__` marker 不参与写入判断，记录的是 App 索引新鲜度，仅用于观测记录。
 
 ## App：给人使用的界面
 

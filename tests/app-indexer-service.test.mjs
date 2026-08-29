@@ -5,7 +5,6 @@
 import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createIndexerService } from '../app/src/main/indexer-service.ts';
@@ -27,6 +26,31 @@ function manualTimers() {
       const pending = [...timers];
       timers.clear();
       for (const fn of pending) fn();
+    },
+  };
+}
+
+function clockTimers() {
+  let now = 0;
+  let nextId = 0;
+  const pending = new Map();
+  return {
+    setTimeout(fn, ms = 0) {
+      const id = ++nextId;
+      pending.set(id, { fn, due: now + ms });
+      return id;
+    },
+    clearTimeout(id) { pending.delete(id); },
+    tick(ms) {
+      now += ms;
+      for (;;) {
+        const due = [...pending.entries()]
+          .filter(([, timer]) => timer.due <= now)
+          .sort((a, b) => a[1].due - b[1].due)[0];
+        if (!due) return;
+        pending.delete(due[0]);
+        due[1].fn();
+      }
     },
   };
 }
@@ -76,6 +100,59 @@ test('indexer service runs one pending build after an in-flight build finishes',
   await service.idle();
 
   assert.deepEqual(calls, ['first', 'pending']);
+  timers.flush();
+  await service.idle();
+  assert.deepEqual(calls, ['first', 'pending']);
+});
+
+test('indexer service bounds a continuous change burst', async () => {
+  const timers = clockTimers();
+  const calls = [];
+  const service = createIndexerService({
+    buildIndex: async ({ changedPaths }) => calls.push(changedPaths),
+    watchProjects: () => null,
+    writeHeartbeat: () => {},
+    timers,
+    debounceMs: 1000,
+    stabilityMs: 500,
+    maxWaitMs: 1500,
+  });
+
+  service.scheduleBuild('watch', 'a.jsonl');
+  timers.tick(500);
+  service.scheduleBuild('watch', 'b.jsonl');
+  timers.tick(500);
+  service.scheduleBuild('watch', 'c.jsonl');
+  timers.tick(499);
+  assert.equal(calls.length, 0);
+  timers.tick(1);
+  await service.idle();
+  assert.deepEqual(calls, [['a.jsonl', 'b.jsonl', 'c.jsonl']]);
+});
+
+test('indexer service periodically reconciles the full inventory', async () => {
+  const timers = manualTimers();
+  const intervals = new Map();
+  timers.setInterval = (fn, ms) => { intervals.set(ms, fn); return fn; };
+  timers.clearInterval = () => {};
+  const calls = [];
+  const service = createIndexerService({
+    buildIndex: async (args) => calls.push(args),
+    watchProjects: () => null,
+    writeHeartbeat: () => {},
+    timers,
+    debounceMs: 0,
+    stabilityMs: 0,
+    maxWaitMs: 0,
+    reconcileMs: 321,
+  });
+
+  service.start({ buildOnStart: false });
+  intervals.get(321)();
+  timers.flush();
+  await service.idle();
+  assert.deepEqual(calls, [{ reason: 'reconcile', changedPaths: undefined }]);
+  await service.stop();
 });
 
 test('indexer service reschedules a writer-lease deferral without publishing a heartbeat', async () => {
@@ -194,6 +271,7 @@ test('indexer service waits for a stability window before building', async () =>
     writeHeartbeat: () => {},
     timers,
     stabilityMs: 500,
+    maxWaitMs: 0,
   });
 
   service.scheduleBuild('jsonl-change');
@@ -230,46 +308,6 @@ test('indexer service retries watcher setup when the projects directory is missi
   assert.equal(attempts, 2);
 });
 
-test('indexer service watches a source root that appears after startup', async () => {
-  const home = makeTempDir('trajex-late-watch-root-');
-  const existingRoot = join(home, 'existing');
-  const missingRoot = join(home, 'missing');
-  mkdirSync(existingRoot);
-  const timers = manualTimers();
-  const watched = [];
-  const builds = [];
-  const chokidar = {
-    watch(root) {
-      watched.push(root);
-      const watcher = {
-        on() { return watcher; },
-        close() {},
-      };
-      return watcher;
-    },
-  };
-  const service = createIndexerService({
-    watchDirs: [existingRoot, missingRoot],
-    buildIndex: async (args) => builds.push(args),
-    chokidar,
-    writeHeartbeat: () => {},
-    timers,
-    debounceMs: 0,
-    stabilityMs: 0,
-  });
-
-  service.start({ buildOnStart: false });
-  assert.deepEqual(watched, [existingRoot]);
-  mkdirSync(missingRoot);
-  timers.flush();
-  timers.flush();
-  await service.idle();
-
-  assert.deepEqual(watched, [existingRoot, missingRoot]);
-  assert.deepEqual(builds, [{ reason: 'watch', changedPaths: undefined }]);
-  service.stop();
-});
-
 test('indexer service publishes daemon ownership as soon as it starts', () => {
   const timers = manualTimers();
   let heartbeats = 0;
@@ -302,33 +340,23 @@ test('indexer service runs a startup build immediately', async () => {
   service.stop();
 });
 
-test('indexer service watches Claude JSON files through chokidar', async () => {
-  const projectsDir = makeTempDir('trajex-chokidar-projects-');
+test('indexer service routes adaptive watcher paths into one build batch', async () => {
+  const projectsDir = makeTempDir('trajex-adaptive-projects-');
   const timers = manualTimers();
   const calls = [];
-  let watchArgs = null;
-  const handlers = {};
-  const watcher = {
-    on(event, handler) {
-      handlers[event] = handler;
-      return watcher;
-    },
-    closeCalled: false,
-    close() {
-      watcher.closeCalled = true;
-    },
-  };
-  const chokidar = {
-    watch(paths, options) {
-      watchArgs = { paths, options };
-      return watcher;
-    },
-  };
+  let subscribedRoot = null;
+  let callback = null;
+  let unsubscribed = false;
 
   const service = createIndexerService({
     projectsDir,
-    buildIndex: async ({ reason }) => calls.push(reason),
-    chokidar,
+    buildIndex: async (args) => calls.push(args),
+    subscribe: async (root, handler) => {
+      subscribedRoot = root;
+      callback = handler;
+      return { unsubscribe: async () => { unsubscribed = true; } };
+    },
+    hotPolling: false,
     writeHeartbeat: () => {},
     timers,
     stabilityMs: 0,
@@ -337,20 +365,22 @@ test('indexer service watches Claude JSON files through chokidar', async () => {
 
   try {
     service.start({ buildOnStart: false });
-    assert.equal(watchArgs.paths, projectsDir);
-    assert.equal(watchArgs.options.cwd, projectsDir);
-    assert.equal(watchArgs.options.ignoreInitial, true);
-    assert.ok(watchArgs.options.awaitWriteFinish);
-
-    handlers.change('session.jsonl');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(subscribedRoot, projectsDir);
+    callback(null, [
+      { type: 'update', path: join(projectsDir, 'session.jsonl') },
+      { type: 'update', path: join(projectsDir, 'workflow.json') },
+    ]);
     timers.flush();
     await service.idle();
-    assert.deepEqual(calls, ['watch']);
+    assert.deepEqual(calls, [{
+      reason: 'watch',
+      changedPaths: [join(projectsDir, 'session.jsonl'), join(projectsDir, 'workflow.json')],
+    }]);
   } finally {
-    service.stop();
+    await service.stop();
   }
-
-  assert.equal(watcher.closeCalled, true);
+  assert.equal(unsubscribed, true);
 });
 
 test('indexer service waits for the watcher to close', async () => {
@@ -376,77 +406,25 @@ test('indexer service waits for the watcher to close', async () => {
   assert.equal(stopped, true);
 });
 
-test('indexer service passes changed JSONL paths to the build worker', async () => {
-  const projectsDir = makeTempDir('trajex-changed-paths-');
-  const timers = manualTimers();
-  const calls = [];
-  const handlers = {};
-  const watcher = {
-    on(event, handler) {
-      handlers[event] = handler;
-      return watcher;
-    },
-    close() {},
-  };
-  const chokidar = {
-    watch() {
-      return watcher;
-    },
-  };
-
-  const service = createIndexerService({
-    projectsDir,
-    buildIndex: async (args) => calls.push(args),
-    chokidar,
-    writeHeartbeat: () => {},
-    timers,
-    stabilityMs: 0,
-    debounceMs: 0,
-  });
-
-  service.start({ buildOnStart: false });
-  handlers.change('project-a/session-1.jsonl');
-  handlers.add('project-a/session-2.json');
-  timers.flush();
-  await service.idle();
-
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].reason, 'watch');
-  assert.deepEqual(calls[0].changedPaths, [
-    join(projectsDir, 'project-a/session-1.jsonl'),
-    join(projectsDir, 'project-a/session-2.json'),
-  ]);
-});
-
-test('indexer service watches Claude projects and Codex sessions for app-side indexing', async () => {
+test('indexer service subscribes every typed tree target', async () => {
   const claudeProjectsDir = makeTempDir('trajex-watch-claude-');
   const codexSessionsDir = makeTempDir('trajex-watch-codex-sessions-');
   const timers = manualTimers();
   const calls = [];
-  const watchers = [];
-  const watchArgs = [];
-  const chokidar = {
-    watch(paths, options) {
-      const handlers = {};
-      const watcher = {
-        handlers,
-        on(event, handler) {
-          handlers[event] = handler;
-          return watcher;
-        },
-        close() {},
-      };
-      watchers.push(watcher);
-      watchArgs.push({ paths, options });
-      return watcher;
-    },
-  };
+  const subscriptions = new Map();
 
   const service = createIndexerService({
     projectsDir: claudeProjectsDir,
-    watchDirs: [claudeProjectsDir, codexSessionsDir],
+    watchTargets: [
+      { kind: 'tree', path: claudeProjectsDir },
+      { kind: 'tree', path: codexSessionsDir },
+    ],
     buildIndex: async (args) => calls.push(args),
-    chokidar,
+    subscribe: async (root, callback) => {
+      subscriptions.set(root, callback);
+      return { unsubscribe: async () => {} };
+    },
+    hotPolling: false,
     writeHeartbeat: () => {},
     timers,
     stabilityMs: 0,
@@ -454,15 +432,16 @@ test('indexer service watches Claude projects and Codex sessions for app-side in
   });
 
   service.start({ buildOnStart: false });
-  assert.deepEqual(watchArgs.map(arg => arg.paths), [claudeProjectsDir, codexSessionsDir]);
-  assert.deepEqual(watchArgs.map(arg => arg.options.cwd), [claudeProjectsDir, codexSessionsDir]);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([...subscriptions.keys()].sort(), [claudeProjectsDir, codexSessionsDir].sort());
 
-  watchers[1].handlers.change('2026/06/15/rollout-2026-06-15T00-00-00-codex.jsonl');
+  const changedPath = join(codexSessionsDir, '2026/06/15/rollout-2026-06-15T00-00-00-codex.jsonl');
+  subscriptions.get(codexSessionsDir)(null, [{ type: 'update', path: changedPath }]);
   timers.flush();
   await service.idle();
 
   assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].changedPaths, [
-    join(codexSessionsDir, '2026/06/15/rollout-2026-06-15T00-00-00-codex.jsonl'),
-  ]);
+  assert.deepEqual(calls[0].changedPaths, [changedPath]);
+  await service.stop();
 });

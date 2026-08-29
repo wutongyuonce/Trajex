@@ -9,7 +9,7 @@ import { makeTempDir } from './temp-dirs.mjs';
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync, statSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
@@ -83,8 +83,8 @@ test('claude parse() yields the expected record stream for a main session', () =
   assert.deepEqual(detail.messages.map((message) => message.text), ['hi', 'ok']);
   assert.equal(detail.messages[1].tool_calls[0].result.content, 'file body');
 
-  // Cursor encodes mtime:lines (6 lines consumed).
-  assert.equal(ret, `${statSync(path).mtimeMs}:6`);
+  const stats = statSync(path);
+  assert.equal(ret, `${stats.mtimeMs}:6:${stats.size}:${stats.ctimeMs}:${stats.ino}`);
 });
 
 test('claude keeps a small head-tail message preview and a bounded head-tail tool result', () => {
@@ -137,6 +137,23 @@ test('claude incremental parse stops at a new malformed line and leaves the curs
   const { values, ret } = drain(parse({ key: path, sessionId: 'sid-x', project: 'quiet-zero' }, '0:6'));
   assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.uuid), ['u-before-corruption']);
   assert.equal(ret.split(':')[1], '7');
+});
+
+test('claude discovery notices an append even when mtime is unchanged', () => {
+  const rootDir = makeTempDir('trajex-claude-cursor-');
+  const projectDir = join(rootDir, 'projects', 'project');
+  const transcript = join(projectDir, 'sid-cursor.jsonl');
+  mkdirSync(projectDir, { recursive: true });
+  writeFileSync(transcript, `${JSON.stringify({ uuid: 'u1', type: 'user', message: { role: 'user', content: 'one' } })}\n`);
+  const provider = createClaudeProvider({ rootDir });
+  const [unit] = provider.discover({ lastCursor: () => null });
+  const cursor = drain(provider.parse(unit, null)).ret;
+  const before = statSync(transcript);
+
+  appendFileSync(transcript, `${JSON.stringify({ uuid: 'u2', type: 'user', message: { role: 'user', content: 'two' } })}\n`);
+  utimesSync(transcript, before.atime, before.mtime);
+
+  assert.deepEqual(provider.discover({ lastCursor: () => cursor }).map(found => found.key), [transcript]);
 });
 
 test('claude discovery emits a tombstone for a deleted indexed transcript', () => {

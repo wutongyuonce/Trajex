@@ -28,7 +28,7 @@ test('app indexer persists every provider through one registry-driven loop', () 
   const registry = createProviderRegistry([{
     name: 'alpha',
     descriptor: { id: 'alpha', name: 'Alpha', vendor: 'Test', defaultRoot: '/alpha', color: '#123456' },
-    watchRoots: () => [],
+    watchTargets: () => [],
     discover(ctx) {
       return ctx.lastCursor('alpha:unit') === '10:1'
         ? []

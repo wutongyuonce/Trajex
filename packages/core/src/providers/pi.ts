@@ -367,7 +367,7 @@ export function createPiProvider({ sessionDir = process.env.PI_CODING_AGENT_SESS
     name,
     descriptor: { id: name, name: 'Pi', vendor: 'Pi', defaultRoot: sessionDir, color: '#7c3aed' },
     indexVersionMarker: PI_CANONICAL_TRANSCRIPT_MARKER,
-    watchRoots: configuredRoot => [configuredRoot],
+    watchTargets: configuredRoot => [{ kind: 'tree', path: configuredRoot }],
     discover: ctx => discoverAt(sessionDir, ctx),
     parse,
     raw: input => rawPi(sessionDir, input),

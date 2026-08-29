@@ -13,6 +13,7 @@ import type {
   ProviderDescriptor,
   RawLookup,
   RawRecord,
+  WatchTarget,
 } from './types.ts';
 
 /**
@@ -25,10 +26,10 @@ export interface ProviderRegistry {
   get(source: string): ProviderAdapter | undefined;
   /** 返回当前注册的所有 adapter 列表（byId 快照的副本）。 */
   list(): ProviderAdapter[];
-  /** 聚合所有 adapter 需要监视的文件/目录路径，去重后返回。
+  /** 聚合所有 adapter 需要监视的目录/文件目标，按 kind + path 去重。
    *  configuredRoots 允许调用方覆盖某个 provider 的默认根目录，
    *  未覆盖时使用 provider.descriptor.defaultRoot。 */
-  watchRoots(configuredRoots?: Readonly<Record<string, string>>): string[];
+  watchTargets(configuredRoots?: Readonly<Record<string, string>>): WatchTarget[];
   /** 按来源定位 adapter 并查询原始消息行；未找到对应的 adapter 时返回 null。 */
   raw(input: RawLookup): RawRecord | null;
 }
@@ -67,16 +68,19 @@ export function createProviderRegistry(providers: readonly ProviderAdapter[]): P
     // list：每次返回新数组，外部增删不影响注册表。
     list,
 
-    // watchRoots：聚合所有 adapter 需要监视的根目录，去重后返回。
-    // 调用方（如 indexer.ts）用它注册 fs watcher。
-    // 返回的路径最终由 indexer 的 daemon 模式消费，实现"改了什么就重索引什么"。
-    watchRoots: (configuredRoots = {}) => [
-      ...new Set(
-        list().flatMap((provider) =>
-          provider.watchRoots(configuredRoots[provider.name] ?? provider.descriptor.defaultRoot),
-        ),
-      ),
-    ],
+    watchTargets: (configuredRoots = {}) => {
+      const seen = new Set<string>();
+      return list()
+        .flatMap((provider) =>
+          provider.watchTargets(configuredRoots[provider.name] ?? provider.descriptor.defaultRoot),
+        )
+        .filter((target) => {
+          const key = `${target.kind}:${target.path}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+    },
 
     // raw：按 input.source 定位 adapter，委托给 adapter.raw() 查询原始消息行。
     // 找不到 adapter 时返回 null（例如 source 列是旧版数据）。

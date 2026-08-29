@@ -26,8 +26,10 @@ decisions within this:
   works because the provider→parsing import graph is node:sqlite-free (ADR-0001),
   so nothing drags `node:sqlite` into the app. The `dist/` from `build:core`
   (ADR-0008) remains for the CLI package; the app does not need it.
-- **better-sqlite3 stays the app's binding**, externalized (not bundled) and
-  unpacked from the asar.
+- **Native runtime dependencies stay externalized and unpacked.**
+  `better-sqlite3` remains the App's SQLite binding, while `@parcel/watcher`
+  provides recursive directory events for ADR-0011. Both load native `.node`
+  binaries and therefore remain outside the bundle and unpacked from the asar.
 - **The app main + preload source is TypeScript with types at its seams**, but
   under a *deliberately more lenient* project than the runtime core. `app/tsconfig.json`
   keeps `strict` on yet sets `noImplicitAny: false`, because the app mostly

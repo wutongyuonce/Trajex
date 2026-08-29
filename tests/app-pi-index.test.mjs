@@ -84,14 +84,14 @@ test('app Pi replay retracts a replaced identity and a deleted readable session 
     '{bad json}',
   ].join('\n') + '\n');
   const brokenId = 'pi:broken-replacement:5b355add63649069dd69108f114465e7fd6e6949cd50bba6ceb122676cc0e2b1';
-  assert.deepEqual(buildIndex({ ...options, changedPaths: [sessionPath] }).affectedSessionIds, [brokenId]);
+  assert.deepEqual(buildIndex({ ...options, changedPaths: [sessionPath] }).affectedSessionIds, [brokenId, oldId]);
   let db = new TestDatabase(dbPath);
   assert.deepEqual(db.prepare("SELECT id FROM sessions WHERE source='pi' ORDER BY id").all().map(row => row.id), [brokenId]);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(brokenId).c, 0);
   db.close();
 
   writeSession('new-app-pi', 'new identity');
-  assert.deepEqual(buildIndex({ ...options, changedPaths: [sessionPath] }).affectedSessionIds, [newId]);
+  assert.deepEqual(buildIndex({ ...options, changedPaths: [sessionPath] }).affectedSessionIds, [newId, brokenId]);
   db = new TestDatabase(dbPath);
   assert.deepEqual(db.prepare("SELECT id FROM sessions WHERE source='pi' ORDER BY id").all().map(row => row.id), [newId]);
   assert.equal(db.prepare('SELECT text FROM messages WHERE session_id=?').get(newId).text, 'new identity');

@@ -81,8 +81,8 @@ _Avoid_: writer, sink, DAO
 
 **Daemon indexing mode**:
 Continuous incremental indexing driven by a long-lived process (the desktop app,
-later a CLI daemon) that watches transcript directories and keeps the index fresh
-as files change.
+later a CLI daemon) that observes Provider-declared tree and exact-file targets,
+then periodically reconciles full Provider inventory to keep the index fresh.
 _Avoid_: watcher mode, live indexing
 
 **Passive pull mode**:
@@ -92,8 +92,9 @@ _Avoid_: lazy indexing, on-read indexing
 
 **index_state**:
 The bookkeeping table shared by both indexing modes. It stores the adapter's
-numeric cursor pair in the existing `mtime` and `lines_processed` columns (a
-file adapter can use mtime + line offset), plus heartbeat/last-build markers used for daemon arbitration.
+cursor verbatim in `cursor`, projects its first two numeric components into
+`mtime` and `lines_processed` for compatibility, and also stores
+heartbeat/last-build markers used for daemon arbitration.
 
 **Daemon arbitration**:
 The policy by which the passive pull mode detects a fresh daemon from the

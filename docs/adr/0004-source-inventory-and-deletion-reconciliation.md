@@ -1,6 +1,6 @@
 # Source-root availability and deletion reconciliation
 
-> Revised 2026-08-11. This ADR defines the reliability boundary for Provider
+> Revised 2026-08-29. This ADR defines the reliability boundary for Provider
 > discovery and the precondition for destructive rebuilds. It does not define
 > provider parsing or SQLite transaction mechanics; see ADR-0002 and ADR-0003.
 
@@ -78,6 +78,10 @@ build again.
 - Watch roots that do not exist at startup are retried independently. When a
   root appears, the App attaches its watcher and requests a full inventory so
   the recovered source is indexed before incremental events take over.
+- The App also requests a full inventory every five minutes. This periodic
+  reconcile bounds how long a missed filesystem event can leave the derived
+  index stale, but deletion remains authorized only by Provider discovery
+  after successful root enumeration.
 - A manual force rebuild still fails immediately on an unavailable root. It
   never turns into an unbounded background rebuild or replaces the last usable
   database.
@@ -96,6 +100,8 @@ build again.
 - A failed force preflight cannot partially clean or replace the usable index.
 - Reconciliation is intentionally session-scoped to indexed transcript paths;
   auxiliary files without an independent session projection are out of scope.
+- Adaptive watcher mechanics and scheduling latency are defined in ADR-0011;
+  this ADR remains the authority for destructive cleanup decisions.
 - This ADR does not decide how JSONL corruption is parsed, how cursors advance,
   or how SQL transactions retry. Those are parser/persistence concerns in
   ADR-0002 and ADR-0003.

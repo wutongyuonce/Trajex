@@ -14,9 +14,9 @@ Claude、Codex、Pi 等工具各自会把会话、消息、执行记录写到本
 这一步是“原始数据产生”，Trajex 不需要让 Agent 改接自己的接口。
         │
         ▼
-Electron 主进程监听文件（chokidar）
-App 像一个后台观察员，盯着这些历史目录有没有新增或修改文件。
-它会等文件写完、合并短时间内连续变化，避免 Agent 正在写文件时就读到半截内容。
+Electron 主进程监听文件（Parcel + 有上限的 stat 轮询）
+目录事件、精确文件与 macOS 热 transcript 共同触发增量索引，并定期做完整清点补漏。
+调度器会等写入稳定、合并连续变化，同时限制最长等待时间。
         │
         ▼
 Node Worker Thread 做索引
@@ -178,7 +178,7 @@ npm run test:electron:reader-state # 阅读位置状态测试
 npm run test:local-links       # 本地 Markdown 链接纯 Node 测试
 ```
 
-打包时 `schema.sql` 会被作为额外资源带入应用；`better-sqlite3` 被解包，以便它的原生模块能被 Electron 加载。
+打包时 `schema.sql` 会被作为额外资源带入应用；`better-sqlite3` 与 `@parcel/watcher` 被解包，以便它们的原生模块能被 Electron 加载。
 
 ### 3.1 安装后的 `.app`：二进制、代码和原生模块分别是什么
 
@@ -191,13 +191,16 @@ Trajex.app/
     └── Resources/
         ├── app.asar                   打包后的 App JS / HTML / CSS 等资源
         ├── app.asar.unpacked/         需要真实文件路径的原生模块
-        │   └── node_modules/better-sqlite3/.../*.node
+        │   └── node_modules/
+        │       ├── better-sqlite3/.../*.node
+        │       └── @parcel/watcher/.../*.node
         └── scripts/schema.sql         extraResources 带入的数据库 schema
 ```
 
 - **`Electron` 宿主二进制**：是真正的机器码。Electron 在编译时已组合 Chromium、Node.js 和 Electron 自身的原生能力；它启动后负责创建 main process 和 renderer process。
 - **`app.asar`**：是应用资源归档，不是把 TypeScript/JavaScript 编译成机器码。Electron/Node 会从中读取构建后的 JavaScript，再由 V8 在运行时执行。它的作用主要是整理和打包应用资源，不是安全边界。
 - **`better-sqlite3` 的 `.node` 文件**：是提前用 C/C++ 编译的原生动态库。系统动态加载器需要真实的磁盘文件路径，因此 `app/package.json` 用 `asarUnpack` 把它放到 `app.asar.unpacked/`，而不是只留在归档内。
+- **`@parcel/watcher` 的 `.node` 文件**：提供各平台的递归目录事件能力，同样需要真实磁盘路径，因此与 `better-sqlite3` 一起放进 `app.asar.unpacked/`。
 - **`schema.sql`**：不是运行时代码，而是 App 创建或迁移 SQLite 时要读取的数据文件；项目通过 `extraResources` 将它放进 `Resources/scripts/`。
 
 启动链路可以理解成：**宿主二进制启动 → 读取 `app.asar` 中的 main 入口 JS 解析为机器码指令→ main 创建窗口和后台服务 → Chromium 加载 renderer 页面**。开发模式下 renderer 来自 Vite 开发服务器；生产模式下来自构建后的本地 `index.html`。
@@ -277,7 +280,7 @@ SQLite / 文件系统；结果按 Promise 原路返回
 | --- | --- |
 | `main: "out/main/index.js"` | 指定 Electron 启动的 main 入口 |
 | `files: ["out/**"]` | 将三个构建产物带入安装包 |
-| `asarUnpack: ["node_modules/better-sqlite3/**/*"]` | 让 `better-sqlite3` 原生 `.node` 模块留在真实文件系统中 |
+| `asarUnpack` | 让 `better-sqlite3` 和 `@parcel/watcher` 的原生 `.node` 模块留在真实文件系统中 |
 | `extraResources` | 将 Core 的 `schema.sql` 复制到应用 Resources 目录 |
 
 ## 4. 从启动到看到页面：完整启动链路
@@ -325,16 +328,18 @@ createApp(App)
 ## 5. 索引 daemon：文件变化如何进入 SQLite
 
 这是 App 最重要的后台主链路。
+对应的取舍和不变量见 [ADR-0011](../adr/0011-adaptive-watching-and-bounded-index-scheduling.md)。
 
 ```text
-providerRegistry.watchRoots(providerRoots)
-   │  Claude / Codex / Pi 等已配置根目录
+providerRegistry.watchTargets(providerRoots)
+   │  typed tree/file targets
    ▼
-chokidar 监听 .jsonl / .json 的 add、change、unlink
+Parcel 监听目录；stat 轮询精确文件与 macOS 最近活跃 transcript
+   │  快速提示；遗漏最终由 5 分钟 full reconcile 补齐
    │
    ▼
 createIndexerService.scheduleBuild('watch', changedPath)
-   │  Set 去重变化路径；2s debounce；至少 500ms 写稳定等待
+   │  Set 去重；250ms debounce；500ms 稳定等待；最长 1.5s
    ▼
 worker client.postMessage({ id, args })
    ▼
@@ -358,16 +363,31 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 | 状态/参数 | 含义 |
 | --- | --- |
 | `changedPaths: Set` | 收集并去重本轮变化的文件 |
+| `fullInventoryPending` | 表示下一批必须完整 discover；不会和空 changedPaths 混用 |
 | `running` | 当前是否已有 build 在跑 |
 | `pending` | build 期间是否又发生变化；结束后再跑一次 |
-| `debounceMs = 2000` | 多次文件事件合为一次构建 |
+| `debounceMs = 250` | 多次文件事件合为一次构建 |
 | `stabilityMs = 500` | 等写入稳定，避免读取半截 JSONL |
+| `maxWaitMs = 1500` | 连续写入时最迟 1.5 秒触发一次构建 |
 | `heartbeatMs = 30000` | 每 30 秒更新一次 daemon 存活标记 |
 | `deferredRetryMs = 250` | 遇到 writer busy 后的短暂重试 |
+| `reconcileMs = 300000` | 每 5 分钟请求一次完整 Provider inventory |
 
-`chokidar` 在 Node 的文件事件 API 上做跨平台归一化（macOS FSEvents、Linux inotify、Windows ReadDirectoryChangesW）。这里使用 `awaitWriteFinish`，再加 service 自己的 debounce，重点是正确性而非「每一次保存都立刻建索引」。
+监听路径不是一个无类型字符串数组。每个 Provider 通过 `watchTargets()` 明确声明：
 
-当配置目录暂时不存在时，service 不会崩溃，而是按 `watchRetryMs = 5000` 重试建立监听。
+| Provider | `tree` 递归目录 | `file` 精确文件 |
+| --- | --- | --- |
+| Claude | `projects/` | `history.jsonl` |
+| Codex | `sessions/`、`archived_sessions/` | `session_index.jsonl` |
+| Pi | 配置的最终 session directory | 无 |
+
+`packages/adaptive-watcher` 只负责把文件系统状态变成 invalidation：`tree` 交给 `@parcel/watcher`，精确文件通过 `{dev, ino, size, mtimeMs}` signature 轮询。macOS 默认另外轮询最近活跃的最多 64 个 transcript，并用 LRU 限制数量。最近完成的 build 会把 `watchHints` 反馈给 watcher；因此 macOS 上长时间保持打开并持续追加的 transcript 不完全依赖目录事件。
+
+这些信号只是“可能需要重建”的提示，不直接修改数据库，也不能证明删除。`IndexerService` 再把提示变成明确的 `BuildBatch`：要么 `{kind:'paths'}`，要么 `{kind:'full'}`。250ms debounce 合并短 burst，500ms stability 避免太早读取，1.5s max-wait 防止持续写入无限推迟；已有 build 运行时，新事件只留下一个 pending batch。开始、完成或停止时会统一清理 burst timers，避免旧 callback 多触发一次 build。
+
+每 5 分钟的 full reconcile 是最终补漏边界。它仍然走 Provider `discover()`，只有根目录成功枚举后的权威 inventory 才能产生删除 tombstone；Parcel 的 delete 事件或 stat 发现文件消失本身都没有删除数据库的权限。
+
+当配置目录暂时不存在、订阅失败或运行中报错时，adaptive watcher 按 `watchRetryMs = 5000` 重试。根目录在初始阶段之后建立监听时会触发 full rescan；`stop()` 会等待 Parcel subscription 完成解绑，避免退出时遗留异步工作。
 
 ### 5.2 worker：让窗口不被索引工作卡住
 
@@ -389,9 +409,9 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 4. force/canonical rebuild 先预检现有 Provider 来源根，通过后才清理会话派生表（保留 memories）
 5. 逐项执行 provider plan
    └─ 每个 unit 通过可重试 SQLite 写事务进入数据库
-6. 一个 finalize 事务：补 project_path、补 Workflow 父链接、保证 FTS、写索引 marker
+6. 一个 finalize 事务：增量时只补本轮相关 session 的 project_path，再补 Workflow 父链接、保证 FTS、写索引 marker
 7. PASSIVE WAL checkpoint，关闭本次 worker 的数据库连接
-8. 返回 affectedSessionIds，供 UI 精确刷新
+8. 返回 affectedSessionIds 与最近 transcript watchHints，供 UI 精确刷新并更新 hot set
 ```
 
 几个容易混淆的点：
@@ -400,12 +420,16 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 
 Workflow 的 `parent_tool_use_id` 最终指向 `tool_calls.id`。App finalize 会调用 Core 的 `healWorkflowParentLinks()`：当 workflow JSON 先入库、主 transcript 的 `tool_result` 后到时，按同一 session 的唯一 `run_id` 从 `tool_results.content` 找到对应的 `Workflow` tool call，并把 `tool_results.tool_use_id` 回填；无法确认时保持 `NULL`，不按 workflow 名称猜测。
 - **deferred 不是失败**。遇到锁忙时 service 会稍后再试，不把数据库并发看成解析错误。
+- writer busy 延期时，service 会保留已经受影响的 session ID，下一次重试继续把它们纳入 finalize 范围；成功后再清空。它不会把延期变成全库 project path 扫描。
 - `changedPaths` 让 provider plan 尽可能只处理变化的单元；手动 rebuild 的 `force: true` 才走全量重建。
+- 同一路径换成新的 session identity 时，`affectedSessionIds` 同时包含新旧身份：旧身份用于让详情/目录撤回旧投影，新身份用于加载新内容。
 - force 重建会先读取旧库的 Provider provenance 并预检现有来源根；任一根不可用时在清理前整体失败。通过后才建立临时数据库、复制旧库的 `memories`，成功后原子替换主数据库。因此根目录故障或中途失败都不会替换当前可用索引。
 
-### 5.4 heartbeat 的意义
+### 5.4 heartbeat 与 reconcile 解决的不是同一个问题
 
 `writeHeartbeat()` 在 `index_state` 写入 `__app_heartbeat__` marker。它说明常驻 App 还活着、正在负责更新索引；Core/CLI 可据此避免无意义地和 daemon 竞争写入权。它不是业务数据，也不是某个真实 JSONL 的进度。
+
+`reconcile` 解决的是 freshness：即使文件事件、精确文件轮询，以及 macOS 上的 hot-file 轮询都没触发，最迟下一次周期清点仍会重新执行完整 Provider discovery。heartbeat 不能替代 reconcile，reconcile 也不能代替 writer lease；三者分别回答“谁负责写”“磁盘是否有漏掉的变化”“同一时刻谁真的可以写”。
 
 ## 6. SQLite、设置与系统能力
 
@@ -663,8 +687,12 @@ workflows -> run_id           summaries -> id
 
 ```text
 原始 JSONL 改变
-  -> watcher 调度 worker build
+  -> Parcel / exact-file poll / macOS hot poll 触发快速提示
+     （若提示遗漏，5 分钟 reconcile 触发 full inventory）
+  -> IndexerService 合并为 paths/full batch，最多等待 1.5s
+  -> worker build
   -> worker 写入 SQLite，返回 affectedSessionIds
+  -> build 返回 watchHints，macOS 用它更新最近活跃热文件
   -> main 向所有窗口发 index-updated，向受影响会话发 session-updated
   -> main.js 让目录数据失效（详情页期间暂存）
   -> 当前 SessionDetail 请求 patch，非当前 session 标脏
@@ -679,7 +707,7 @@ workflows -> run_id           summaries -> id
 
 | 想改什么 | 最小正确入口 |
 | --- | --- |
-| 新增一种 Agent/provider | Core 的 `providers/<name>.ts`、`builtins.ts`；App 通常只自动从 registry 得到 settings/watch roots |
+| 新增一种 Agent/provider | Core 的 `providers/<name>.ts`、`builtins.ts`；Provider 必须声明 typed watch targets，App 从 registry 自动取得 |
 | 改某 provider 的原始事件解析 | Core provider adapter；不要在 Vue 或 App SQL 中识别原始 JSONL |
 | 新增数据库事实字段 | `schema.sql` + migrations + `TranscriptRecord` + persist + Core assembly；之后才考虑 App IPC/UI |
 | 给详情添加已有事实的展示 | 优先 `packages/core/src/session-detail.ts`，再按需要改 main 查询、timeline item、row 组件 |
@@ -706,6 +734,8 @@ App 的测试不要求 UI 截图，而是验证最容易回归的机制：
 | `tests/electron-session-virtualization.mjs` | 长时间线的虚拟列表与更新行为 |
 | `tests/electron-session-reader-state.mjs` | 切换会话后阅读锚点与展开状态恢复 |
 | `tests/local-markdown-link.test.mjs` | 本地 Markdown 路径解析和预览边界 |
+| `tests/adaptive-watcher.test.mjs` | 精确文件轮询、热文件 LRU 与 stat signature invalidation |
+| `tests/app-indexer-service.test.mjs` | debounce/max-wait、单 pending batch、周期 reconcile、typed tree targets 与异步关闭 |
 
 非 UI 逻辑变动时，优先补最小可运行测试到对应目录；纯一行样式或文案不必强行添加测试。更完整的 provider、schema、persist、query 测试在根目录和 `packages/core`，见 `cli&core-analysis.md`。
 

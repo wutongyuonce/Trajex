@@ -41,7 +41,7 @@ class SqliteCompatDatabase {
 // `mock.module` keys mocks by the *resolved* module URL. The app's dependencies
 // live in `app/node_modules`, so they are NOT resolvable from this test file's
 // directory, and bare specifiers ('electron', ...) would either fail to resolve
-// here or resolve to the wrong ESM entry (e.g. chokidar exposes esm/index.js via
+// here or resolve to the wrong ESM entry (e.g. native packages expose different
 // its "exports" map, which differs from require.resolve's CJS entry). We instead
 // resolve each bare specifier exactly as the main module sees it (ESM resolution
 // relative to the main module's directory) and mock that URL. Relative deps are
@@ -59,7 +59,7 @@ function esmResolve(specifier) {
 
 const ELECTRON_URL = esmResolve('electron');
 const DATABASE_URL = esmResolve('better-sqlite3');
-const CHOKIDAR_URL = esmResolve('chokidar');
+const PARCEL_WATCHER_URL = esmResolve('@parcel/watcher');
 const INDEXER_URL = new URL('./indexer.ts', mainUrl).href;
 const INDEXER_SERVICE_URL = new URL('./indexer-service.ts', mainUrl).href;
 const INDEXER_WORKER_URL = new URL('./indexer-worker-client.ts', mainUrl).href;
@@ -96,8 +96,8 @@ function electronNamespace({ app, BrowserWindow, ipcMain }) {
   };
 }
 
-function noopChokidar() {
-  return { watch: () => ({ on() { return this; }, close() {} }) };
+function noopParcelWatcher() {
+  return { subscribe: async () => ({ unsubscribe: async () => {} }) };
 }
 
 function defaultIndexerService() {
@@ -149,6 +149,7 @@ async function loadMainForWindowFlags(flags) {
       this.webContents = {
         on() {},
         setZoomLevel() {},
+        setWindowOpenHandler() {},
         openDevTools: () => { this.devToolsOpened = true; },
         send() {},
       };
@@ -164,7 +165,7 @@ async function loadMainForWindowFlags(flags) {
   const restore = registerMocks([
     [ELECTRON_URL, { namedExports: electronNamespace({ BrowserWindow: FakeBrowserWindow }) }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, { namedExports: defaultIndexerService() }],
     [INDEXER_WORKER_URL, { namedExports: defaultIndexerWorkerClient() }],
@@ -225,7 +226,7 @@ test('main process watches every root declared by the built-in provider registry
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -237,7 +238,7 @@ test('main process watches every root declared by the built-in provider registry
   const restore = registerMocks([
     [ELECTRON_URL, { namedExports: electronNamespace({ BrowserWindow: FakeBrowserWindow }) }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, {
       namedExports: {
@@ -259,14 +260,15 @@ test('main process watches every root declared by the built-in provider registry
     await importMain();
 
     assert.equal(serviceOptions.length, 1);
-    assert.deepEqual(serviceOptions[0].watchDirs, [
-      join(claudeDir, 'projects'),
-      join(codexDir, 'sessions'),
-      join(codexDir, 'archived_sessions'),
-      join(codexDir, 'session_index.jsonl'),
-      join(home, '.pi', 'agent', 'sessions'),
+    assert.deepEqual(serviceOptions[0].watchTargets, [
+      { kind: 'tree', path: join(claudeDir, 'projects') },
+      { kind: 'file', path: join(claudeDir, 'history.jsonl') },
+      { kind: 'tree', path: join(codexDir, 'sessions') },
+      { kind: 'tree', path: join(codexDir, 'archived_sessions') },
+      { kind: 'file', path: join(codexDir, 'session_index.jsonl') },
+      { kind: 'tree', path: join(home, '.pi', 'agent', 'sessions') },
     ]);
-    assert.equal(serviceOptions[0].watchDirs.includes(codexDir), false);
+    assert.equal(serviceOptions[0].watchTargets.some(target => target.path === codexDir), false);
   } finally {
     restore();
     process.env.HOME = originalHome;
@@ -296,7 +298,7 @@ test('rapid auto-refresh changes converge to the latest setting', async () => {
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -313,7 +315,7 @@ test('rapid auto-refresh changes converge to the latest setting', async () => {
       }),
     }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, {
       namedExports: {
@@ -380,7 +382,7 @@ test('main process forwards committed IDs without reopening after a deferred bui
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() { notifications += 1; } };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() { notifications += 1; } };
     }
     loadFile() {}
     loadURL() {}
@@ -392,7 +394,7 @@ test('main process forwards committed IDs without reopening after a deferred bui
   const restore = registerMocks([
     [ELECTRON_URL, { namedExports: electronNamespace({ BrowserWindow: FakeBrowserWindow }) }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, {
       namedExports: {
@@ -459,7 +461,7 @@ test('session IPC hides Codex rows by default and supports explicit source opt-i
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -480,7 +482,7 @@ test('session IPC hides Codex rows by default and supports explicit source opt-i
       }),
     }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, { namedExports: defaultIndexerService() }],
     [INDEXER_WORKER_URL, { namedExports: defaultIndexerWorkerClient() }],
@@ -542,7 +544,7 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -563,7 +565,7 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
       }),
     }],
     [DATABASE_URL, { defaultExport: SqliteCompatDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, { namedExports: defaultIndexerService() }],
     [INDEXER_WORKER_URL, { namedExports: defaultIndexerWorkerClient() }],
@@ -626,7 +628,7 @@ test('main process migrates an existing app database before source-filtered IPC 
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -647,7 +649,7 @@ test('main process migrates an existing app database before source-filtered IPC 
       }),
     }],
     [DATABASE_URL, { defaultExport: SqliteCompatDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, { namedExports: defaultIndexerService() }],
     [INDEXER_WORKER_URL, { namedExports: defaultIndexerWorkerClient() }],
@@ -692,7 +694,7 @@ test('main process keeps schema and memory mutations behind the writer lease', a
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -711,7 +713,7 @@ test('main process keeps schema and memory mutations behind the writer lease', a
       }),
     }],
     [DATABASE_URL, { defaultExport: SqliteCompatDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, { namedExports: defaultIndexerService() }],
     [INDEXER_WORKER_URL, { namedExports: defaultIndexerWorkerClient() }],
@@ -766,7 +768,7 @@ test('closing the last macOS window releases background resources until activati
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
       windows.push(this);
     }
     loadFile() {}
@@ -788,15 +790,7 @@ test('closing the last macOS window releases background resources until activati
       }),
     }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, {
-      defaultExport: {
-        watch: () => {
-          const watcher = { on() { return this; }, close() { serviceEvents.push('watcher-close'); } };
-          watchers.push(watcher);
-          return watcher;
-        },
-      },
-    }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, {
       namedExports: {
@@ -889,7 +883,7 @@ test('settings rebuild accepts skipped files without overriding newer auto-refre
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -910,7 +904,7 @@ test('settings rebuild accepts skipped files without overriding newer auto-refre
       }),
     }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, {
       namedExports: {
@@ -1025,7 +1019,7 @@ test('settings rebuild keeps the existing database after deferred and failed bui
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -1046,7 +1040,7 @@ test('settings rebuild keeps the existing database after deferred and failed bui
       }),
     }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, {
       namedExports: {
@@ -1134,7 +1128,7 @@ test('settings rebuild cancels an in-flight background build instead of waiting 
 
   class FakeBrowserWindow {
     constructor() {
-      this.webContents = { on() {}, setZoomLevel() {}, openDevTools() {}, send() {} };
+      this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
     loadFile() {}
     loadURL() {}
@@ -1155,7 +1149,7 @@ test('settings rebuild cancels an in-flight background build instead of waiting 
       }),
     }],
     [DATABASE_URL, { defaultExport: FakeDatabase }],
-    [CHOKIDAR_URL, { defaultExport: noopChokidar() }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
     [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
     [INDEXER_SERVICE_URL, {
       namedExports: {

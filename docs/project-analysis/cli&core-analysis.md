@@ -113,7 +113,7 @@ Provider 差异必须留在 adapter，canonical transcript 的写入语义必须
   3、Provider 适配层                                             
     providers/types.ts         ← TranscriptRecord / Provider 契约
     providers/{claude,codex,pi}.ts ← 原始文件 -> 统一记录         
-    providers/{registry,builtins}.ts ← 注册、根目录、watch/raw 回源
+    providers/{registry,builtins}.ts ← 注册、typed watch targets、raw 回源
                │                                                
   2、持久化层                                                    
     persist.ts                 ← TranscriptRecord -> SQLite 行   
@@ -197,7 +197,7 @@ function rebuildMemoryFts(db: SqliteDb): void {
 | 文件                 | 定位                       | 提供内容 / 作用                                               | 关键关系                                                     |
 | -------------------- | -------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
 | indexer.ts           | **索引编排引擎**           | 提供 `buildIndex()`；依次取得租约、创建 Provider 计划、执行各 unit、最终回填 `project_path` 并重建 FTS。 | 被 `core.ts` 调用；协调 `db.ts`、事务模块、Provider 注册表和 `provider-indexing.ts`。 |
-| provider-indexing.ts | **Provider 索引流水线**    | 提供 `createProviderIndexPlan()`、`indexProviderPlan()`、`writeProviderIndexMarkers()`，分别负责计划、执行和写入进度标记。 | 被 `indexer.ts` 调用；执行时将解析出的记录交给 `persist.ts`。 |
+| provider-indexing.ts | **Provider 索引流水线**    | 提供 `createProviderIndexPlan()`、`indexProviderPlan()`、`writeProviderIndexMarkers()` 与 `readRecentTranscriptHints()`，负责计划、执行、进度标记以及给 App hot set 的最近 transcript 提示。 | 被 CLI/App indexer 调用；执行时将解析出的记录交给 `persist.ts`。 |
 
 provider-indexing.ts 导出字段：
 
@@ -248,6 +248,10 @@ export interface ProviderIndexResult {
 | providers/claude.ts   | **Claude Code 适配器**    | 发现 `~/.claude/projects/` 下的 JSONL；逐行解析并生成 `TranscriptRecord` 流。 | 依赖 `parsing.ts`，实现 `ProviderAdapter`；由注册表路由至索引流程。 |
 | providers/codex.ts    | **Codex 适配器**          | 发现 `~/.codex/sessions/` 下的 JSONL；全量重解析并关联 `event_msg` / `response_item`。 | 依赖 `parsing.ts`，实现 `ProviderAdapter`；由注册表路由至索引流程。 |
 | providers/pi.ts       | **Pi 适配器**             | 发现 Pi v3 session JSONL；按 durable leaf、branch、compaction 与 visibility 全量重放当前投影。 | 依赖 `parsing.ts`，实现 `ProviderAdapter`；由注册表路由至索引流程。 |
+
+### @trajex/adaptive-watcher（App freshness 支撑包）
+
+这个 workspace package 不属于 Core 的索引正确性边界，也不被 CLI 使用。它消费 registry 汇总的 `WatchTarget[]`：递归目录交给 `@parcel/watcher`，精确文件和 macOS 最近活跃的最多 64 个 transcript 通过 stat signature 轮询，再把路径或 full-rescan invalidation 交给 App `IndexerService`。真正的文件发现、删除证明和解析仍由 Provider `discover()` / `parse()` 完成。
 
 ### @trajex-apps/cli（CLI 包）
 
@@ -451,7 +455,7 @@ indexer.ts / buildIndex()
 
 finalize 只在所有 unit 已提交或被明确跳过后运行；它失败会使 build 失败，不能被当成普通坏文件吞掉。
 
-* `refreshSessionProjectPaths()` 聚合已写入的 `messages.cwd`，再由 `inferProjectPath()` 按出现频率和首次出现顺序选择可靠路径，必要时才回退 slug 反解。
+* `refreshSessionProjectPaths()` 聚合已写入的 `messages.cwd`，再由 `inferProjectPath()` 按出现频率和首次出现顺序选择可靠路径，必要时才回退 slug 反解。CLI full build 处理全部 session；App 的 changed-path build 只传入本轮提交、撤回和延期重试涉及的 session ID，避免单文件更新扫描全库。
 * `healWorkflowParentLinks()` 处理 Workflow JSON 早于主 transcript `tool_result` 入库的竞态：只对 `parent_tool_use_id IS NULL` 的行，按同一 session 的唯一 `run_id` 找 `Workflow` tool call 并补链；找不到时保持 `NULL`。
 
   > **为什么不直接用文件名 slug？**
@@ -613,7 +617,7 @@ provider.parse(unit, oldCursor)
 
 `persist.ts` 一边迭代 generator，一边将每条 record 写入当前 SQLite 事务；generator 正常结束后，它才取得 `return` 的 `newCursor` 并写进 `index_state`。这样一个超长 transcript 不必先在内存里堆成数组，并且“事实已写入”和“进度已经前移”位于同一个 unit 的原子事务内。
 
-这里的“写进”有一项现状限制：`Cursor` 的类型是 `string | null`，但当前 `persist.ts` 会把非空值按 `mtime:lines` 拆成 `index_state.mtime` 和 `index_state.lines_processed`；`storedProviderCursor()` 再按同一格式拼回。因此存储层强制所有内置 adapter 的 cursor 外形都符合两个可转数字的冒号分隔字段。实际消费方式仍由 provider 决定：Claude 用 mtime 判断变化、用 lines 跳过已处理行；Codex 和 Pi 都是全量重放，只真正使用 mtime，lines 目前只是兼容字段和索引检查信息。当前实现尚不支持任意 provider 私有字符串或 rowid/时间戳编码。
+`persist.ts` 会原样把非空 cursor 写进 `index_state.cursor`，同时把前两段拆成 `mtime` 和 `lines_processed` 兼容列。`storedProviderCursor()` 优先返回原始 `cursor`；老数据库该列为空时才拼回 `mtime:lines`。因此 Provider 可以在前两段数值之后增加自己的状态，例如 Claude 的 `mtime:lines:size:ctime:inode`；当前共享层仍要求前两段可转数字，纯 rowid 或完全不含数值前缀的 opaque token 还不能直接使用。
 
 ### 索引调度契约：`Cursor`、`IndexUnit`、`DiscoverContext`
 
@@ -623,19 +627,20 @@ provider.parse(unit, oldCursor)
 type Cursor = string | null;
 ```
 
-它在 `Provider` 接口上是进度水位；不过当前 Core 的存储实现仍把非空 cursor 解释为 `"mtime:lines"`，存入 `index_state` 的两个数值列并在下次拼回。也就是说，存储格式对所有 provider 都是统一的 `mtime:lines` 外形，但消费语义并不统一：Claude 用两部分做增量恢复，Codex/Pi 全量重放且只用 mtime，lines 只是兼容/检查字段。任意字符串 cursor、rowid 或纯时间戳目前不能正确持久化。
+它在 `Provider` 接口上是进度水位。Core 原样保存字符串，但仍把前两段投影到 `mtime` / `lines_processed`，供排序、旧库兼容和 marker 检查使用。消费语义由 Provider 决定：Claude 使用五段 cursor 做增量恢复与文件身份判断；Codex/Pi 全量重放，只使用前面的 mtime，lines 作为记录信息。
 
 ```text
 index_state 的 key = unit.key
-index_state 的 value = Cursor
+index_state.cursor = Provider 原始 Cursor
+index_state.mtime / lines_processed = 前两段兼容投影
        │
-       ├─ Claude 使用 "mtime:已处理行数"，两者都参与增量恢复
+       ├─ Claude 使用 "mtime:已处理行数:size:ctime:inode"
        ├─ Codex 使用 "mtime:总行数"，实际只用 mtime，整文件重放
        ├─ Pi 使用 "mtime:总行数"，实际只用 mtime，整文件重放
-       └─ 新 provider 也必须先适配该格式，或先扩展持久化协议
+       └─ 新 Provider 可增加后续段，但前两段目前仍须为数值
 ```
 
-`null` 表示没有可恢复进度：初次索引、强制 replay，或 Provider 认为旧游标不再可靠时都会从这一状态开始。用 `string` 而不是一个共享结构仍保留了将来隔离 Provider cursor schema 的空间；要兑现这点，`index_state` 与 `persist()` 需先改为原样保存 cursor。
+`null` 表示没有可恢复进度：初次索引、强制 replay，或 Provider 认为旧游标不再可靠时都会从这一状态开始。共享层不解析第三段之后的含义；这些内容属于 Provider 私有协议。
 
 #### `IndexUnit`
 
@@ -659,7 +664,7 @@ index_state 的 value = Cursor
 
 | 成员                      | 含义                                                         |
 | ------------------------- | ------------------------------------------------------------ |
-| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的 cursor。当前内置 Provider 用它比较 mtime 决定是否变化；Claude 另外用已处理行数增量恢复，Codex/Pi 则忽略行数并全量 replay。 |
+| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的原始 cursor。Claude 比较 mtime/size/ctime/inode 并用行数恢复；Codex/Pi 主要比较 mtime并全量 replay。 |
 | `changedPaths?: string[]` | Electron daemon 监听到文件变化时提供的路径缩小范围。它是优化提示，不是事实来源；Provider 仍要保证漏传或没有它时的完整 discover 正确。 |
 | `indexedSessions?: () => readonly IndexedSession[]` | 返回当前 Provider 已索引的 `sessionId`、`jsonlPath` 清单。Provider 在来源根层枚举成功后用它生成删除 tombstone；临时库 rebuild 的清单来自旧数据库 provenance。 |
 | `reportUnavailableRoot?(issue)` | 报告 Provider 来源根缺失或根层枚举失败。普通 build 保留该 Provider 旧快照；全量重建在清理前整体中止。后代目录失败不走这个通道，而是按空子树参与删除 reconciliation。 |
@@ -695,7 +700,7 @@ type TranscriptRecord =
 | `jsonl_path`              | 此 session 的主要原始 transcript 路径，用于证据定位/回源；它不是工具使用的文件路径。 |
 | `source`                  | Provider 名称，例如 `claude`、`codex`、`pi`，由 adapter 显式写入 `sessions.source`。 |
 
-`project_path` 不在该接口中。`indexer.ts` 的 `refreshSessionProjectPaths()` 会在所有 unit 写完后，从持久化的 `messages.cwd` 统计并调用 `inferProjectPath()` 推断它。这避免 Provider 在各自局部视角中做不一致的路径猜测。
+`project_path` 不在该接口中。`indexer.ts` 的 `refreshSessionProjectPaths()` 会在 unit 写完后，从持久化的 `messages.cwd` 统计并调用 `inferProjectPath()` 推断它。全量 build 处理所有 session；App 增量 build 只处理本轮受影响和延期重试的 session。这避免 Provider 在各自局部视角中做不一致的路径猜测，也避免增量更新退化为全库扫描。
 
 2、**`MessageRecord` -> `messages`，并由触发器同步 `messages_fts`**
 
@@ -889,10 +894,19 @@ interface ProviderDescriptor {
 #### `ProviderAdapter`：完整可注册对象
 
 ```ts
+interface WatchTarget {
+  readonly kind: 'tree' | 'file';
+  readonly path: string;
+}
+```
+
+`WatchTarget` 只描述 App 的触发入口，不描述 Provider inventory。`tree` 允许递归目录订阅，`file` 要求精确文件轮询；两者最终都只产生 `changedPaths` 或 full-rescan hint。
+
+```ts
 interface ProviderAdapter extends Provider {
   readonly descriptor: ProviderDescriptor;
   readonly indexVersionMarker?: string;
-  watchRoots(configuredRoot: string): string[];
+  watchTargets(configuredRoot: string): WatchTarget[];
   raw(input: RawLookup): RawRecord | null;
 }
 ```
@@ -903,7 +917,7 @@ interface ProviderAdapter extends Provider {
 | ---------------------------- | ------------------------------------------------------------ |
 | `descriptor`                 | 让 `providers/builtins.ts` / registry 将 adapter 暴露给设置页、CLI/App 配置和 UI。 |
 | `indexVersionMarker?`        | Provider 的投影规则版本。它本身是 `index_state` 中的特殊 key；换成新字符串会使新 key 缺失。若库中已有任一 provider 的旧 projection，`createProviderIndexPlan()` 会安排全库 canonical rebuild，全部 unit 成功后才写入待定 markers。可选是为了兼容尚未定义版本语义的 adapter。 |
-| `watchRoots(configuredRoot)` | 根据用户配置根目录给 Electron watcher 返回实际需要监听的目录；一个 Provider 可监听主 transcript、history、session index 等多个根。 |
+| `watchTargets(configuredRoot)` | 根据用户配置返回 typed targets。`tree` 是递归目录，`file` 是精确文件；一个 Provider 可同时声明 transcript 目录和 history/session index metadata。 |
 | `raw(input)`                 | 根据规范 lookup 回读原始消息。找不到、来源不支持或已删除时返回 `null`，而不是抛出“数据库记录必然存在原文”的错误。 |
 
 `ProviderAdapter` 因而是 registry 真正接受的完整适配器；`Provider` 则是索引编排只需要的最小子集。前者不要求 `persist` 知道 UI，后者也不要求每个索引调用方依赖 Electron watcher。
@@ -918,14 +932,15 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | -------------- | ------------------------------------- | ----------------------------------------- | --------------------------------------- |
 | 默认根         | `~/.claude`                           | `~/.codex`                                | `~/.pi/agent/sessions`                  |
 | 索引单位       | 主/子代理 JSONL 与 workflow JSON      | 一个 rollout JSONL                        | 一个 v3 session JSONL                   |
-| cursor/策略    | mtime + 已处理行；流式逐行            | mtime 判断变化；全文件重放，lines 仅记录 | mtime 判断变化；全文件重放，lines 仅记录 |
+| cursor/策略    | mtime、行数、size、ctime、inode；流式续读 | mtime 判断变化；全文件重放，lines 仅记录 | mtime 判断变化；全文件重放，lines 仅记录 |
 | 必须全量的原因 | 不需要；仅续读新增行                  | event_msg 与 response_item 双向去重       | 树状分支与 compaction 需要重算可见上下文 |
 | 特殊关系       | history 标题、Workflow、subagent meta | root-thread 筛选、父/子 thread、collab spawn | durable leaf、branch、compaction、hidden/inactive |
+| App watch targets | `projects/` tree + `history.jsonl` file | `sessions/`、`archived_sessions/` tree + `session_index.jsonl` file | 配置的 session directory tree |
 | raw 定位       | session/subagent JSONL 内 UUID        | `codex:<thread>:<line>`                   | `pi:<session-scope>:<entry>`            |
 
 它负责：
 
-  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，通过比较文件当前 `mtime` 和 `index_state` 中保存的上次 cursor 判断是否需要处理；例如 Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
+  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，并按自己的 cursor 规则判断是否需要处理。Claude 比较 mtime、size、ctime、inode；Codex/Pi 主要比较 mtime。例如 Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
 
     > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
     >
@@ -942,13 +957,13 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 
   - 负责回查原文：`raw()` 根据 SQLite message uuid 找回原始 JSONL 行
 
-  - 负责告诉 app 监听哪里：`watchRoots()` 告诉 app daemon 应该监听哪些目录。启动时缺失的 root 会持续尝试补建 watcher；Provider 报告来源根 inventory 不完整时，App 以 30 秒起步、10 分钟封顶的指数退避重做全量清点，恢复后重置间隔。
+  - 负责告诉 App 监听什么：`watchTargets()` 明确返回递归目录 `tree` 或精确文件 `file`。App 用 Parcel 监听 tree，用 stat 轮询 file；这只是触发优化。Provider 报告来源根 inventory 不完整时，App 以 30 秒起步、10 分钟封顶的指数退避重做完整清点，恢复后重置间隔。
 
 ### 内置 Provider 的 parse / reconcile 策略
 
 | Provider | 解析策略 | 损坏行边界 | 删除与目录缺失保护 |
 | --- | --- | --- | --- |
-| Claude | `mtime:lines` 增量读取；cursor 后只读新增行，截断/重写导致 cursor 超长时回到文件头 | 新增尾部遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `projects/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
+| Claude | `mtime:lines:size:ctime:inode` 增量读取；cursor 后只读新增行，截断、替换或身份签名变化时按当前文件重新判断 | 新增尾部遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `projects/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
 | Codex | 变更 rollout 全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `sessions/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
 | Pi | v3 session 全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | session 根层可枚举后，缺失/不可读后代按空子树并发撤回；来源根不可用时保留快照 |
 
@@ -1022,9 +1037,9 @@ Workflow JSON Unit（Workflow JSON 由 discoverAt() 自己发现）
 ]
 ```
 
-普通主会话与 subagent JSONL 的 cursor 形状为 `mtimeMs:linesProcessed`。发现阶段先比较文件 mtime；解析阶段再用 `linesProcessed` 跳过已消费行，只处理新增尾部。
+普通主会话与 subagent JSONL 的 cursor 形状为 `mtimeMs:linesProcessed:size:ctimeMs:ino`。发现阶段同时比较 mtime、大小、ctime 和 inode；解析阶段用 `linesProcessed` 跳过已消费行，只处理新增尾部。旧库的两段 cursor 仍可读取，但只能提供原来的 mtime 判断能力。
 
-文件监听提供 `changedPaths` 时，`discoverAt()` 会只安排受影响的 unit（由 Electron daemon 通过 chokidar 传入，属优化提示）：
+文件监听提供 `changedPaths` 时，`discoverAt()` 会只安排受影响的 unit（由 Electron daemon 的 adaptive watcher 传入，属优化提示）：
 
 * `.jsonl` 变更：只重排该 transcript；
 * 同名 `.meta.json` 变更：强制重排对应 `.jsonl`（即使 JSONL 自身 mtime 未变），使 agent 元数据能重新落库；
@@ -1917,7 +1932,7 @@ Pi 的 session 文件按工作目录分层存放：
 
 `discoverAt()` 用 `sessionFiles()` 递归枚举 session 目录下的全部 `*.jsonl`（Pi 支持任意子目录嵌套，不像 Claude 固定两级结构）。每个文件经过三重过滤，全部通过才产出 `IndexUnit`：
 
-1. **changedPaths 优化**（Electron daemon 通过 chokidar 传入，属优化提示）：只保留命中 changedPaths 中"该文件本身"或"sessionDir 本身"的候选。命中 sessionDir 本身是兜底——新增目录等只产生目录级事件时，也能把目录内文件重新纳入检查；
+1. **changedPaths 优化**（Electron daemon 通过 adaptive watcher 传入，属优化提示）：只保留命中 changedPaths 中"该文件本身"或"sessionDir 本身"的候选。命中 sessionDir 本身是兜底——新增目录等只产生目录级事件时，也能把目录内文件重新纳入检查；
 2. **mtime 增量过滤**：读取 `index_state` 中保存的 cursor（`mtimeMs:lines`），cursor 非空且文件当前 mtime ≤ cursor 的 mtime 时跳过，认为没有变化；
 3. **header 校验**：读取文件第一行，必须是 `{"type":"session","version":3,"id":…}` 才接受；版本不是 3、第一行解析失败或 id 缺失的文件直接跳过（不报错，视为非 Pi 文件）。
 
@@ -1937,7 +1952,7 @@ Pi 的 session 文件按工作目录分层存放：
 
 cursor 形状同为 `mtimeMs:lines`，但与 Claude 的"行增量续读"不同：Pi 的 `parse(unit, _cursor)` 忽略 cursor 里的行数，总是**全量重放**整份文件——active context 由 durable leaf、compaction 的 `firstKeptEntryId` / `retainedTail` 从整棵树推导，无法从某个行号恢复。lines 只是记录文件当前总行数。因此 Pi 每次产出的 `session.countMode` 恒为 `'total'`，并在记录流开头发出 `delete-session`，让 persist 清理旧投影，避免全量重放叠加出重复行。
 
-`watchRoots(configuredRoot)` 直接返回配置的 session 目录本身（递归监听），不做任何路径拼接——App Settings 里填的就是最终 session directory，这也与 README 中"Pi 不再追加路径"的约定一致。
+`watchTargets(configuredRoot)` 返回 `{kind:'tree', path: configuredRoot}`，不做任何路径拼接——App Settings 里填的就是最终 session directory，这也与 README 中“Pi 不再追加路径”的约定一致。
 
 #### 原文回查 `rawPi()`
 
@@ -1976,10 +1991,10 @@ export interface ProviderRegistry {
   get(source: string): ProviderAdapter | undefined;
   /** 返回当前注册的所有 adapter 列表（byId 快照的副本）。 */
   list(): ProviderAdapter[];
-  /** 聚合所有 adapter 需要监视的文件/目录路径，去重后返回。
+  /** 聚合所有 adapter 需要监视的 typed targets，按 kind + path 去重。
    *  configuredRoots 允许调用方覆盖某个 provider 的默认根目录，
    *  未覆盖时使用 provider.descriptor.defaultRoot。 */
-  watchRoots(configuredRoots?: Readonly<Record<string, string>>): string[];
+  watchTargets(configuredRoots?: Readonly<Record<string, string>>): WatchTarget[];
   /** 按来源定位 adapter 并查询原始消息行；未找到对应的 adapter 时返回 null。 */
   raw(input: RawLookup): RawRecord | null;
 }
@@ -2039,10 +2054,10 @@ Trajex 不是把一整个 JSONL 原样塞进数据库，而是拆成多张关系
 ```
 provider.parse(unit, oldCursor)
   -> yield messages / tools / ... 等 TranscriptRecord
-  -> return newCursor —— "mtime:lines"
+  -> return Provider-owned newCursor
 
 persist()
-  -> INSERT OR REPLACE index_state(...)
+  -> 原样写 cursor，并投影前两段到 mtime / lines_processed
 ```
 
 1、**`sessions` — 会话**
@@ -2206,6 +2221,7 @@ jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcrip
 | `jsonl_path`      | TEXT PK | 文件路径 或 特殊标记（`__last_build__`、`__app_heartbeat__`） |
 | `mtime`           | REAL    | 文件修改时间或心跳时间                                       |
 | `lines_processed` | INTEGER | 已处理行数                                                   |
+| `cursor`          | TEXT    | Provider 原样 cursor；旧库为空时回退到 `mtime:lines`         |
 
 `index_state` 不对应一种 `TranscriptRecord`。它由 `persist()` 在一个 unit 的 generator 正常结束后保存 cursor，也由编排层保存 Provider marker 和 `__last_build__` 等状态；它回答的是“已经处理到哪里”，不是“对话中发生了什么”。
 
@@ -2599,7 +2615,7 @@ persist(db, unit, generator)
       → tombstone unit：无 record，仅完成上面的撤回
       → session/message/tool/result/...：全量写入当前投影
   → generator 完成后 return cursor
-  → cursor 非 null → 更新 index_state(unit.key, mtime, lines_processed)
+  → cursor 非 null → 更新 index_state(unit.key, mtime, lines_processed, cursor)
   → return cursor
 ```
 
@@ -2761,7 +2777,7 @@ ON CONFLICT(agent_id) DO UPDATE SET
 
 - `message-turn-duration`：执行 `UPDATE messages SET turn_duration_ms=? WHERE uuid=?`，因为 duration 晚于 message 才出现，不创建新 message。
 - `delete-session`：显式删除该 session 及其关联的 `tool_results`、`tool_calls`、`messages`、`subagents`、`workflow_agents`、`workflows`、`summaries` 和 `sessions` 行，但保留 `memories`。没有数据库级外键级联，删除顺序由 persist 维护；Pi 与 Codex 根 thread 都在全量重放前使用它。
-- generator 正常结束且 cursor 非 `null`：把 `"mtime:lines"` 拆成数值，`INSERT OR REPLACE` 写入 `index_state(jsonl_path, mtime, lines_processed)`；下次 `discover()` 以此判断文件是否变化、Claude 是否能跳过已消费行。
+- generator 正常结束且 cursor 非 `null`：原样写入 `index_state.cursor`，同时把前两段数值写入 `mtime` / `lines_processed`；下次 `discover()` 优先取得原始 cursor，老库为空时再兼容拼回两段值。
 
 未被 `switch (r.kind)` 覆盖的 record 会抛错，避免新增 Provider record 后静默丢数据。
 
@@ -2985,7 +3001,7 @@ Trajex 有三个不同尺度的“重新来过”：
 - 成功：记录与新游标一起提交。
 - 失败：记录回滚，游标留在原地，下次 discover 自然再安排。
 
-当前 `Cursor` 的 TypeScript 类型虽是 `string | null`，但持久化协议实际限制为 `"mtime:lines"`：`persist()` 拆成 `index_state.mtime` / `lines_processed`，`storedProviderCursor()` 再拼回。内容语义归 Provider，存储外形并不完全不透明。
+`Cursor` 的 TypeScript 类型是 `string | null`。`persist()` 原样保存字符串，并把前两段数值同步到兼容列；`storedProviderCursor()` 优先返回原始值。共享层不解释后续段，但当前仍要求前两段可转数字，因此 cursor 是“Provider 可扩展”，还不是完全任意的 opaque token。
 
 ### 版本标记是投影协议，不是 schema 版本
 
@@ -3001,6 +3017,13 @@ Trajex 有三个不同尺度的“重新来过”：
 - 根目录自身不可用：没有证据说明旧会话已删除，必须保留快照并稍后重试。
 
 `force` 清理的是 8 张 transcript 派生表和相关索引状态，不清理 `memories`。这不只是实现细节，而是数据分类的执行结果。
+
+### App watcher 是快速路径，不是 Core 正确性边界
+
+CLI 没有常驻 watcher：每次查询/构建都由 Core 自己执行 discovery。App 的 Parcel 目录事件与精确文件轮询（macOS 另外轮询最近 64 个 hot transcript）只负责尽快生成 `changedPaths`；这些路径是缩小工作范围的 hint，不是来源清单。
+
+App 每 5 分钟安排一次不带 `changedPaths` 的完整 reconcile，最终仍进入相同的 Provider `discover()`。因此漏事件最多影响新鲜度，不会改变删除证明规则：只有来源根成功枚举后的 inventory 才能撤回旧 session。`watchHints` 也只是 build 完成后从最近的 `index_state` 文件项提取，用来给 hot set 排优先级，不进入 Provider 解析语义。
+完整决策记录见 [ADR-0011](../adr/0011-adaptive-watching-and-bounded-index-scheduling.md)；删除证明仍以 [ADR-0004](../adr/0004-source-inventory-and-deletion-reconciliation.md) 为准。
 
 ## 九、记忆层的生命周期
 
@@ -3052,7 +3075,8 @@ Memory 是以前的笔记，不是最终权威。当答案正确性依赖它时�
 5. ID 如何加 Provider 前缀并在重放后保持稳定？
 6. `raw()` 如何从规范 UUID 回到原始证据？
 7. 根目录不可用时如何报告 inventory issue？什么证据才足以判定旧 session 确已删除？
-8. 解析语义改变时是否同步提升 marker？
+8. `watchTargets()` 中哪些是递归 `tree`，哪些是精确 `file`？不要让 App 根据路径猜类型。
+9. 解析语义改变时是否同步提升 marker？
 
 ### 三条没有类型保护的脆弱规则
 
@@ -3062,25 +3086,9 @@ Memory 是以前的笔记，不是最终权威。当答案正确性依赖它时�
 
 ### 已知边界
 
-- Cursor 在语义上归 Provider，在持久化上仍被约束为两个数字字段；不能直接容纳任意 opaque token。
+- Cursor 在语义上归 Provider并被原样持久化，但前两段仍需是可转数字的 mtime/lines 兼容投影；完全任意的 opaque token 仍不支持。
 - `index_state` 同时充当 unit cursor 表、Provider 版本标记表和进程间信号板，务实但命名与职责已有漂移。
 - schema 没有外键，以允许多 unit 乱序、部分到达；代价是 `deleteSession()` 必须手写删除顺序与级联范围。
 - 检索投影会将长文本裁剪到可控规模（通用上限 10,000 字符，不同字段可用更小预览）；需要完整证据时应通过支持 `offset` / `limit` 的 `raw()` 回源。源日志已删除时，裁剪掉的部分无法从索引恢复。
 - `schema.sql` 是新库的意图，老库的实际状态由 `PRAGMA table_info` / `sqlite_master` 决定。由于迁移只追加列，新旧库的列顺序必然可能不同，所有代码都应按列名访问。
 - 单 writer 模型以吞吐上限换取简单与安全。对本地索引这是合理取舍；只有实测成为瓶颈时才值得引入更细粒度并发写。
-
-## 十一、建议的源码阅读顺序
-
-```text
-1. packages/cli/src/trajex.ts                 看四个公共动词与 transport 边界
-2. packages/core/src/core.ts                  看 schema 就绪门、被动索引和 Worker 调度
-3. packages/core/src/providers/types.ts       看共同语言与 Provider 契约
-4. packages/core/src/schema.sql               看序列化投影，不要反过来当成语义源头
-5. packages/core/src/persist.ts                看 record 如何变成行
-6. packages/core/src/provider-indexing.ts      看计划、游标、版本标记与 unit 事务
-7. packages/core/src/indexer.ts                看一次 build 如何收敛
-8. packages/core/src/providers/claude.ts       先读行增量，再对照 Codex/Pi 全量重放
-9. packages/core/src/query.ts                  看 CodeAct helper 与 memory API
-10. packages/core/src/session-detail.ts        看 provider 无关的展示投影
-11. packages/core/src/tx.ts / writer-lease.ts  最后读横切并发不变量
-```

@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.2.7]
+
+### Added
+
+- 新增 `@trajex/adaptive-watcher`：目录使用 `@parcel/watcher`，精确 metadata 文件使用有界 stat 轮询；macOS 另外轮询最近活跃的最多 64 个 transcript。缺失根目录恢复或订阅重建后会触发补扫。
+- App daemon 每 5 分钟执行一次完整 inventory reconcile，作为文件事件和热文件轮询之外的最终补漏边界。
+
+### Changed
+
+- Provider 监听契约从无类型的路径数组改为 `watchTargets()`，明确区分递归目录 `tree` 与精确文件 `file`；Claude、Codex、Pi 的监听目标现在完全由各自 adapter 声明。
+- 自动索引调度改为 250ms debounce、500ms 稳定窗口和 1.5s 最大等待；build 运行期间的新变化只合并为一个 pending batch，避免持续写入导致无限延后或旧定时器额外触发。
+- `index_state` 新增原样 `cursor` 列；Claude cursor 扩展为 `mtime:lines:size:ctime:inode`，旧数据库的 `mtime:lines` 仍可读取。
+- 增量 finalize 只刷新本次变更、撤回或延期重试涉及的 session project path，不再为单文件更新扫描全部 session。
+
+### Fixed
+
+- 修复长时间打开并持续追加的 transcript、精确 metadata 文件或短暂 watcher 故障可能漏掉自动索引的问题。
+- 修复同一毫秒内追加或原路径文件替换可能被旧 Claude cursor 误判为未变化的问题；损坏尾行继续遵循只提交有效前缀的既有边界。
+- 修复 writer busy 延期后丢失受影响 session 范围，以及同一路径替换 session identity 时下游只收到新身份通知的问题。
+
 ## [0.2.6]
 
 ### Added

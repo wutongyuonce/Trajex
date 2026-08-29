@@ -14,6 +14,7 @@ import {
   assertRebuildRootsAvailable,
   createProviderIndexPlan,
   indexProviderPlan,
+  readRecentTranscriptHints,
   readProviderSessionProvenance,
   writeProviderIndexMarkers,
 } from '../../../packages/core/src/provider-indexing.ts';
@@ -114,8 +115,11 @@ function sessionIdFromChangedPath(projectsDir, changedPath) {
   return null;
 }
 
-function refreshSessionProjectPaths(db) {
-  const sessions = db.prepare('SELECT id, project FROM sessions').all();
+function refreshSessionProjectPaths(db, sessionIds: ReadonlySet<string> | null = null) {
+  const sessionById = db.prepare('SELECT id, project FROM sessions WHERE id = ?');
+  const sessions = sessionIds === null
+    ? db.prepare('SELECT id, project FROM sessions').all()
+    : [...sessionIds].map(sessionId => sessionById.get(sessionId)).filter(Boolean);
   const cwdStmt = db.prepare(`
     SELECT cwd FROM messages
     WHERE session_id = ? AND cwd IS NOT NULL AND cwd != ''
@@ -208,6 +212,7 @@ interface BuildIndexOptions {
   LockDatabaseImpl?: new (dbPath: string) => any;
   force?: boolean;
   changedPaths?: string[];
+  retrySessionIds?: string[];
   preserveDbPath?: string | null;
   writerLeasePath?: string;
   writerLeaseWaitMs?: number;
@@ -229,6 +234,7 @@ interface BuildIndexResult {
   skippedFiles: SkippedFile[];
   inventoryIssues: readonly ProviderInventoryRootIssue[];
   deferred: boolean;
+  watchHints?: string[];
   reason?: string;
 }
 
@@ -262,6 +268,7 @@ function buildIndex({
   LockDatabaseImpl = DatabaseImpl,
   force = false,
   changedPaths = undefined,
+  retrySessionIds = [],
   preserveDbPath = null,
   writerLeasePath = writerLockPathFor(dbPath),
   writerLeaseWaitMs = 2000,
@@ -334,6 +341,7 @@ function buildIndex({
           skippedFiles: [],
           inventoryIssues: providerPlan.inventoryIssues,
           deferred: false,
+          watchHints: readRecentTranscriptHints(db),
         };
       }
       assertRebuildRootsAvailable(providerPlan);
@@ -405,6 +413,7 @@ function buildIndex({
         onCommitted: ({ unit }, nextCursor) => {
           if (nextCursor) latestSourceMtime = Math.max(latestSourceMtime, Number(nextCursor.split(':')[0]) || 0);
           if (unit.sessionId) affectedSessionIds.add(unit.sessionId);
+          for (const sessionId of unit.retractSessionIds ?? []) affectedSessionIds.add(sessionId);
         },
         onError: (error, { provider, unit }) => {
           if (isBeginBusyFailure(error)) return 'stop';
@@ -433,7 +442,10 @@ function buildIndex({
       // index would otherwise be left inconsistent).
       try {
         runRetryableWriteTransaction(txDb, () => {
-          refreshSessionProjectPaths(db);
+          const projectPathSessionIds = !force && Array.isArray(changedPaths)
+            ? new Set([...retrySessionIds, ...affectedSessionIds, ...finalizeAffectedSessionIds])
+            : null;
+          refreshSessionProjectPaths(db, projectPathSessionIds);
           healWorkflowParentLinks(db);
           if (messageFtsTriggersDropped) installSchema(db, schemaPath);
           ftsRebuilt = ensureFtsReady(db, { force });
@@ -466,6 +478,7 @@ function buildIndex({
         skippedFiles: skipped,
         inventoryIssues: providerPlan.inventoryIssues,
         deferred: false,
+        watchHints: readRecentTranscriptHints(db),
       };
     } finally {
       if (messageFtsTriggersDropped) {

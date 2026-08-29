@@ -127,7 +127,8 @@ CREATE TABLE IF NOT EXISTS workflow_agents (
 CREATE TABLE IF NOT EXISTS index_state (
   jsonl_path TEXT PRIMARY KEY,     -- 文件路径 或 系统标记
   mtime REAL,                      -- 文件修改时间（毫秒）或心跳时间
-  lines_processed INTEGER);        -- JSONL 已处理行数（用于增量 resume）
+  lines_processed INTEGER,         -- JSONL 已处理行数（用于增量 resume）
+  cursor TEXT);                    -- Provider 原样 cursor；旧库为 null 时回退到 mtime:lines
 
 -- ============================================================
 -- 9. 摘要表：会话摘要（来自 compact、工作流等）

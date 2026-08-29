@@ -8,6 +8,7 @@
  * 模块定位：将 registry 发现的 IndexUnit 排成计划，取回 Provider 私有 cursor，
  * 并在调用方提供的事务中执行 parse → persist。它不绑定具体 SQLite 驱动。
  */
+import { statSync } from 'node:fs';
 import { persist } from './persist.ts';
 import type { ProviderRegistry } from './providers/registry.ts';
 import type {
@@ -56,6 +57,24 @@ export class ProviderRootUnavailableError extends Error {
   }
 }
 
+/** 为 macOS 热文件轮询提供最近活跃的 transcript，系统 marker 不参与。 */
+export function readRecentTranscriptHints(db: SqliteDb, limit = 64): string[] {
+  const rows = db.prepare(
+    "SELECT jsonl_path FROM index_state WHERE jsonl_path NOT LIKE '\\_\\_%' ESCAPE '\\' ORDER BY mtime DESC LIMIT ?",
+  ).all(limit * 4);
+  const hints: string[] = [];
+  for (const row of rows) {
+    if (hints.length >= limit) break;
+    const file = String(row.jsonl_path);
+    try {
+      if (!statSync(file).isDirectory()) hints.push(file);
+    } catch {
+      // 文件可能在 build 结束后被删除，不把失效 hint 放入热集合。
+    }
+  }
+  return hints;
+}
+
 /** 执行结果：已提交项、失败 Provider 集合；stopped 表示数据库忙等原因中途停止的位置。 */
 export interface ProviderIndexResult {
   readonly committed: ProviderIndexItem[];
@@ -63,10 +82,11 @@ export interface ProviderIndexResult {
   readonly stopped?: { item: ProviderIndexItem; error: unknown };
 }
 
-/** 从 index_state 还原当前的 mtime:lines cursor；provider 决定如何消费两部分。 */
+/** 优先返回 Provider 原样 cursor；旧库没有值时兼容 mtime:lines。 */
 export function storedProviderCursor(db: SqliteDb, key: string): Cursor {
-  const row = db.prepare('SELECT mtime, lines_processed FROM index_state WHERE jsonl_path = ?').get(key);
-  return row ? `${String(row.mtime)}:${String(row.lines_processed)}` : null;
+  const row = db.prepare('SELECT mtime, lines_processed, cursor FROM index_state WHERE jsonl_path = ?').get(key);
+  if (!row) return null;
+  return typeof row.cursor === 'string' ? row.cursor : `${String(row.mtime)}:${String(row.lines_processed)}`;
 }
 
 /** 读取已有 session 的来源与路径，不携带 transcript 内容。 */

@@ -1,7 +1,7 @@
 # Architecture decision records
 
 Canonical ADR order follows the runtime architecture from source ingestion to
-packaging. The directory contains only the current ten ADRs.
+packaging. The directory contains only the current eleven ADRs.
 
 | ADR | Responsibility |
 | --- | --- |
@@ -15,6 +15,8 @@ packaging. The directory contains only the current ten ADRs.
 | [0008](0008-core-typescript-esm-precompiled.md) | TypeScript Core and precompiled ESM distribution |
 | [0009](0009-skill-artifact-readable-not-bundled.md) | Readable CLI package versus docs-only Skill artifact |
 | [0010](0010-app-electron-vite-ts-esm.md) | Electron build, preload boundary, and packaging |
+| [0011](0011-adaptive-watching-and-bounded-index-scheduling.md) | App watch targets, adaptive invalidation, bounded scheduling, and periodic reconciliation |
 
-The first six ADRs describe the indexing architecture itself. The last four
-describe runtime compatibility and delivery mechanics around that architecture.
+The first six ADRs describe the indexing architecture itself. ADR-0011 records
+the App daemon's freshness path; ADR-0007 through ADR-0010 describe runtime
+compatibility and delivery mechanics around the architecture.

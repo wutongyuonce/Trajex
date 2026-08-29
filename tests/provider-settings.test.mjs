@@ -16,7 +16,7 @@ function provider(id, defaultRoot, color) {
   return {
     name: id,
     descriptor: { id, name: `${id} name`, vendor: `${id} vendor`, defaultRoot, color },
-    watchRoots: () => [],
+    watchTargets: () => [],
     discover: () => [],
     *parse() { yield* []; return null; },
     raw: () => null,

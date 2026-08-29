@@ -201,7 +201,11 @@ test('codex provider discovers, watches, and reads archived sessions', () => {
   const provider = createCodexProvider({ rootDir: root });
   const units = provider.discover({ lastCursor: () => '9999999999999:1', changedPaths: [path] });
   assert.deepEqual(units.map(unit => unit.key), [path]);
-  assert.deepEqual(provider.watchRoots(root), [join(root, 'sessions'), archiveDir, join(root, 'session_index.jsonl')]);
+  assert.deepEqual(provider.watchTargets(root), [
+    { kind: 'tree', path: join(root, 'sessions') },
+    { kind: 'tree', path: archiveDir },
+    { kind: 'file', path: join(root, 'session_index.jsonl') },
+  ]);
   const raw = provider.raw({ messageUuid: `codex:${META.id}:000002`, agentId: 'codex:archive-agent', session: null, source: 'codex' });
   assert.match(raw.text, /archived Codex sentinel/);
 });

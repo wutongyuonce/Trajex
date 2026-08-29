@@ -81,7 +81,7 @@ function statements(db: SqliteDb) {
         tokens=COALESCE(excluded.tokens, workflow_agents.tokens),
         tool_calls=COALESCE(excluded.tool_calls, workflow_agents.tool_calls)`),
     turn: db.prepare('UPDATE messages SET turn_duration_ms=? WHERE uuid=?'),
-    idx: db.prepare('INSERT OR REPLACE INTO index_state (jsonl_path,mtime,lines_processed) VALUES (?,?,?)'),
+    idx: db.prepare('INSERT OR REPLACE INTO index_state (jsonl_path,mtime,lines_processed,cursor) VALUES (?,?,?,?)'),
     getSession: db.prepare('SELECT * FROM sessions WHERE id=?'),
   };
 }
@@ -179,11 +179,10 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
   while (!step.done) { write(step.value); step = gen.next(); }
   const cursor = step.value;
 
-  // cursor 形状是 Provider 协议约定的 "mtime:lines"，拆开持久化到 index_state，
-  // 供下一轮发现阶段比较 mtime、解析阶段跳过已消费的行（增量恢复）。
+  // 保留前两段数值列供 marker/排序使用，同时原样保存 Provider cursor。
   if (cursor != null) {
     const [mtime, lines] = cursor.split(':');
-    st.idx.run(unit.key, Number(mtime), Number(lines));
+    st.idx.run(unit.key, Number(mtime), Number(lines), cursor);
   }
   return cursor;
 }

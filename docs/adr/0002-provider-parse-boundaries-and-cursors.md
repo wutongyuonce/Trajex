@@ -1,6 +1,6 @@
 # Provider parse boundaries and cursor semantics
 
-> Revised 2026-08-10. This ADR also records the current identity relationship
+> Revised 2026-08-29. This ADR also records the current identity relationship
 > between a discovered unit, its cursor key, and the persisted session source
 > path, plus the deferred extension point for multi-file providers.
 
@@ -24,7 +24,7 @@ content into canonical records and a cursor.
 
 | Provider | Cursor and parse flow | Malformed JSONL policy |
 | --- | --- | --- |
-| Claude | `mtime:lines`; skip accepted lines, stream the new tail, aggregate the session at the end | Stop after a malformed line beyond the cursor; return a cursor before the bad line. If the cursor is past EOF, restart from line 1 |
+| Claude | `mtime:lines:size:ctime:inode`; skip accepted lines, stream the new tail, aggregate the session at the end | Stop after a malformed line beyond the cursor; return a cursor before the bad line. Legacy `mtime:lines` cursors remain readable. If the cursor is past EOF, restart from line 1 |
 | Codex | Record `mtime:lines`, but replay the whole rollout; collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Stop at the first malformed line and return a cursor before it |
 | Pi | Record `mtime:lines`, but replay the whole v3 tree; resolve durable leaf/compaction and project `visible` / `inactive` / `hidden` | Stop at the first malformed line and return a cursor before it |
 
@@ -51,6 +51,14 @@ IndexUnit.key
 index_state.jsonl_path = unit.key
     └── cursor / mtime / lines_processed
 ```
+
+`index_state.cursor` preserves the Provider's returned string verbatim.
+`mtime` and `lines_processed` remain denormalized compatibility fields taken
+from the first two colon-separated segments for ordering, markers, and old
+databases. `storedProviderCursor()` prefers the opaque `cursor` column and
+falls back to reconstructing legacy `mtime:lines` when that column is null.
+Shared persistence therefore requires numeric first and second segments today,
+but it no longer discards additional Provider-owned cursor state.
 
 `index_state.jsonl_path` is a historical column name: semantically it is a
 general unit-state key and is not required to name a JSONL file. If a future
@@ -81,6 +89,8 @@ Provider-specific directory layout.
 - Whether a path is deleted or temporarily unavailable is ADR-0004.
 - How records and cursors are committed, retracted, retried, and protected
   from memory deletion is ADR-0003.
+- How file changes schedule App builds is ADR-0011; watcher signatures are not
+  parser cursors and do not authorize deletion.
 - How canonical records become session detail is ADR-0005.
 
 ## Rationale

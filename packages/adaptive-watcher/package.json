@@ -1,0 +1,20 @@
+{
+  "name": "@trajex/adaptive-watcher",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Recursive tree watching plus bounded exact-file polling for Trajex transcripts.",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@parcel/watcher": "^2.6.0"
+  }
+}

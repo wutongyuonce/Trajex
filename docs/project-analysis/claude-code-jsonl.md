@@ -57,7 +57,7 @@ subagents/workflows/<run-id>/<agent-id>.jsonl
 
 ## 2.1 Trajex 的发现与解析边界
 
-Trajex 对主 transcript 使用 `mtime:lines` cursor：已成功消费的行会被跳过，只读取新增尾部。若 cursor 的行数超过当前文件长度（例如文件被重写或截断），解析器会回到文件开头重新建立投影。cursor 之后遇到损坏的 JSONL 行时，Claude 不把它当成整次构建失败，而是停止读取并提交该行之前的有效前缀，cursor 也停在损坏行之前；修复文件后下一次索引会重试该边界。
+Trajex 对主 transcript 使用 `mtime:lines:size:ctime:inode` cursor：行数用来跳过已成功消费的前缀，size、ctime 和 inode 用来补足单靠 mtime 无法区分的同毫秒追加和原路径文件替换。旧数据库中的 `mtime:lines` cursor 仍可读取。若 cursor 的行数超过当前文件长度（例如文件被重写或截断），解析器会回到文件开头重新建立投影。cursor 之后遇到损坏的 JSONL 行时，Claude 不把它当成整次构建失败，而是停止读取并提交该行之前的有效前缀，cursor 也停在损坏行之前；修复文件后下一次索引会重试该边界。
 
 删除清理以 `projects/` 为来源根边界：如果它不存在或根层枚举失败，discover 不生成 tombstone，普通 build 保留 Claude 的上一次快照；一旦根层枚举成功，本次清单就有权威性，缺失或不可读的项目、subagent、workflow 子目录按空子树处理。已索引的主 transcript 路径从权威清单中消失时，discover 生成 tombstone unit，由共享 persist 撤回该 session 的可重建派生投影。普通子代理和 workflow 文件仍按各自 unit 解析；当前 session 删除清理的主键来自 `sessions.jsonl_path`。
 

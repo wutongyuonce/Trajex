@@ -22,6 +22,7 @@ const COLUMN_MIGRATIONS = [
   ['memories', 'deleted_at', 'TEXT'],
   ['memories', 'deleted_reason', 'TEXT'],
   ['summaries', 'agent_id', 'TEXT'],
+  ['index_state', 'cursor', 'TEXT'],
 ] as const;
 
 /** 判断表是否已存在，避免对不存在的表执行 ALTER 报错。 */

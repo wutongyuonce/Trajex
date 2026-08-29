@@ -1,6 +1,6 @@
 # Indexing architecture: provider registry and shared orchestration
 
-> Revised 2026-08-09. This ADR defines the top-level layering and ownership
+> Revised 2026-08-29. This ADR defines the top-level layering and ownership
 > boundaries. Detailed parsing, persistence, source reconciliation, and UI
 > projection decisions live in ADR-0002 through ADR-0006.
 
@@ -16,7 +16,7 @@ same indexing semantics.
 Split indexing into two orthogonal axes:
 
 - **Provider registry.** Each source implements a complete adapter boundary:
-  descriptor metadata, `watchRoots(root)`, `discover(context)`,
+  descriptor metadata, `watchTargets(root)`, `discover(context)`,
   `parse(unit, cursor)`, and `raw(lookup)`. Adapters understand provider
   formats and emit canonical `TranscriptRecord` values; they never touch a
   database. Adding a provider means adding and registering one adapter.
@@ -27,9 +27,11 @@ Split indexing into two orthogonal axes:
 - **Canonical record center.** Provider-specific semantics are projected into
   the shared record language before persistence and session-detail assembly.
   Shared layers do not add provider branches or infer semantics from text.
-- **Two triggers, one behavior.** App daemon mode watches provider roots;
-  passive CLI mode indexes on demand when no daemon owns writes. Both use the
-  same registry and orchestration and are separated by heartbeat/lease policy.
+- **Two triggers, one behavior.** App daemon mode converts Provider-owned typed
+  watch targets into invalidation hints; passive CLI mode indexes on demand
+  when no daemon owns writes. Both use the same discovery and persistence
+  behavior and are separated by heartbeat/lease policy. Watch events never
+  become a second source-inventory implementation.
 
 ## Ownership boundaries
 
@@ -40,6 +42,8 @@ Split indexing into two orthogonal axes:
 - ADR-0004 defines source inventory and deletion proof.
 - ADR-0005 defines canonical records and session-detail assembly.
 - ADR-0006 defines Pi's tree/visibility projection.
+- ADR-0011 defines App watch targets, adaptive invalidation, bounded scheduling,
+  and periodic reconciliation.
 
 ## Consequences
 

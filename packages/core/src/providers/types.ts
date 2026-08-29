@@ -82,6 +82,12 @@ export interface IndexedSession {
   source?: string;
 }
 
+/** Provider 明确声明监听目标是递归目录还是精确文件。 */
+export interface WatchTarget {
+  readonly kind: 'tree' | 'file';
+  readonly path: string;
+}
+
 /** Provider 来源根无法建立权威 inventory 时的结构化诊断。 */
 export interface InventoryRootIssue {
   path: string;
@@ -376,6 +382,6 @@ export interface ProviderAdapter extends Provider {
   readonly descriptor: ProviderDescriptor;
   /** 索引语义版本标记；缺失时触发一次 provider 自有的全量重放。 */
   readonly indexVersionMarker?: string;
-  watchRoots(configuredRoot: string): string[];
+  watchTargets(configuredRoot: string): WatchTarget[];
   raw(input: RawLookup): RawRecord | null;
 }

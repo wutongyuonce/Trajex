@@ -44,6 +44,17 @@ function cursorToSkip(cursor: Cursor): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** mtime 可能在同一毫秒内不变；完整签名还能识别 append 和原路径替换。 */
+function cursorSignatureDiffers(cursor: string, filePath: string): boolean {
+  const stats = statSync(filePath);
+  const parts = cursor.split(':');
+  if (parts.length < 5) return Number(parts[0]) < stats.mtimeMs;
+  return Number(parts[0]) !== stats.mtimeMs
+    || Number(parts[2]) !== stats.size
+    || Number(parts[3]) !== stats.ctimeMs
+    || Number(parts[4]) !== stats.ino;
+}
+
 export const name = 'claude';
 export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v4__';
 
@@ -116,7 +127,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     const cursor = ctx.lastCursor(file.path);
     return forcedPaths.has(normalizedPath)
       || cursor === null
-      || Number(cursor.split(':')[0]) < statSync(file.path).mtimeMs;
+      || cursorSignatureDiffers(cursor, file.path);
   }).map((f: any) => ({
     key: f.path,
     sessionId: f.sessionId,
@@ -238,7 +249,8 @@ function workflowParentToolUseId(
  * transcript 以恢复它对应的 Workflow tool call ID。
  */
 function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
-  const mtime = statSync(unit.key).mtimeMs;
+  const stats = statSync(unit.key);
+  const mtime = stats.mtimeMs;
   const outCursor = `${mtime}:1`;
   let workflow: any;
   try { workflow = JSON.parse(readFileSync(unit.key, 'utf8')); } catch { return outCursor; }
@@ -293,7 +305,8 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     return yield* parseWorkflow(unit);
   }
   const skip = cursorToSkip(cursor);
-  const mtime = statSync(unit.key).mtimeMs;
+  const stats = statSync(unit.key);
+  const mtime = stats.mtimeMs;
   const isSubagent = unit.isSubagent === true;
   const records: TranscriptRecord[] = [];
   const sm = {
@@ -444,7 +457,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
   }
 
   yield* records;
-  return `${mtime}:${processedLineCount}`;
+  return `${mtime}:${processedLineCount}:${stats.size}:${stats.ctimeMs}:${stats.ino}`;
 }
 
 /** 按原生 message UUID 在主会话、subagent 或 workflow-agent 文件中回查原始行。 */
@@ -492,8 +505,9 @@ export function createClaudeProvider({ rootDir = join(homedir(), '.claude') }: {
     name,
     descriptor: { id: name, name: 'Claude Code', vendor: 'Anthropic', defaultRoot: rootDir, color: '#d97757' },
     indexVersionMarker: CLAUDE_CANONICAL_TRANSCRIPT_MARKER,
-    watchRoots: (configuredRoot) => [
-      join(configuredRoot, 'projects'),
+    watchTargets: (configuredRoot) => [
+      { kind: 'tree', path: join(configuredRoot, 'projects') },
+      { kind: 'file', path: join(configuredRoot, 'history.jsonl') },
     ],
     discover: (ctx) => discoverAt(rootDir, ctx),
     parse,

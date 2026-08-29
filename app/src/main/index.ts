@@ -240,11 +240,12 @@ function startIndexerService({ buildOnStart = false } = {}) {
   const paths = getRuntimePaths();
   const service = createIndexerService({
     projectsDir: paths.projectsDir,
-    watchDirs: paths.providerRegistry.watchRoots(paths.providerRoots),
-    buildIndex: async ({ reason, changedPaths }) => {
+    watchTargets: paths.providerRegistry.watchTargets(paths.providerRoots),
+    buildIndex: async ({ reason, changedPaths, retrySessionIds }) => {
       const result = await indexerWorker.buildIndex({
         reason,
         changedPaths,
+        retrySessionIds,
         providerRoots: paths.providerRoots,
         claudeDir: paths.claudeDir,
         codexDir: paths.codexDir,
@@ -820,6 +821,7 @@ ipcMain.handle('settings:rebuildIndex', async () => {
   }
   cleanupDbFiles(tempDbPath);
   let writerLease: ReturnType<typeof acquireWriterLease> = null;
+  let rebuildWatchHints: string[] = [];
   try {
     const writerLeasePath = writerLockPathFor(paths.dbPath);
     writerLease = acquireWriterLease({
@@ -845,6 +847,7 @@ ipcMain.handle('settings:rebuildIndex', async () => {
     if (result?.deferred) {
       throw new Error(`Trajex rebuild was not completed: ${String(result.reason || 'indexing deferred').replaceAll('_', ' ')}`);
     }
+    rebuildWatchHints = result?.watchHints ?? [];
     closeDb();
     replaceDbWithTemp(tempDbPath, paths.dbPath);
     openDb(paths.dbPath, { writerLeaseMode: 'caller-held' });
@@ -865,7 +868,9 @@ ipcMain.handle('settings:rebuildIndex', async () => {
     } finally {
       writerLease?.release();
       if (loadPersistedSettings().autoRefresh !== false) {
-        startIndexerService({ buildOnStart: false });
+        const service = startIndexerService({ buildOnStart: false });
+        if (rebuildWatchHints.length) service?.promoteWatchHints?.(rebuildWatchHints);
+        else service?.runBuildNow?.('reconcile');
       }
     }
   }

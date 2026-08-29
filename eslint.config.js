@@ -17,6 +17,7 @@ export default tseslint.config(
       'node_modules/**',
       'app/**',
       'dist/**',
+      'website/dist/**',
       'release/**',
       '.dev.docs/**',
       '.trajex/**',
@@ -48,6 +49,16 @@ export default tseslint.config(
       // Provider adapters parse untyped external transcript JSON; `any` at those
       // boundaries is deliberate, not a smell.
       '@typescript-eslint/no-explicit-any': 'off',
+    },
+  },
+  {
+    files: ['website/app.js'],
+    languageOptions: {
+      globals: { ...globals.browser },
+    },
+    rules: {
+      // NUL sentinels temporarily protect inline code while Markdown is rendered.
+      'no-control-regex': 'off',
     },
   },
 );

@@ -1,5 +1,5 @@
 import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '..');
 const site = resolve(import.meta.dirname);

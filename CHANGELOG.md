@@ -19,6 +19,7 @@
 - 修复长时间打开并持续追加的 transcript、精确 metadata 文件或短暂 watcher 故障可能漏掉自动索引的问题。
 - 修复同一毫秒内追加或原路径文件替换可能被旧 Claude cursor 误判为未变化的问题；损坏尾行继续遵循只提交有效前缀的既有边界。
 - 修复 writer busy 延期后丢失受影响 session 范围，以及同一路径替换 session identity 时下游只收到新身份通知的问题。
+- 修复全局 ESLint 将网站源码当作 Node.js 代码检查、重复检查 `website/dist` 构建产物而导致 `npm run lint` 失败的问题。
 
 ## [0.2.6]
 

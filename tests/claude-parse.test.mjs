@@ -126,7 +126,7 @@ test('claude parse() resumes from a cursor, skipping already-indexed lines', () 
   assert.equal(values.find(r => r.kind === 'session').message_count, 0);
 });
 
-test('claude incremental parse stops at a new malformed line and leaves the cursor before it', () => {
+test('claude incremental parse skips a newline-terminated malformed line', () => {
   const path = writeFixture();
   appendFileSync(path, [
     JSON.stringify({ uuid: 'u-before-corruption', type: 'user', message: { role: 'user', content: 'before corruption' } }),
@@ -135,7 +135,24 @@ test('claude incremental parse stops at a new malformed line and leaves the curs
   ].join('\n') + '\n');
 
   const { values, ret } = drain(parse({ key: path, sessionId: 'sid-x', project: 'quiet-zero' }, '0:6'));
-  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.uuid), ['u-before-corruption']);
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.uuid), [
+    'u-before-corruption',
+    'u-after-corruption',
+  ]);
+  assert.equal(ret.split(':')[1], '9');
+});
+
+test('claude incremental parse leaves an unterminated malformed tail unconsumed', () => {
+  const path = writeFixture();
+  appendFileSync(path, [
+    JSON.stringify({ uuid: 'u-before-torn-tail', type: 'user', message: { role: 'user', content: 'before torn tail' } }),
+    '{"uuid":"unfinished"',
+  ].join('\n'));
+
+  const { values, ret } = drain(parse({ key: path, sessionId: 'sid-x', project: 'quiet-zero' }, '0:6'));
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.uuid), [
+    'u-before-torn-tail',
+  ]);
   assert.equal(ret.split(':')[1], '7');
 });
 

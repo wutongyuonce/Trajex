@@ -116,7 +116,7 @@ function isDir(p: string): boolean { try { return statSync(p).isDirectory(); } c
  * 以固定大小 buffer 流式读取文本行。JSONL Provider 使用它避免把大历史文件一次性
  * 载入内存；callback 返回 false 可在已找到目标证据时提前停止。
  */
-function readLines(filePath: string, callback: (line: string) => boolean | void): void {
+function readLines(filePath: string, callback: (line: string, terminated: boolean) => boolean | void): void {
   const fd = openSync(filePath, 'r');
   const bufSize = 64 * 1024;
   const buf = Buffer.alloc(bufSize);
@@ -130,11 +130,11 @@ function readLines(filePath: string, callback: (line: string) => boolean | void)
       lines[0] = remainder + lines[0];
       remainder = lines.pop() ?? '';
       for (const line of lines) {
-        if (line && callback(line) === false) return;
+        if (line && callback(line, true) === false) return;
       }
     }
     const tail = remainder + decoder.end();
-    if (tail) callback(tail);
+    if (tail) callback(tail, false);
   } finally {
     closeSync(fd);
   }

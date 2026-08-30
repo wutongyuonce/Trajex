@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Claude 增量解析现在会跳过已换行结束的损坏 JSONL 记录并继续索引后续消息；未换行的残缺尾行仍不推进 cursor，等待文件写完后重试。Claude canonical marker 升级后会自动重建旧投影，修复已卡在永久坏行前的会话。
 - Codex 全量重放现在也使用 `mtime + ctime + size + inode` 判断稳定快照；周期 reconcile 能发现同 mtime 覆盖写，读取期间发生变化时不会提交混合版本。
 - Pi 全量重放改用 `mtime + ctime + size + inode` 快照判断，并在读取前后确认文件未变化；旧两段 cursor 会安全重放一次，同 mtime 覆盖写和原路径换文件不再漏索引。
 - Pi `message_count` 只统计 visible 主线消息，不再把 inactive 分支和 hidden 扩展消息计入会话规模；这些证据仍保存在索引中。

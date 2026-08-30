@@ -56,7 +56,7 @@ function cursorSignatureDiffers(cursor: string, filePath: string): boolean {
 }
 
 export const name = 'claude';
-export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v4__';
+export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v5__';
 
 interface ClaudeWorkflowUnitMeta {
   readonly kind: 'workflow';
@@ -325,14 +325,15 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
 
   let lineNum = 0;
   let processedLineCount = 0;
-  readLines(unit.key, (line: string) => {
+  readLines(unit.key, (line: string, terminated: boolean) => {
     lineNum++;
     let obj: any;
     try { obj = JSON.parse(line); } catch {
-      // Historical lines before the cursor have already been accepted. A new
-      // malformed line is the boundary of this incremental batch: stop here,
-      // keep the cursor before it, and let the next file change retry it.
+      // A terminated malformed record cannot become valid in an append-only
+      // transcript, so consume it and continue. An unterminated tail may still
+      // be growing; leave the cursor before it and retry on the next change.
       if (lineNum <= skip) { processedLineCount = lineNum; return; }
+      if (terminated) { processedLineCount = lineNum; return; }
       return false;
     }
     processedLineCount = lineNum;

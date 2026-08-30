@@ -6,13 +6,17 @@ import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { repoRoot, runCli } from './cli-test-helpers.mjs';
+import { cliEntry, repoRoot, runCli } from './cli-test-helpers.mjs';
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const cliPackage = JSON.parse(readFileSync(join(repoRoot, 'packages', 'cli', 'package.json'), 'utf8'));
+
+test('the POSIX CLI build output keeps its executable bit', { skip: process.platform === 'win32' }, () => {
+  assert.notEqual(statSync(cliEntry).mode & 0o111, 0);
+});
 
 test('the packaged trajex command preserves the runtime query envelope', () => {
   const home = makeTempDir('trajex-cli-package-');

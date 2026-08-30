@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- 修复 TypeScript 构建将 CLI 入口生成为 `0644`、导致 `npm link` 或直接执行 `trajex.js` 时出现 `permission denied` 的问题；构建结束后会恢复 POSIX 执行位。
 - 修正 Electron 会话虚拟化测试中 Codex 工具结果缺少 `message_uuid` 的 fixture，使测试数据与生产环境的消息关联结构一致。
 - 修复 `sql()` 把字符串、注释或引用标识符中的 `update`/`delete` 等单词误判为写操作的问题；现在按 SQLite 实际行为校验只读，拒绝真实写入和单次 `sql()` 中的多条语句，并继续以只读数据库连接兜底。
 - 修复长时间打开并持续追加的 transcript、精确 metadata 文件或短暂 watcher 故障可能漏掉自动索引的问题。

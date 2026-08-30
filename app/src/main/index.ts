@@ -425,7 +425,7 @@ function querySessionWorkflows(sessionId: string): SessionWorkflowRow[] {
 
 function querySessionSummaries(sessionId: string): SessionSummaryRow[] {
   if (!db) return [];
-  return db.prepare(`SELECT * FROM summaries WHERE session_id = ? AND agent_id IS NULL`).all(sessionId) as SessionSummaryRow[];
+  return db.prepare(`SELECT * FROM summaries WHERE session_id = ? AND agent_id IS NULL AND visibility = 'visible'`).all(sessionId) as SessionSummaryRow[];
 }
 
 function querySessionSnapshot(sessionId: string): SessionDetailAssemblyInput {
@@ -551,7 +551,7 @@ ipcMain.handle('db:getSubagentToolResults', (_, agentId) => {
 
 ipcMain.handle('db:getSubagentSummaries', (_, agentId) => {
   if (!db) return [];
-  return db.prepare(`SELECT * FROM summaries WHERE agent_id = ? ORDER BY timestamp, id`).all(agentId);
+  return db.prepare(`SELECT * FROM summaries WHERE agent_id = ? AND visibility = 'visible' ORDER BY timestamp, id`).all(agentId);
 });
 
 ipcMain.handle('db:getSessionSummaries', (_, sessionId) => {

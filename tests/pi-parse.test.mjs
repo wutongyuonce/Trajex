@@ -14,7 +14,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v4__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v5__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -24,8 +24,8 @@ test('Pi indexes every tree branch and projects current context through visibili
     { type: 'message', id: 'u1', parentId: null, timestamp: '2026-07-30T10:00:01.000Z', message: { role: 'user', content: 'keep prompt' } },
     { type: 'message', id: 'a1', parentId: 'u1', timestamp: '2026-07-30T10:00:02.000Z', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'reason' }, { type: 'toolCall', id: 'call-1', name: 'Read', arguments: { file_path: '/tmp/a' } }] } },
     { type: 'message', id: 'r1', parentId: 'a1', timestamp: '2026-07-30T10:00:03.000Z', message: { role: 'toolResult', toolCallId: 'call-1', toolName: 'Read', content: [{ type: 'text', text: 'file body' }], isError: false } },
-    { type: 'compaction', id: 'c1', parentId: 'r1', timestamp: '2026-07-30T10:00:04.000Z', summary: 'earlier work' },
-    { type: 'branch_summary', id: 'b1', parentId: 'c1', timestamp: '2026-07-30T10:00:04.500Z', summary: 'abandoned branch summary' },
+    { type: 'compaction', id: 'c1', parentId: 'r1', timestamp: '2026-07-30T10:00:04.000Z', summary: 'earlier work', usage: { input: 10, cacheRead: 3, cacheWrite: 2, output: 4 } },
+    { type: 'branch_summary', id: 'b1', parentId: 'c1', timestamp: '2026-07-30T10:00:04.500Z', summary: 'abandoned branch summary', usage: { input: 7, output: 1 } },
     { type: 'session_info', id: 'n1', parentId: 'c1', timestamp: '2026-07-30T10:00:05.000Z', name: 'Pi fixture' },
     { type: 'message', id: 'old', parentId: 'u1', timestamp: '2026-07-30T10:00:06.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'abandoned branch' }] } },
     { type: 'message', id: 'current', parentId: 'n1', timestamp: '2026-07-30T10:00:07.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'kept answer' }], usage: { input: 4, output: 2 } } },
@@ -43,9 +43,9 @@ test('Pi indexes every tree branch and projects current context through visibili
   assert.equal(messages.find(record => record.text === 'kept answer').visibility, 'visible');
   assert.deepEqual(records.filter(record => record.kind === 'tool_call').map(record => record.id), [`${SESSION_ID}:call-1`]);
   assert.deepEqual(records.filter(record => record.kind === 'tool_result').map(record => record.tool_use_id), [`${SESSION_ID}:call-1`]);
-  assert.deepEqual(records.filter(record => record.kind === 'summary').map(record => ({ source: record.source, content: record.content })), [
-    { source: 'compaction', content: 'earlier work' },
-    { source: 'branch_summary', content: 'abandoned branch summary' },
+  assert.deepEqual(records.filter(record => record.kind === 'summary').map(record => ({ source: record.source, content: record.content, visibility: record.visibility, input_tokens: record.input_tokens, output_tokens: record.output_tokens })), [
+    { source: 'compaction', content: 'earlier work', visibility: 'visible', input_tokens: 15, output_tokens: 4 },
+    { source: 'branch_summary', content: 'abandoned branch summary', visibility: 'inactive', input_tokens: 7, output_tokens: 1 },
   ]);
   assert.deepEqual(records.find(record => record.kind === 'session' && record.id === SESSION_ID), { kind: 'session', id: SESSION_ID, title: 'Pi fixture', project: '-tmp-project', started_at: '2026-07-30T10:00:00.000Z', ended_at: '2026-07-30T10:00:07.000Z', git_branch: null, version: '3', message_count: 6, countMode: 'total', jsonl_path: path, source: 'pi' });
 });

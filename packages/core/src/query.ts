@@ -441,8 +441,9 @@ function createQueryApi(
     const opts = normalizeOpts(optsOrSid);
     const limit = normalizeLimit(opts.limit, 100);
     const { where, params } = buildWhere(opts, { sessionId: 'su.session_id', project: 's.project', timestamp: 'su.timestamp', branch: 's.git_branch', source: 's.source' });
+    const visibility = opts.includeInactive ? "su.visibility != 'hidden'" : "su.visibility = 'visible'";
     params.push(limit);
-    return db.prepare(`SELECT su.*, s.title as session_title, s.project FROM summaries su LEFT JOIN sessions s ON s.id=su.session_id WHERE ${where} ORDER BY su.timestamp DESC LIMIT ?`).all(...params);
+    return db.prepare(`SELECT su.*, s.title as session_title, s.project FROM summaries su LEFT JOIN sessions s ON s.id=su.session_id WHERE ${where} AND ${visibility} ORDER BY su.timestamp DESC LIMIT ?`).all(...params);
   };
 
   /** 概览：解析当前项目 + 全部项目的 session/记忆统计；是 overview 脚本的主要数据源。 */

@@ -8,6 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 
 import { extractContentType, extractMessageIsMeta } from '../packages/core/src/db.ts';
+import { migrateCoreSchemaColumns } from '../packages/core/src/schema-migrations.ts';
 
 async function readExecutableSchema() {
   return readFile(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8');
@@ -52,6 +53,20 @@ test('messages schema stores the raw content block type', async () => {
   assert.match(source, /CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages/);
   assert.match(source, /CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages/);
   assert.match(source, /CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages/);
+});
+
+test('legacy summaries gain visibility and usage columns', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec('CREATE TABLE summaries (id TEXT PRIMARY KEY, session_id TEXT, agent_id TEXT, timestamp TEXT, source TEXT, content TEXT)');
+    migrateCoreSchemaColumns(db);
+    const columns = db.prepare('PRAGMA table_info(summaries)').all().map(row => row.name);
+    assert.ok(columns.includes('visibility'));
+    assert.ok(columns.includes('input_tokens'));
+    assert.ok(columns.includes('output_tokens'));
+  } finally {
+    db.close();
+  }
 });
 
 test('tool results schema indexes live session patch lookups', async () => {

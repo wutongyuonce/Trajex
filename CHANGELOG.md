@@ -6,9 +6,11 @@
 
 - 新增 `@trajex/adaptive-watcher`：目录使用 `@parcel/watcher`，精确 metadata 文件使用有界 stat 轮询；macOS 另外轮询最近活跃的最多 64 个 transcript。缺失根目录恢复或订阅重建后会触发补扫。
 - App daemon 每 5 分钟执行一次完整 inventory reconcile，作为文件事件和热文件轮询之外的最终补漏边界。
+- Pi compaction 与 branch summary 现在记录分支可见性及输入/输出 token；输入 token 包含 cache read/write，Activity 可据此统计摘要压缩成本。
 
 ### Changed
 
+- Summary 查询默认只返回当前分支；Core 可用 `includeInactive` 显式读取 inactive 摘要，hidden 始终排除，App 详情只展示 visible 摘要。
 - Trajex skill 明确区分“外层 CLI 先刷新索引”与“内层查询脚本只读”：受限 sandbox 必须允许写入 `~/.trajex` 或 `TRAJEX_DIR`，权限失败时应重试同一 Trajex 命令，不直接读取可能过期的 SQLite/JSONL。
 - 主会话详情只读取主线程消息关联的工具调用与结果，不再预加载同一 session 下的子代理工具明细；inactive 主线程分支继续保留，子代理详情仍按 `agent_id` 独立加载。
 - Provider 监听契约从无类型的路径数组改为 `watchTargets()`，明确区分递归目录 `tree` 与精确文件 `file`；Claude、Codex、Pi 的监听目标现在完全由各自 adapter 声明。

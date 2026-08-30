@@ -15,7 +15,7 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v4__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v5__';
 
 type PiEntry = Record<string, any>;
 
@@ -137,6 +137,13 @@ function textParts(content: unknown, kind: 'text' | 'thinking'): string[] {
 function timestamp(value: unknown): string | null {
   if (typeof value === 'number' && Number.isFinite(value)) return new Date(value).toISOString();
   return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
+}
+
+function usageFields(value: unknown): { inputTokens: number | null; outputTokens: number | null } {
+  const usage = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const inputTokens = ['input', 'cacheRead', 'cacheWrite']
+    .reduce((total, key) => total + (Number.isFinite(usage[key]) ? Number(usage[key]) : 0), 0) || null;
+  return { inputTokens, outputTokens: Number.isFinite(usage.output) ? Number(usage.output) : null };
 }
 
 function toolFilePath(name: unknown, input: unknown): string | null {
@@ -300,7 +307,14 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     if (entry.type === 'session_info' && typeof entry.name === 'string') { title = entry.name; continue; }
     if (entry.type === 'model_change') continue;
     if (entry.type === 'compaction' || entry.type === 'branch_summary') {
-      if (typeof entry.summary === 'string') records.push({ kind: 'summary', id: piId(sessionId, entry.id), session_id: sessionId, timestamp: entry.timestamp ?? null, source: entry.type, content: entry.summary });
+      if (typeof entry.summary === 'string') {
+        const usage = usageFields(entry.usage);
+        records.push({
+          kind: 'summary', id: piId(sessionId, entry.id), session_id: sessionId,
+          timestamp: entry.timestamp ?? null, source: entry.type, content: entry.summary,
+          visibility: entryVisibility, input_tokens: usage.inputTokens, output_tokens: usage.outputTokens,
+        });
+      }
       continue;
     }
     if (entry.type === 'custom_message') {
@@ -318,9 +332,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (message.role === 'assistant') {
       const parts: any[] = Array.isArray(message.content) ? message.content : [];
-      const usage = message.usage ?? {};
-      const inputTokens = ['input', 'cacheRead', 'cacheWrite'].reduce((total, key) => total + (Number.isFinite(usage[key]) ? usage[key] : 0), 0) || null;
-      const outputTokens = Number.isFinite(usage.output) ? usage.output : null;
+      const { inputTokens, outputTokens } = usageFields(message.usage);
       const lastPart = parts.reduce((last, part, i) => (
         part?.type === 'text' || part?.type === 'thinking' || part?.type === 'toolCall' ? i : last
       ), -1);

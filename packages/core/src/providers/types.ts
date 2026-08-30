@@ -195,6 +195,9 @@ export interface SummaryRecord {
   timestamp: string | null;
   source: string;
   content: string;
+  visibility?: MessageVisibility;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
 }
 
 /**

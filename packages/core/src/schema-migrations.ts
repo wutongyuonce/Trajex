@@ -22,6 +22,9 @@ const COLUMN_MIGRATIONS = [
   ['memories', 'deleted_at', 'TEXT'],
   ['memories', 'deleted_reason', 'TEXT'],
   ['summaries', 'agent_id', 'TEXT'],
+  ['summaries', 'visibility', "TEXT DEFAULT 'visible'"],
+  ['summaries', 'input_tokens', 'INTEGER'],
+  ['summaries', 'output_tokens', 'INTEGER'],
   ['index_state', 'cursor', 'TEXT'],
 ] as const;
 

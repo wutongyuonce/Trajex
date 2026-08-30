@@ -227,6 +227,7 @@ is treated as `sessionId`; passing a number is treated as `limit`.
 | `opts.before` | `string` | ISO upper bound on summary timestamp |
 | `opts.branch` | `string` | Exact source session branch |
 | `opts.source` | `string` | Provider filter through joined session |
+| `opts.includeInactive` | `boolean` | Include inactive summaries; hidden summaries remain excluded |
 | `opts.limit` | `number` | Max rows, default 100 |
 
 Returns:
@@ -235,8 +236,8 @@ Returns:
 Array<summary_row & { session_title, project }>
 ```
 
-`summaries.source` is the summary kind, such as `away_summary`; it is not the
-provider source.
+By default only `visibility='visible'` summaries are returned. `summaries.source`
+is the summary kind, such as `away_summary`; it is not the provider source.
 
 #### `memories(opts?)`
 

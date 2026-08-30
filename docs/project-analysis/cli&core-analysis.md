@@ -766,6 +766,8 @@ type TranscriptRecord =
 | `timestamp`       | 摘要时间，可为空。                                           |
 | `source`          | 摘要来源标签。由 adapter 写入；Claude/Codex 通常写 provider 名，Pi 可能写具体 entry type。schema 允许来源标签比 provider 更细。 |
 | `content`         | 摘要正文。                                                   |
+| `visibility?`     | 摘要所属分支：`visible` / `inactive` / `hidden`；未提供时持久化为 `visible`。 |
+| `input_tokens?` / `output_tokens?` | 生成摘要的 token；Pi 会把 input、cacheRead、cacheWrite 合并为输入 token。 |
 
 `query.summaries()` 读取这张表。它保存的是来源已经产生的摘要，不等同于用户批准的长期 memory。
 
@@ -1912,7 +1914,7 @@ Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",vers
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | session header                                               | 最后的 `session`                                             | 提供 session ID、cwd、version、起止时间；自身不产出 message。 |
 | `{type:"session_info",name}` / `{type:"model_change",modelId}` | 无独立 record                                                | 前者更新最后的 session title；后者只参与后续 message 的 model 继承。 |
-| `{type:"compaction"|"branch_summary",summary}`               | `summary` + retained tail messages                           | `source: 'pi'`；compaction 的保留尾部也投影为 canonical message，避免 active context 丢失。 |
+| `{type:"compaction"|"branch_summary",summary,usage}`         | `summary` + retained tail messages                           | `source` 保留具体 entry type；摘要继承分支 visibility 与 usage，compaction 的保留尾部也投影为 canonical message。 |
 | `{type:"custom_message",content,display}`                    | custom `message`                                             | 扩展插入的 Entry，role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
 | `{type:"message",message:{role:"user",content}}`             | user `message`                                               | 仅文本 content 产生消息。                                    |
 | assistant 的 `content[]` text / thinking / toolCall part     | 每个 part 各产生 assistant `message`；toolCall 另有 `tool_call` | 以 `:partIndex` 后缀生成稳定 message ID，并串成 parent chain；usage 只附到最后一个可导航 part。 |
@@ -2193,6 +2195,8 @@ persist()
 | `timestamp`  | TEXT    | 时间                                    |
 | `source`     | TEXT    | 来源 provider 或事件类型（如 `claude`、`codex`、`pi`、`compaction`、`branch_summary`） |
 | `content`    | TEXT    | 摘要内容                                |
+| `visibility` | TEXT DEFAULT 'visible' | 摘要所属的当前、inactive 或 hidden 分支 |
+| `input_tokens` / `output_tokens` | INTEGER | 生成摘要的 token；未知为 `NULL` |
 
 9、**`index_state` — 索引进度**
 
@@ -2212,7 +2216,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcript_v4__" / "__pi_canonical_transcript_v4__"
+jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcript_v4__" / "__pi_canonical_transcript_v5__"
               ↑ 不是路径，而是状态 key
 ```
 
@@ -2826,7 +2830,7 @@ ON CONFLICT(agent_id) DO UPDATE SET
 | `failures(opts)` | 失败的工具结果（`is_error=1` 或内容以 `Exit code %` 开头），附后续消息 |
 | `sessions(opts)` | session 列表，默认按 ended_at 倒序 50 条 |
 | `recent(n)` | `sessions({ limit: n })` 的便捷包装 |
-| `summaries(opts)` | 会话摘要列表（可附带 session 标题与 project） |
+| `summaries(opts)` | 会话摘要列表（默认仅 visible；`includeInactive` 可包含 inactive，hidden 始终排除） |
 | `raw(uuid, opts)` | 调对应 Provider 的 raw lookup，从 SQLite 消息回到原始日志证据（分片 offset/limit/hasMore） |
 | `memories(opts)` | 记忆检索：带 query 走 memories_fts 相关度排序，否则按创建时间倒序 |
 | `overview(opts)` | 概览：解析"当前项目"（cwd→project_path 最长匹配 + messages.cwd 兼容）+ 全项目统计 |

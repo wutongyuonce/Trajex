@@ -9,7 +9,7 @@ import { CLAUDE_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/provide
 import { CODEX_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/codex.ts';
 import { PI_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/pi.ts';
 
-test('all transcript providers invalidate the old canonical projection together', () => {
+test('transcript provider projection markers are explicit', () => {
   assert.deepEqual([
     CLAUDE_CANONICAL_TRANSCRIPT_MARKER,
     CODEX_CANONICAL_TRANSCRIPT_MARKER,
@@ -17,6 +17,6 @@ test('all transcript providers invalidate the old canonical projection together'
   ], [
     '__claude_canonical_transcript_v4__',
     '__codex_canonical_transcript_v4__',
-    '__pi_canonical_transcript_v4__',
+    '__pi_canonical_transcript_v5__',
   ]);
 });

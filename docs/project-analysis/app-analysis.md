@@ -489,7 +489,7 @@ contextBridge.exposeInMainWorld('trajex', { ... })
 
 `main/index.ts` 的 `sourceWhereClause()` 统一处理 `source` 筛选：`source: 'all'` 不过滤，指定 source 只取那一类，未指定时采用 Claude 兼容默认值。所有 SQL 参数通过预编译语句传入，不把页面字符串拼成 SQL 值。
 
-主会话详情查询以 `messages.session_id + agent_id IS NULL` 为边界：主线程消息、inactive 分支及其工具调用/结果进入主快照，同一 session 下的子代理工具明细不会被预加载。`subagents` 元数据仍用于生成跳转入口；用户打开子代理页时，再由 `getSubagentMessages`、`getSubagentToolCalls`、`getSubagentToolResults` 和 `getSubagentSummaries` 按 `agent_id` 读取完整详情。这样只收窄主快照的读取范围，不改变子代理的索引、存储或展示能力。
+主会话详情查询以 `messages.session_id + agent_id IS NULL` 为边界：主线程消息、inactive 分支及其工具调用/结果进入主快照，同一 session 下的子代理工具明细不会被预加载。摘要没有分支展开 UI，因此主会话和子代理摘要查询默认只读 `visibility='visible'`；inactive 摘要仍保存在数据库，可由 Core `summaries({ includeInactive: true })` 查询。`subagents` 元数据仍用于生成跳转入口；用户打开子代理页时，再由 `getSubagentMessages`、`getSubagentToolCalls`、`getSubagentToolResults` 和 `getSubagentSummaries` 按 `agent_id` 读取完整详情。
 
 ### 7.1 `getMessageFullText` 为什么不只查数据库
 

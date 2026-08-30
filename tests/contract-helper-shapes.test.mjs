@@ -91,6 +91,8 @@ function fixture() {
 
   db.prepare(`INSERT INTO summaries (id, session_id, timestamp, source, content)
     VALUES (?, ?, ?, ?, ?)`).run('su-1', 'sid-1', '2026-06-10T10:06:00Z', 'away_summary', 'a summary');
+  db.prepare(`INSERT INTO summaries (id, session_id, timestamp, source, content, visibility)
+    VALUES (?, ?, ?, ?, ?, ?)`).run('su-inactive', 'sid-1', '2026-06-10T10:07:00Z', 'branch_summary', 'inactive summary', 'inactive');
 
   db.prepare(`INSERT INTO memories (id, session_id, project, path, summary, created_at)
     VALUES (?, ?, ?, ?, ?, ?)`).run('mem-1', 'sid-1', 'quiet-zero', '.trajex/memories/x.md', 'Decision: contract fixture memory.', '2026-06-10T10:07:00Z');
@@ -182,9 +184,12 @@ test('workflowTree() shape carries result and agents with messageCount', () => {
 
 test('summaries() row carries session_title and project', () => {
   const db = fixture();
-  const row = createQueryApi(db).summaries()[0];
+  const api = createQueryApi(db);
+  const row = api.summaries()[0];
 
   hasKeys(row, ['session_title', 'project'], 'summaries() row');
+  assert.deepEqual(api.summaries().map(summary => summary.id), ['su-1']);
+  assert.deepEqual(api.summaries({ includeInactive: true }).map(summary => summary.id), ['su-inactive', 'su-1']);
   db.close();
 });
 

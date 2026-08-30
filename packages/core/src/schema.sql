@@ -139,7 +139,10 @@ CREATE TABLE IF NOT EXISTS summaries (
   agent_id TEXT,                   -- 子 Agent 摘要所属 Agent（主会话为空）
   timestamp TEXT,                  -- 摘要时间
   source TEXT,                     -- 摘要类型（如 compact、workflow）
-  content TEXT);                   -- 摘要文本
+  content TEXT,                    -- 摘要文本
+  visibility TEXT DEFAULT 'visible', -- 当前分支可见性
+  input_tokens INTEGER,            -- 生成摘要消耗的输入 token
+  output_tokens INTEGER);          -- 生成摘要消耗的输出 token
 
 -- ============================================================
 -- 10. 消息全文搜索（FTS5 虚拟表，content-backed）

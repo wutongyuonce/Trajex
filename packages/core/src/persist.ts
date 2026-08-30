@@ -49,7 +49,7 @@ function statements(db: SqliteDb) {
         cwd=excluded.cwd, skill=excluded.skill, source=excluded.source`),
     tc: db.prepare('INSERT OR REPLACE INTO tool_calls (id,message_uuid,session_id,name,input_json,file_path) VALUES (?,?,?,?,?,?)'),
     tr: db.prepare('INSERT OR REPLACE INTO tool_results (tool_use_id,message_uuid,session_id,content,file_path,is_error) VALUES (?,?,?,?,?,?)'),
-    sum: db.prepare('INSERT OR REPLACE INTO summaries (id,session_id,agent_id,timestamp,source,content) VALUES (?,?,?,?,?,?)'),
+    sum: db.prepare('INSERT OR REPLACE INTO summaries (id,session_id,agent_id,timestamp,source,content,visibility,input_tokens,output_tokens) VALUES (?,?,?,?,?,?,?,?,?)'),
     ses: db.prepare('INSERT OR REPLACE INTO sessions (id,title,project,project_path,started_at,ended_at,git_branch,version,message_count,jsonl_path,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)'),
     sub: db.prepare(`
       INSERT INTO subagents (agent_id,session_id,parent_tool_use_id,agent_type,description,duration_ms,total_tokens)
@@ -132,7 +132,7 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
         st.tr.run(r.tool_use_id, r.message_uuid, r.session_id, r.content, r.file_path, r.is_error);
         break;
       case 'summary':
-        st.sum.run(r.id, r.session_id, r.agent_id ?? null, r.timestamp, r.source, r.content);
+        st.sum.run(r.id, r.session_id, r.agent_id ?? null, r.timestamp, r.source, r.content, r.visibility ?? 'visible', r.input_tokens ?? null, r.output_tokens ?? null);
         break;
       case 'subagent':
         st.sub.run(r.agent_id, r.session_id, r.parent_tool_use_id ?? null, r.agent_type ?? null, r.description ?? null, r.duration_ms ?? null, r.total_tokens ?? null);

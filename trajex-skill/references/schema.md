@@ -127,9 +127,12 @@ Session summary rows.
 | --- | --- |
 | `id` | Summary ID |
 | `session_id` | FK to `sessions.id` |
+| `agent_id` | Owning subagent ID; null for the main session |
 | `timestamp` | Summary timestamp |
 | `source` | Summary kind, such as `away_summary`; not provider source |
 | `content` | Summary text |
+| `visibility` | `visible`, `inactive`, or `hidden`; query helpers hide inactive rows by default |
+| `input_tokens`, `output_tokens` | Summary generation usage when the provider records it |
 
 ### `subagents`
 

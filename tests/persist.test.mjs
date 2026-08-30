@@ -70,6 +70,25 @@ test('persist writes all record kinds from one claude parse', () => {
   assert.equal(cursor.split(':')[1], '6');
 });
 
+test('persist stores summary visibility and usage', () => {
+  const db = freshDb();
+  const unit = { key: 'pi-summary.jsonl', sessionId: 'pi-summary' };
+  function* records() {
+    yield {
+      kind: 'summary', id: 'summary-1', session_id: 'pi-summary', timestamp: '2026-08-30T00:00:00Z',
+      source: 'compaction', content: 'compressed context', visibility: 'inactive', input_tokens: 15, output_tokens: 4,
+    };
+    return '1:1';
+  }
+
+  persist(db, unit, records());
+
+  const summary = db.prepare('SELECT visibility,input_tokens,output_tokens FROM summaries WHERE id=?').get('summary-1');
+  assert.equal(summary.visibility, 'inactive');
+  assert.equal(summary.input_tokens, 15);
+  assert.equal(summary.output_tokens, 4);
+});
+
 test('resuming from cursor does not double-count message_count', () => {
   const db = freshDb();
   const unit = fixtureUnit();

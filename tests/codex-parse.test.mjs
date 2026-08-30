@@ -108,7 +108,7 @@ test('codex keeps a small head-tail message preview and a bounded head-tail tool
   assert.match(result.content, /tail tail tail $/);
 });
 
-test('codex full replay stops at a malformed line and returns the valid prefix', () => {
+test('codex full replay skips a newline-terminated malformed line', () => {
   const path = writeFixture([
     { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: META },
     { type: 'event_msg', timestamp: '2026-06-10T10:00:01Z', payload: { type: 'user_message', message: 'before corruption' } },
@@ -119,7 +119,27 @@ test('codex full replay stops at a malformed line and returns the valid prefix',
   ].join('\n') + '\n');
 
   const { values, ret } = drain(parse({ key: path, sessionId: '' }, null));
-  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.text), ['before corruption']);
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.text), [
+    'before corruption',
+    'after corruption',
+  ]);
+  assert.equal(ret.split(':')[1], '4');
+  assert.equal(ret.split(':').length, 5);
+});
+
+test('codex full replay leaves an unterminated malformed tail unconsumed', () => {
+  const path = writeFixture([
+    { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: META },
+  ]);
+  appendFileSync(path, [
+    JSON.stringify({ type: 'event_msg', timestamp: '2026-06-10T10:00:01Z', payload: { type: 'user_message', message: 'before torn tail' } }),
+    '{"type":"event_msg"',
+  ].join('\n'));
+
+  const { values, ret } = drain(parse({ key: path, sessionId: '' }, null));
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.text), [
+    'before torn tail',
+  ]);
   assert.equal(ret.split(':')[1], '2');
   assert.equal(ret.split(':').length, 5);
 });

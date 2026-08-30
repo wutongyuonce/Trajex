@@ -35,9 +35,9 @@ persist(db, unit, generator)
 Retraction and `delete-session` remove regenerable transcript projections
 (`sessions`, `messages`, tools, workflows, subagents, and summaries), but
 never `memories`. A database or record-write failure aborts the unit and leaves
-its cursor unchanged. A provider's malformed-line boundary is different: the
-valid prefix is a normal committed result, with the cursor deliberately before
-the bad line.
+its cursor unchanged. A provider's malformed-line boundary is different:
+records accepted under ADR-0002 are a normal committed result, while the cursor
+remains before any malformed tail that the Provider leaves unconsumed.
 
 ### Transaction and retry policy
 

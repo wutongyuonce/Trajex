@@ -25,11 +25,11 @@ content into canonical records and a cursor.
 | Provider | Cursor and parse flow | Malformed JSONL policy |
 | --- | --- | --- |
 | Claude | `mtime:lines:size:ctime:inode`; skip accepted lines, stream the new tail, aggregate the session at the end | Consume and skip newline-terminated malformed records, then continue. Leave an unterminated malformed tail unconsumed because it may still be growing. Legacy `mtime:lines` cursors remain readable. If the cursor is past EOF, restart from line 1 |
-| Codex | `mtime:lines:size:ctime:inode`; replay the whole stable rollout, collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Stop at the first malformed line and return a cursor before it. If the snapshot changes while reading, abort the unit |
+| Codex | `mtime:lines:size:ctime:inode`; replay the whole stable rollout, collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Consume and skip newline-terminated malformed records, then continue. Leave an unterminated malformed tail unconsumed. If the snapshot changes while reading, abort the unit |
 | Pi | `mtime:lines:size:ctime:inode`; replay the whole stable v3 tree, resolve durable leaf/compaction and project `visible` / `inactive` / `hidden` | Stop at the first malformed line and return a cursor before it. If the snapshot changes while reading, abort the unit |
 
-Claude distinguishes a complete malformed record from a possibly torn tail:
-only the unterminated tail remains a retry boundary. Codex and Pi retain the
+Claude and Codex distinguish a complete malformed record from a possibly torn
+tail: only the unterminated tail remains a retry boundary. Pi retains the
 valid-prefix rule, under which records before a malformed line remain eligible
 for persistence while later lines wait for source repair. A provider may buffer
 a complete unit when global context is required, but the adapter still emits
@@ -103,6 +103,7 @@ Provider-specific directory layout.
 
 - Claude gets inexpensive append indexing, does not stall behind permanent
   newline-terminated garbage, and still retries a possibly growing torn tail.
-- Codex and Pi pay for full replay because their projections depend on global
-  file context.
+- Codex pays for full replay because deduplication depends on global file
+  context, but permanent malformed records do not hide later evidence.
+- Pi pays for full replay because its tree projection depends on global context.
 - Provider-specific parsing stays out of SQLite and out of the UI.

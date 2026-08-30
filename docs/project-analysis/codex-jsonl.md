@@ -288,7 +288,7 @@ event_msg
 
 ### 9.2 全量重放（parse）
 
-这正是 Codex 是"全量重放"适配器的原因：去重需要整文件（双向）知识，无法像 Claude 那样按行增量续读。每次根 thread 的 parse 都重发全部记录并带 `countMode: 'total'`，且在记录流开头发出 `delete-session`，由 persist 先清理该 session 的旧派生投影，再写入当前完整结果。`delete-session` 是全量重建协议，不再是 guardian/auto-review 的特殊撤回协议。若全量读取遇到损坏 JSONL 行，解析在该行停止，只提交此前的有效前缀，并把 cursor 留在损坏行之前；修复源文件后下一次 replay 会从头重建。
+这正是 Codex 是"全量重放"适配器的原因：去重需要整文件（双向）知识，无法像 Claude 那样按行增量续读。每次根 thread 的 parse 都重发全部记录并带 `countMode: 'total'`，且在记录流开头发出 `delete-session`，由 persist 先清理该 session 的旧派生投影，再写入当前完整结果。`delete-session` 是全量重建协议，不再是 guardian/auto-review 的特殊撤回协议。若全量读取遇到已换行结束的损坏 JSONL 记录，解析器消费该行并继续处理后续记录；未换行的文件尾可能仍在写入，因此 cursor 停在它之前，下次 replay 会从头重建。
 
 处理顺序（`providers/codex.ts`）：
 

@@ -966,7 +966,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | Provider | 解析策略 | 损坏行边界 | 删除与目录缺失保护 |
 | --- | --- | --- | --- |
 | Claude | `mtime:lines:size:ctime:inode` 增量读取；cursor 后只读新增行，截断、替换或身份签名变化时按当前文件重新判断 | 已换行结束的坏 JSON 被消费并跳过；未换行的残缺尾行不推进 cursor，等待续写 | `projects/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
-| Codex | `mtime:lines:size:ctime:inode` 稳定快照全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 全量读取遇到坏 JSON 即停止，提交有效前缀；读取期间快照变化则整次放弃 | `sessions/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
+| Codex | `mtime:lines:size:ctime:inode` 稳定快照全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 已换行结束的坏 JSON 被消费并跳过；未换行的残缺尾行留待重放；读取期间快照变化则整次放弃 | `sessions/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
 | Pi | `mtime:lines:size:ctime:inode` 稳定快照全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀；读取期间快照变化则整次放弃 | session 根层可枚举后，缺失/不可读后代按空子树并发撤回；来源根不可用时保留快照 |
 
 这些策略都汇入同一个持久化流程：
@@ -989,7 +989,7 @@ persist(unit, generator)  [一个 unit 一个事务]
   └─ memories 永不随 transcript 撤回
 ```
 
-删除判断的关键是“完整清单证明”，不是单个 watcher 事件。目录暂时不可见时宁可保留旧投影；明确的删除或身份替换才生成清理单元。Codex 和 Pi 的损坏行仍采用有效前缀语义；Claude 则跳过已结束坏记录，只把未结束尾行留作下次重试边界。
+删除判断的关键是“完整清单证明”，不是单个 watcher 事件。目录暂时不可见时宁可保留旧投影；明确的删除或身份替换才生成清理单元。Claude 和 Codex 跳过已结束坏记录，只把未结束尾行留作下次重试边界；Pi 的损坏行仍采用有效前缀语义。
 
 ### Claude Code：主会话、子会话与 Workflow 的 JSONL/JSON 映射 `claude.ts`
 
@@ -2216,7 +2216,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v5__" / "__pi_canonical_transcript_v6__"
+jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v6__"
               ↑ 不是路径，而是状态 key
 ```
 

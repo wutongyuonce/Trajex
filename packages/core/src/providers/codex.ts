@@ -45,7 +45,7 @@ import type {
 } from './types.ts';
 
 export const name = 'codex';
-export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v5__';
+export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v6__';
 const CODEX_TRANSCRIPT_DIRS = ['sessions', 'archived_sessions'] as const;
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
@@ -181,11 +181,12 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   const records: { lineNum: number; obj: any }[] = [];
   let lineNum = 0;
   let processedLineCount = 0;
-  readLines(unit.key, (line: string) => {
+  readLines(unit.key, (line: string, terminated: boolean) => {
     lineNum++;
     try { records.push({ lineNum, obj: JSON.parse(line) }); } catch {
-      // A malformed line is a hard boundary for this full replay. Commit only
-      // the valid prefix and retry from this line after the source is fixed.
+      // Permanent terminated garbage must not hide later rollout records. An
+      // unterminated tail may still be growing, so leave it for the next replay.
+      if (terminated) { processedLineCount = lineNum; return; }
       return false;
     }
     processedLineCount = lineNum;

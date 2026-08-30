@@ -20,6 +20,8 @@
 
 ### Fixed
 
+- Pi 全量重放改用 `mtime + ctime + size + inode` 快照判断，并在读取前后确认文件未变化；旧两段 cursor 会安全重放一次，同 mtime 覆盖写和原路径换文件不再漏索引。
+- Pi `message_count` 只统计 visible 主线消息，不再把 inactive 分支和 hidden 扩展消息计入会话规模；这些证据仍保存在索引中。
 - 修复 TypeScript 构建将 CLI 入口生成为 `0644`、导致 `npm link` 或直接执行 `trajex.js` 时出现 `permission denied` 的问题；构建结束后会恢复 POSIX 执行位。
 - 修正 Electron 会话虚拟化测试中 Codex 工具结果缺少 `message_uuid` 的 fixture，使测试数据与生产环境的消息关联结构一致。
 - 修复 `sql()` 把字符串、注释或引用标识符中的 `update`/`delete` 等单词误判为写操作的问题；现在按 SQLite 实际行为校验只读，拒绝真实写入和单次 `sql()` 中的多条语句，并继续以只读数据库连接兜底。

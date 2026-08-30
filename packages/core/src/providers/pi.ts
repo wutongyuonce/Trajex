@@ -15,9 +15,32 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v5__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v6__';
 
 type PiEntry = Record<string, any>;
+type FileSnapshot = { mtimeMs: number; size: number; ctimeMs: number; ino: number };
+
+function fileSnapshot(path: string): FileSnapshot {
+  const stats = statSync(path);
+  return { mtimeMs: stats.mtimeMs, size: stats.size, ctimeMs: stats.ctimeMs, ino: stats.ino };
+}
+
+function cursorMatchesSnapshot(cursor: Cursor, snapshot: FileSnapshot): boolean {
+  if (!cursor) return false;
+  const parts = cursor.split(':');
+  return parts.length >= 5
+    && Number(parts[0]) === snapshot.mtimeMs
+    && Number(parts[2]) === snapshot.size
+    && Number(parts[3]) === snapshot.ctimeMs
+    && Number(parts[4]) === snapshot.ino;
+}
+
+function sameSnapshot(left: FileSnapshot, right: FileSnapshot): boolean {
+  return left.mtimeMs === right.mtimeMs
+    && left.size === right.size
+    && left.ctimeMs === right.ctimeMs
+    && left.ino === right.ino;
+}
 
 function piId(sessionId: string, entryId: string, suffix = ''): string {
   return `${sessionId}:${entryId}${suffix}`;
@@ -80,9 +103,9 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
 
   const units = files.flatMap((path) => {
     if (ctx.changedPaths !== undefined && !changed.has(path) && !changedRoot) return [];
-    const mtime = statSync(path).mtimeMs;
+    const snapshot = fileSnapshot(path);
     const cursor = ctx.lastCursor(path);
-    if (cursor !== null && Number(cursor.split(':')[0]) >= mtime) return [];
+    if (cursorMatchesSnapshot(cursor, snapshot)) return [];
     let header: PiEntry | null = null;
     try { header = JSON.parse(readFileSync(path, 'utf8').split('\n')[0] || 'null'); } catch { /* malformed file */ }
     if (header?.type !== 'session' || header.version !== 3 || typeof header.id !== 'string') return [];
@@ -157,8 +180,10 @@ function toolFilePath(name: unknown, input: unknown): string | null {
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
   const meta = unit.meta as { kind?: string } | undefined;
   if (meta?.kind === 'pi-tombstone') return '0:0';
-  const stat = statSync(unit.key);
+  const before = fileSnapshot(unit.key);
   const raw = readFileSync(unit.key, 'utf8');
+  const after = fileSnapshot(unit.key);
+  if (!sameSnapshot(before, after)) throw new Error(`Pi transcript changed while reading: ${unit.key}`);
   const lines = raw.split('\n');
   if (raw.endsWith('\n')) lines.pop();
   const parsed: PiEntry[] = [];
@@ -169,7 +194,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     try { parsed.push(JSON.parse(line)); } catch { break; }
     processedLineCount = index + 1;
   }
-  const outCursor = `${stat.mtimeMs}:${processedLineCount}`;
+  const outCursor = `${after.mtimeMs}:${processedLineCount}:${after.size}:${after.ctimeMs}:${after.ino}`;
   const header = parsed.find(entry => entry.type === 'session' && typeof entry.id === 'string');
   if (!header || header.version !== 3) return outCursor;
 
@@ -296,7 +321,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       cwd: typeof header.cwd === 'string' ? header.cwd : null, skill: null, source: name,
     };
     records.push(message);
-    count++;
+    if (visibility === 'visible') count++;
     if (entryTimestamp && (!startedAt || entryTimestamp < startedAt)) startedAt = entryTimestamp;
     if (entryTimestamp && (!endedAt || entryTimestamp > endedAt)) endedAt = entryTimestamp;
     return uuid;

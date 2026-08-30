@@ -5,7 +5,7 @@
 import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createPiProvider, PI_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/pi.ts';
 
@@ -14,7 +14,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v5__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v6__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -47,7 +47,7 @@ test('Pi indexes every tree branch and projects current context through visibili
     { source: 'compaction', content: 'earlier work', visibility: 'visible', input_tokens: 15, output_tokens: 4 },
     { source: 'branch_summary', content: 'abandoned branch summary', visibility: 'inactive', input_tokens: 7, output_tokens: 1 },
   ]);
-  assert.deepEqual(records.find(record => record.kind === 'session' && record.id === SESSION_ID), { kind: 'session', id: SESSION_ID, title: 'Pi fixture', project: '-tmp-project', started_at: '2026-07-30T10:00:00.000Z', ended_at: '2026-07-30T10:00:07.000Z', git_branch: null, version: '3', message_count: 6, countMode: 'total', jsonl_path: path, source: 'pi' });
+  assert.deepEqual(records.find(record => record.kind === 'session' && record.id === SESSION_ID), { kind: 'session', id: SESSION_ID, title: 'Pi fixture', project: '-tmp-project', started_at: '2026-07-30T10:00:00.000Z', ended_at: '2026-07-30T10:00:07.000Z', git_branch: null, version: '3', message_count: 5, countMode: 'total', jsonl_path: path, source: 'pi' });
 });
 
 test('Pi keeps a small head-tail message preview and a bounded head-tail tool result', () => {
@@ -86,8 +86,37 @@ test('Pi discovers standard top-level v3 sessions and ignores a torn final line'
   const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
   const [unit] = provider.discover({ lastCursor: () => null });
   assert.equal(unit.key, path);
-  assert.equal(provider.discover({ lastCursor: () => '9999999999999:1' }).length, 0);
+  const stats = statSync(path);
+  const cursor = `${stats.mtimeMs}:1:${stats.size}:${stats.ctimeMs}:${stats.ino}`;
+  assert.equal(provider.discover({ lastCursor: () => cursor, changedPaths: [path] }).length, 0);
+  assert.equal(provider.discover({ lastCursor: () => `${stats.mtimeMs}:1`, changedPaths: [path] }).length, 1, 'legacy cursors replay once');
   assert.equal(drain(provider.parse(unit, null)).filter(record => record.kind === 'session').length, 1);
+});
+
+test('Pi discovery notices a same-mtime rewrite', () => {
+  const root = makeTempDir('trajex-pi-snapshot-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'session.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'same-mtime', cwd: '/tmp/project' },
+    { type: 'message', id: 'm1', parentId: null, message: { role: 'user', content: 'one' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const provider = createPiProvider({ sessionDir: dir });
+  const [unit] = provider.discover({ lastCursor: () => null });
+  const parsed = provider.parse(unit, null);
+  let step = parsed.next();
+  while (!step.done) step = parsed.next();
+  const cursor = step.value;
+  const before = statSync(path);
+
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'same-mtime', cwd: '/tmp/project' },
+    { type: 'message', id: 'm1', parentId: null, message: { role: 'user', content: 'two' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  utimesSync(path, before.atime, before.mtime);
+
+  assert.deepEqual(provider.discover({ lastCursor: () => cursor }).map(found => found.key), [path]);
 });
 
 test('Pi discovery retracts a prior identity when a session file is reused', () => {

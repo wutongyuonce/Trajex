@@ -627,7 +627,7 @@ provider.parse(unit, oldCursor)
 type Cursor = string | null;
 ```
 
-它在 `Provider` 接口上是进度水位。Core 原样保存字符串，但仍把前两段投影到 `mtime` / `lines_processed`，供排序、旧库兼容和 marker 检查使用。消费语义由 Provider 决定：Claude 使用五段 cursor 做增量恢复与文件身份判断；Codex/Pi 全量重放，只使用前面的 mtime，lines 作为记录信息。
+它在 `Provider` 接口上是进度水位。Core 原样保存字符串，但仍把前两段投影到 `mtime` / `lines_processed`，供排序、旧库兼容和 marker 检查使用。消费语义由 Provider 决定：Claude 使用五段 cursor 做增量恢复与文件身份判断；Pi 使用同样的五段快照签名但仍全量重放；Codex 目前只比较 mtime。lines 对 Pi/Codex 只是记录信息。
 
 ```text
 index_state 的 key = unit.key
@@ -636,7 +636,7 @@ index_state.mtime / lines_processed = 前两段兼容投影
        │
        ├─ Claude 使用 "mtime:已处理行数:size:ctime:inode"
        ├─ Codex 使用 "mtime:总行数"，实际只用 mtime，整文件重放
-       ├─ Pi 使用 "mtime:总行数"，实际只用 mtime，整文件重放
+       ├─ Pi 使用 "mtime:总行数:size:ctime:inode" 判断快照，整文件重放
        └─ 新 Provider 可增加后续段，但前两段目前仍须为数值
 ```
 
@@ -664,7 +664,7 @@ index_state.mtime / lines_processed = 前两段兼容投影
 
 | 成员                      | 含义                                                         |
 | ------------------------- | ------------------------------------------------------------ |
-| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的原始 cursor。Claude 比较 mtime/size/ctime/inode 并用行数恢复；Codex/Pi 主要比较 mtime并全量 replay。 |
+| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的原始 cursor。Claude 比较 mtime/size/ctime/inode 并用行数恢复；Pi 比较同一快照签名但全量 replay；Codex 目前主要比较 mtime。 |
 | `changedPaths?: string[]` | Electron daemon 监听到文件变化时提供的路径缩小范围。它是优化提示，不是事实来源；Provider 仍要保证漏传或没有它时的完整 discover 正确。 |
 | `indexedSessions?: () => readonly IndexedSession[]` | 返回当前 Provider 已索引的 `sessionId`、`jsonlPath` 清单。Provider 在来源根层枚举成功后用它生成删除 tombstone；临时库 rebuild 的清单来自旧数据库 provenance。 |
 | `reportUnavailableRoot?(issue)` | 报告 Provider 来源根缺失或根层枚举失败。普通 build 保留该 Provider 旧快照；全量重建在清理前整体中止。后代目录失败不走这个通道，而是按空子树参与删除 reconciliation。 |
@@ -942,7 +942,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 
 它负责：
 
-  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，并按自己的 cursor 规则判断是否需要处理。Claude 比较 mtime、size、ctime、inode；Codex/Pi 主要比较 mtime。例如 Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
+  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，并按自己的 cursor 规则判断是否需要处理。Claude/Pi 比较 mtime、size、ctime、inode；Codex 目前主要比较 mtime。例如 Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
 
     > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
     >
@@ -967,7 +967,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | --- | --- | --- | --- |
 | Claude | `mtime:lines:size:ctime:inode` 增量读取；cursor 后只读新增行，截断、替换或身份签名变化时按当前文件重新判断 | 新增尾部遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `projects/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
 | Codex | 变更 rollout 全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `sessions/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
-| Pi | v3 session 全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | session 根层可枚举后，缺失/不可读后代按空子树并发撤回；来源根不可用时保留快照 |
+| Pi | `mtime:lines:size:ctime:inode` 稳定快照全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀；读取期间快照变化则整次放弃 | session 根层可枚举后，缺失/不可读后代按空子树并发撤回；来源根不可用时保留快照 |
 
 这些策略都汇入同一个持久化流程：
 
@@ -1935,7 +1935,7 @@ Pi 的 session 文件按工作目录分层存放：
 `discoverAt()` 用 `sessionFiles()` 递归枚举 session 目录下的全部 `*.jsonl`（Pi 支持任意子目录嵌套，不像 Claude 固定两级结构）。每个文件经过三重过滤，全部通过才产出 `IndexUnit`：
 
 1. **changedPaths 优化**（Electron daemon 通过 adaptive watcher 传入，属优化提示）：只保留命中 changedPaths 中"该文件本身"或"sessionDir 本身"的候选。命中 sessionDir 本身是兜底——新增目录等只产生目录级事件时，也能把目录内文件重新纳入检查；
-2. **mtime 增量过滤**：读取 `index_state` 中保存的 cursor（`mtimeMs:lines`），cursor 非空且文件当前 mtime ≤ cursor 的 mtime 时跳过，认为没有变化；
+2. **快照过滤**：比较 cursor 保存的 `mtimeMs:size:ctimeMs:inode`；四项都相同才跳过。旧的两段 cursor 无法证明文件身份，会安全地全量 replay 一次；
 3. **header 校验**：读取文件第一行，必须是 `{"type":"session","version":3,"id":…}` 才接受；版本不是 3、第一行解析失败或 id 缺失的文件直接跳过（不报错，视为非 Pi 文件）。
 
 ```ts
@@ -1952,7 +1952,7 @@ Pi 的 session 文件按工作目录分层存放：
 
 数据库级 session id 是 `pi:<rawId>:<cwd 哈希>`。raw id 可能按项目局部生成（如显式传入 `--session-id`），且同一份 session 文件可能出现在多个项目目录下，只靠 raw id 会跨项目撞主键；把 cwd 哈希并进主键是防御性兜底，同时让文件移动后身份保持稳定。
 
-cursor 形状同为 `mtimeMs:lines`，但与 Claude 的"行增量续读"不同：Pi 的 `parse(unit, _cursor)` 忽略 cursor 里的行数，总是**全量重放**整份文件——active context 由 durable leaf、compaction 的 `firstKeptEntryId` / `retainedTail` 从整棵树推导，无法从某个行号恢复。lines 只是记录文件当前总行数。因此 Pi 每次产出的 `session.countMode` 恒为 `'total'`，并在记录流开头发出 `delete-session`，让 persist 清理旧投影，避免全量重放叠加出重复行。
+cursor 形状为 `mtimeMs:lines:size:ctimeMs:inode`，但与 Claude 的"行增量续读"不同：Pi 的 `parse(unit, _cursor)` 忽略 cursor 里的行数，总是**全量重放**整份文件——active context 由 durable leaf、compaction 的 `firstKeptEntryId` / `retainedTail` 从整棵树推导，无法从某个行号恢复。解析前后会再次比较四项快照；读取期间文件变化就放弃本次事务，不提交混合版本。`message_count` 只统计 visible 主线，inactive/hidden 记录仍保存。Pi 每次产出的 `session.countMode` 恒为 `'total'`，并在记录流开头发出 `delete-session`，让 persist 清理旧投影，避免全量重放叠加出重复行。
 
 `watchTargets(configuredRoot)` 返回 `{kind:'tree', path: configuredRoot}`，不做任何路径拼接——App Settings 里填的就是最终 session directory，这也与 README 中“Pi 不再追加路径”的约定一致。
 
@@ -2216,7 +2216,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcript_v4__" / "__pi_canonical_transcript_v5__"
+jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcript_v4__" / "__pi_canonical_transcript_v6__"
               ↑ 不是路径，而是状态 key
 ```
 

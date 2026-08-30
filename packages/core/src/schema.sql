@@ -178,6 +178,9 @@ END;
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_agent ON messages(agent_id);
 CREATE INDEX IF NOT EXISTS idx_messages_ts ON messages(session_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_messages_main_timeline
+  ON messages(session_id, timestamp, uuid)
+  WHERE agent_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source);
 CREATE INDEX IF NOT EXISTS idx_tc_session_name ON tool_calls(session_id, name);

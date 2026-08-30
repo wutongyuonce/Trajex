@@ -391,12 +391,22 @@ function querySessionMessages(sessionId: string): SessionMessageRow[] {
 
 function querySessionToolCalls(sessionId: string): SessionToolCallRow[] {
   if (!db) return [];
-  return db.prepare(`SELECT * FROM tool_calls WHERE session_id = ?`).all(sessionId) as SessionToolCallRow[];
+  return db.prepare(`
+    SELECT tc.* FROM messages m
+    CROSS JOIN tool_calls tc ON tc.message_uuid = m.uuid
+    WHERE m.session_id = ? AND m.agent_id IS NULL
+      AND tc.session_id = ?
+  `).all(sessionId, sessionId) as SessionToolCallRow[];
 }
 
 function querySessionToolResults(sessionId: string): SessionToolResultRow[] {
   if (!db) return [];
-  return db.prepare(`SELECT * FROM tool_results WHERE session_id = ?`).all(sessionId) as SessionToolResultRow[];
+  return db.prepare(`
+    SELECT tr.* FROM messages m
+    CROSS JOIN tool_results tr ON tr.message_uuid = m.uuid
+    WHERE m.session_id = ? AND m.agent_id IS NULL
+      AND tr.session_id = ?
+  `).all(sessionId, sessionId) as SessionToolResultRow[];
 }
 
 function querySessionSubagents(sessionId: string): SessionSubagentRow[] {

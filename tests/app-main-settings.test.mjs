@@ -538,6 +538,32 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
       input_tokens, output_tokens, source
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run('codex-message', 'codex:session', 'assistant', '2026-07-10T11:00:00Z', 'assistant', 'ok', 100, 10, 'codex');
+  setup.prepare(`
+    INSERT INTO messages (uuid, session_id, type, timestamp, role, text, visibility, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('pi-main', 'pi:session', 'assistant', '2026-07-10T12:00:00Z', 'assistant', 'main', 'visible', 'pi');
+  setup.prepare(`
+    INSERT INTO messages (uuid, session_id, type, timestamp, role, text, visibility, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('pi-inactive-main', 'pi:session', 'assistant', '2026-07-10T12:01:00Z', 'assistant', 'inactive main', 'inactive', 'pi');
+  setup.prepare(`
+    INSERT INTO messages (uuid, session_id, type, timestamp, role, text, visibility, source, agent_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('pi-agent', 'pi:session', 'assistant', '2026-07-10T12:02:00Z', 'assistant', 'agent', 'visible', 'pi', 'pi:agent');
+  for (const [id, messageUuid] of [
+    ['pi-main-call', 'pi-main'],
+    ['pi-inactive-main-call', 'pi-inactive-main'],
+    ['pi-agent-call', 'pi-agent'],
+  ]) {
+    setup.prepare(`
+      INSERT INTO tool_calls (id, message_uuid, session_id, name, input_json)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, messageUuid, 'pi:session', 'read', '{}');
+    setup.prepare(`
+      INSERT INTO tool_results (tool_use_id, message_uuid, session_id, content)
+      VALUES (?, ?, ?, ?)
+    `).run(id, messageUuid, 'pi:session', `${id} result`);
+  }
   setup.close();
 
   const ipcHandlers = new Map();
@@ -582,6 +608,31 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
     assert.equal(allSources.totalTokens, 175);
     assert.equal(allSources.daily[0].tokens, 175);
     assert.equal(allSources.peakDay.tokens, 175);
+
+    assert.deepEqual(
+      ipcHandlers.get('db:getSessionMessages')(null, 'pi:session').map(row => row.uuid),
+      ['pi-main', 'pi-inactive-main'],
+    );
+    assert.deepEqual(
+      ipcHandlers.get('db:getSessionToolCalls')(null, 'pi:session').map(row => row.id).sort(),
+      ['pi-inactive-main-call', 'pi-main-call'],
+    );
+    assert.deepEqual(
+      ipcHandlers.get('db:getSessionToolResults')(null, 'pi:session').map(row => row.tool_use_id).sort(),
+      ['pi-inactive-main-call', 'pi-main-call'],
+    );
+    assert.deepEqual(
+      ipcHandlers.get('db:getSubagentMessages')(null, 'pi:agent').map(row => row.uuid),
+      ['pi-agent'],
+    );
+    assert.deepEqual(
+      ipcHandlers.get('db:getSubagentToolCalls')(null, 'pi:agent').map(row => row.id),
+      ['pi-agent-call'],
+    );
+    assert.deepEqual(
+      ipcHandlers.get('db:getSubagentToolResults')(null, 'pi:agent').map(row => row.tool_use_id),
+      ['pi-agent-call'],
+    );
   } finally {
     restore();
     process.env.HOME = originalHome;

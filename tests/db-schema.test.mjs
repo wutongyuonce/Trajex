@@ -71,6 +71,42 @@ test('tool results schema indexes live session patch lookups', async () => {
   }
 });
 
+test('session detail queries start from the indexed main timeline', async () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec(await readExecutableSchema());
+    const messagePlan = db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT m.uuid FROM messages m
+      WHERE m.session_id = ? AND m.agent_id IS NULL
+      ORDER BY m.timestamp, m.uuid
+    `).all('session-1');
+    const toolCallPlan = db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT tc.* FROM messages m
+      CROSS JOIN tool_calls tc ON tc.message_uuid = m.uuid
+      WHERE m.session_id = ? AND m.agent_id IS NULL
+        AND tc.session_id = ?
+    `).all('session-1', 'session-1');
+    const toolResultPlan = db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT tr.* FROM messages m
+      CROSS JOIN tool_results tr ON tr.message_uuid = m.uuid
+      WHERE m.session_id = ? AND m.agent_id IS NULL
+        AND tr.session_id = ?
+    `).all('session-1', 'session-1');
+
+    const details = plan => plan.map(row => String(row.detail));
+    assert.ok(details(messagePlan).some(detail => /USING INDEX idx_messages_main_timeline/.test(detail)));
+    assert.ok(details(toolCallPlan).some(detail => /USING INDEX idx_messages_main_timeline/.test(detail)));
+    assert.ok(details(toolCallPlan).some(detail => /USING INDEX idx_tc_message/.test(detail)));
+    assert.ok(details(toolResultPlan).some(detail => /USING INDEX idx_messages_main_timeline/.test(detail)));
+    assert.ok(details(toolResultPlan).some(detail => /USING INDEX idx_tr_message/.test(detail)));
+  } finally {
+    db.close();
+  }
+});
+
 test('tool payload schema indexes subagent joins and guardian retractions', async () => {
   const db = new DatabaseSync(':memory:');
   try {

@@ -9,6 +9,7 @@
 
 ### Changed
 
+- 主会话详情只读取主线程消息关联的工具调用与结果，不再预加载同一 session 下的子代理工具明细；inactive 主线程分支继续保留，子代理详情仍按 `agent_id` 独立加载。
 - Provider 监听契约从无类型的路径数组改为 `watchTargets()`，明确区分递归目录 `tree` 与精确文件 `file`；Claude、Codex、Pi 的监听目标现在完全由各自 adapter 声明。
 - 自动索引调度改为 250ms debounce、500ms 稳定窗口和 1.5s 最大等待；build 运行期间的新变化只合并为一个 pending batch，避免持续写入导致无限延后或旧定时器额外触发。
 - `index_state` 新增原样 `cursor` 列；Claude cursor 扩展为 `mtime:lines:size:ctime:inode`，旧数据库的 `mtime:lines` 仍可读取。

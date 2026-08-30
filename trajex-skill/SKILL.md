@@ -54,6 +54,17 @@ Use `return` to emit JSON.
 Query scripts are read-only: `remember()` and `forget()` are not available, and
 `sql()` only accepts read-only SELECT/WITH queries.
 
+## Sandbox Write Access
+
+`trajex --search` and `trajex --query` refresh the index before reading it, so
+the outer CLI process needs write access to `~/.trajex` or the directory named
+by `TRAJEX_DIR`. The query script itself remains read-only.
+
+If a sandbox blocks that directory, rerun the same Trajex command with write
+access to the index directory. Do not fall back to reading `trajex.sqlite` or
+provider JSONL files directly: that can use stale state and bypasses Trajex's
+indexing and query contracts.
+
 ## Default First Pass
 
 Start with helpers, not raw SQL. For the first Trajex query in a task, normally

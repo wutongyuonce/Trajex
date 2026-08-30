@@ -55,7 +55,7 @@ Trajex 会把每个 provider 都索引到同一个 SQLite schema 中，而不是
 > * Claude / Codex：它们的 id 是"会话级全局唯一"的;
 > * Pi：默认 id 也是全局唯一的（uuidv7），但 Pi 支持显式传入 --session-id 这类项目局部 id（不校验唯一性），且同一份会话文件可能出现在多个项目目录下。所以只靠原始 id 跨项目可能撞，把 cwd 哈希并进主键是防御性兜底（同时让文件移动后身份保持稳定）。
 
-三个内置 Provider 的解析边界不同：Claude 用包含 mtime、行数、文件大小、ctime 和 inode 的 cursor 从上次位置增量读取；Codex 为了在 `event_msg` 与 `response_item` 之间去重会对变更文件全量重放。两者都跳过已换行结束的坏 JSON 记录，但会把未换行的残缺尾行留给下次重试。Pi 为了重算树状分支、durable leaf 和 compaction 也会全量重放，但当前仍在损坏行前提交有效前缀。对删除，Provider 的来源根目录是唯一回退边界：根目录缺失或根层无法枚举时，普通 build 保留该 Provider 的上一次快照；根层可枚举后，本次清单即有权威性，缺失或不可读的子目录按空子树处理并清理对应旧索引。清理只作用于可重新生成的 transcript 派生数据，`memories` 不会被删除。
+三个内置 Provider 的解析边界不同：Claude 用包含 mtime、行数、文件大小、ctime 和 inode 的 cursor 从上次位置增量读取；Codex 为了在 `event_msg` 与 `response_item` 之间去重会对变更文件全量重放。两者都跳过已换行结束的坏 JSON 记录，但会把未换行的残缺尾行留给下次重试。Pi 为了重算树状分支、durable leaf 和 compaction 也会全量重放；多次 compaction 以最近的 `retainedTail` checkpoint 为最早有效边界，更早物理消息保留为 inactive 证据。Pi 当前仍在损坏行前提交有效前缀。对删除，Provider 的来源根目录是唯一回退边界：根目录缺失或根层无法枚举时，普通 build 保留该 Provider 的上一次快照；根层可枚举后，本次清单即有权威性，缺失或不可读的子目录按空子树处理并清理对应旧索引。清理只作用于可重新生成的 transcript 派生数据，`memories` 不会被删除。
 
 Codex 只索引根 thread 为普通 Trajex session。带有 `parent_thread_id`、`forked_from_id` 或其他 parent-thread metadata 的 child/fork/subagent thread（包括 guardian/auto-review thread）全部忽略，不挂接到 `subagents` 表。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。Codex 和 Pi 一样对变更文件做全量重放：先删除该 session 的旧派生投影，再从当前 JSONL 全量重建。
 

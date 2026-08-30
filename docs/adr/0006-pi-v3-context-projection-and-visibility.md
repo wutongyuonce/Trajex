@@ -10,6 +10,14 @@ the canonical model has no `is_sidechain` field, and the same field is removed
 from Claude and Codex records rather than carrying provider-specific branch
 semantics.
 
+For a chain containing multiple compactions, the nearest `retainedTail`
+checkpoint bounds the physical parent walk. Within that bounded path, only the
+latest compaction selects context: a retained-tail checkpoint replaces all
+earlier physical messages, while a legacy compaction may retain ancestors from
+its `firstKeptEntryId` only when that entry remains inside the bounded path.
+Retained-tail messages are materialized once and reconnect later messages;
+compacted physical ancestors remain indexed as `inactive` evidence.
+
 Pi session identity is the normalized header `cwd` plus header `id`, not the
 JSONL path. This preserves identity across file moves while preventing
 project-local `--session-id` values from merging across projects. Discovery

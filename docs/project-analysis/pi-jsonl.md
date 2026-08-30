@@ -174,11 +174,12 @@ Pi 的物理文件是完整树，不等于当前 LLM 看到的线性上下文。
 1. 读取整个 JSONL，遇到损坏行停止。
 2. 找到 v3 session header，计算 `session_id = pi:<raw-id>:<cwd-hash>`。
 3. 建立 `id → entry` 索引，解析 durable leaf 和 active path。
-4. 找到 active path 上最新的 compaction，计算 suppressed ancestor。
-5. 如果存在 `retainedTail`，在 compaction entry 后合成可见消息。
-6. 遍历保留的物理 entry，产生消息、tool call、tool result 和 summary。
-7. 根据 active path 设置 `visible` / `inactive` / `hidden`。
-8. 最后产生 `session(countMode='total')`。
+4. 从 active head 反向追溯，遇到最近的 `retainedTail` checkpoint 就停止，更早物理链不再参与当前上下文计算。
+5. 在这段有效 path 内应用最后一次 compaction：checkpoint 用 `retainedTail` 替代祖先，legacy compaction 只能从 path 内存在的 `firstKeptEntryId` 开始保留。
+6. active checkpoint 的 `retainedTail` 只在 compaction entry 后合成一次，并与后续消息重新连接；被压缩的物理祖先仍以 inactive 证据保留。
+7. 遍历保留的物理 entry，产生消息、tool call、tool result 和 summary。
+8. 根据 active path 设置 `visible` / `inactive` / `hidden`。
+9. 最后产生 `session(countMode='total')`。
 
 Trajex 不从 message 文本猜分支关系，也不把时间顺序当作当前上下文；`parentId` 和 `leaf` 才是 Pi 的结构事实。
 

@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v6__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v7__';
 
 type PiEntry = Record<string, any>;
 
@@ -180,53 +180,69 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   const sessionId = piSessionId(sessionRawId, header.cwd);
   const physicalEntries = parsed.filter(entry => entry.type !== 'session' && typeof entry.id === 'string');
   const byId = new Map(physicalEntries.map(entry => [entry.id as string, entry]));
-  const activeIds = new Set<string>();
-  let active = physicalEntries.at(-1);
+  const checkpoints = new Set(physicalEntries
+    .filter(entry => entry.type === 'compaction' && Array.isArray(entry.retainedTail))
+    .map(entry => entry.id as string));
+  let active: PiEntry | undefined;
   for (const entry of physicalEntries) {
-    if (entry.type === 'leaf') active = typeof entry.targetId === 'string' ? byId.get(entry.targetId) : undefined;
+    active = entry.type === 'leaf'
+      ? typeof entry.targetId === 'string' ? byId.get(entry.targetId) : undefined
+      : entry;
   }
   const activePath: PiEntry[] = [];
-  while (active && !activeIds.has(active.id as string)) {
-    activeIds.add(active.id as string);
+  const visited = new Set<string>();
+  while (active && !visited.has(active.id as string)) {
+    visited.add(active.id as string);
     activePath.push(active);
+    if (checkpoints.has(active.id as string)) break;
     active = typeof active.parentId === 'string' ? byId.get(active.parentId) : undefined;
   }
   activePath.reverse();
 
-  const suppressed = new Set<string>();
+  const activeIds = new Set<string>();
+  let latestCompactionIndex = -1;
+  for (let index = 0; index < activePath.length; index++) {
+    if (activePath[index]!.type === 'compaction') latestCompactionIndex = index;
+  }
+  if (latestCompactionIndex < 0) {
+    for (const entry of activePath) activeIds.add(entry.id as string);
+  } else {
+    const latestCompaction = activePath[latestCompactionIndex]!;
+    for (const entry of activePath.slice(latestCompactionIndex)) activeIds.add(entry.id as string);
+    if (!checkpoints.has(latestCompaction.id as string) && typeof latestCompaction.firstKeptEntryId === 'string') {
+      const firstKeptIndex = activePath.findIndex((entry, index) => (
+        index < latestCompactionIndex && entry.id === latestCompaction.firstKeptEntryId
+      ));
+      if (firstKeptIndex >= 0) {
+        for (const entry of activePath.slice(firstKeptIndex, latestCompactionIndex)) {
+          activeIds.add(entry.id as string);
+        }
+      }
+    }
+  }
+
   const syntheticByCompaction = new Map<string, PiEntry[]>();
-  const latestCompaction = [...activePath].reverse().find(entry => entry.type === 'compaction');
-  if (latestCompaction) {
-    const retainedTail = Array.isArray(latestCompaction.retainedTail) ? latestCompaction.retainedTail : null;
-    const firstKept = typeof latestCompaction.firstKeptEntryId === 'string' ? latestCompaction.firstKeptEntryId : null;
-    const cutAt = retainedTail ? latestCompaction.id : firstKept;
-    if (cutAt) {
-      for (const entry of activePath) {
-        if (entry.id === cutAt) break;
-        suppressed.add(entry.id as string);
-      }
+  for (const checkpoint of physicalEntries) {
+    if (!checkpoints.has(checkpoint.id as string) || !activeIds.has(checkpoint.id as string)) continue;
+    const synthetic: PiEntry[] = [];
+    for (const [index, message] of checkpoint.retainedTail.entries()) {
+      if (!message || typeof message !== 'object' || typeof message.role !== 'string') continue;
+      const entry = {
+        type: 'message',
+        id: `${checkpoint.id}:retained:${index}`,
+        parentId: synthetic.at(-1)?.id ?? checkpoint.id,
+        timestamp: message.timestamp ?? checkpoint.timestamp,
+        message,
+      };
+      synthetic.push(entry);
+      byId.set(entry.id, entry);
+      activeIds.add(entry.id);
     }
-    if (retainedTail) {
-      const synthetic: PiEntry[] = [];
-      for (const [index, message] of retainedTail.entries()) {
-        if (!message || typeof message !== 'object' || typeof message.role !== 'string') continue;
-        const entry = {
-          type: 'message',
-          id: `${latestCompaction.id}:retained:${index}`,
-          parentId: synthetic.at(-1)?.id ?? latestCompaction.id,
-          timestamp: message.timestamp ?? latestCompaction.timestamp,
-          message,
-        };
-        synthetic.push(entry);
-        byId.set(entry.id, entry);
-        activeIds.add(entry.id);
-      }
-      syntheticByCompaction.set(latestCompaction.id, synthetic);
-    }
+    syntheticByCompaction.set(checkpoint.id, synthetic);
   }
   const entries: PiEntry[] = [];
   for (const entry of physicalEntries) {
-    if (!suppressed.has(entry.id as string)) entries.push(entry);
+    entries.push(entry);
     const retained = syntheticByCompaction.get(entry.id as string);
     if (retained) entries.push(...retained);
   }
@@ -239,11 +255,6 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     resolvingFinal.add(entryId);
     const entry = byId.get(entryId);
     if (!entry) return null;
-    if (suppressed.has(entryId)) {
-      resolvingFinal.delete(entryId);
-      finalMessageByEntry.set(entryId, null);
-      return null;
-    }
     const message = entry.message;
     let own: string | null = null;
     if (entry.type === 'compaction' && syntheticByCompaction.has(entryId)) {

@@ -1908,7 +1908,7 @@ Codex 的 message UUID 由 Trajex 按原线程 ID 与 JSONL 行号构造：`code
 
 > [Pi JSONL 格式参考文档](./pi-jsonl.md)
 
-Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",version:3,id,cwd,…}`；其余条目有 `id` 和 `parentId`，并通过 durable `leaf` 指向当前上下文。解析器全量 replay，结合 leaf、compaction 的 `firstKeptEntryId` 与 `retainedTail` 重建 active context；当前上下文投影为 `visible`，仍保留但已被分支替代的证据投影为 `inactive`，来源明确不展示的 custom message 投影为 `hidden`。
+Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",version:3,id,cwd,…}`；其余条目有 `id` 和 `parentId`，并通过 durable `leaf` 指向当前上下文。解析器全量 replay，结合 leaf、compaction 的 `firstKeptEntryId` 与 `retainedTail` 重建 active context。多次 compaction 时，反向追溯在最近的 retained-tail checkpoint 停止，再在这段有效 path 内应用最后一次 compaction；retained tail 只投影一次并重连后续消息。当前上下文投影为 `visible`，已被分支替代或压缩的物理证据保留为 `inactive`，来源明确不展示的 custom message 投影为 `hidden`。
 
 | 原始条目或字段                                               | 产出的 record                                                | 设计细节 / 不产出情况                                        |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
@@ -2216,7 +2216,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v6__"
+jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v7__"
               ↑ 不是路径，而是状态 key
 ```
 

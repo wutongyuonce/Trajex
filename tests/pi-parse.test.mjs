@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v7__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v8__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -42,8 +42,8 @@ test('Pi indexes every tree branch and projects current context through visibili
   assert.deepEqual(messages.at(-1).output_tokens, 2);
   assert.equal(messages.find(record => record.text === 'abandoned branch').visibility, 'inactive');
   assert.equal(messages.find(record => record.text === 'kept answer').visibility, 'visible');
-  assert.deepEqual(records.filter(record => record.kind === 'tool_call').map(record => record.id), [`${SESSION_ID}:call-1`]);
-  assert.deepEqual(records.filter(record => record.kind === 'tool_result').map(record => record.tool_use_id), [`${SESSION_ID}:call-1`]);
+  assert.deepEqual(records.filter(record => record.kind === 'tool_call').map(record => record.id), [`${SESSION_ID}:a1:1:tool`]);
+  assert.deepEqual(records.filter(record => record.kind === 'tool_result').map(record => record.tool_use_id), [`${SESSION_ID}:a1:1:tool`]);
   assert.deepEqual(records.filter(record => record.kind === 'summary').map(record => ({ source: record.source, content: record.content, visibility: record.visibility, input_tokens: record.input_tokens, output_tokens: record.output_tokens })), [
     { source: 'compaction', content: 'earlier work', visibility: 'visible', input_tokens: 15, output_tokens: 4 },
     { source: 'branch_summary', content: 'abandoned branch summary', visibility: 'inactive', input_tokens: 7, output_tokens: 1 },
@@ -59,7 +59,8 @@ test('Pi keeps a small head-tail message preview and a bounded head-tail tool re
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, [
     { type: 'session', version: 3, id: 'long-result', timestamp: '2026-07-30T10:00:00.000Z', cwd: '/tmp/project' },
-    { type: 'message', id: 'r1', parentId: null, timestamp: '2026-07-30T10:00:01.000Z', message: { role: 'toolResult', toolCallId: 'call-1', content: [{ type: 'text', text: output }] } },
+    { type: 'message', id: 'a1', parentId: null, timestamp: '2026-07-30T10:00:01.000Z', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'large.txt' } }] } },
+    { type: 'message', id: 'r1', parentId: 'a1', timestamp: '2026-07-30T10:00:02.000Z', message: { role: 'toolResult', toolCallId: 'call-1', content: [{ type: 'text', text: output }] } },
   ].map(JSON.stringify).join('\n') + '\n');
 
   const provider = createPiProvider({ sessionDir: dir });
@@ -354,4 +355,70 @@ test('Pi checkpoint fork materializes retainedTail once and reconnects later mes
   ]);
   assert.equal(messages[2].parent_uuid, messages[1].uuid);
   assert.equal(records.filter(record => record.kind === 'summary').length, 1);
+});
+
+test('Pi keeps reused native tool ids branch-local', () => {
+  const root = makeTempDir('trajex-pi-branch-tools-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'branch-tools', cwd: '/tmp/project' },
+    { type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'inspect both branches' } },
+    { type: 'message', id: 'active-call', parentId: 'root', message: { role: 'assistant', content: [
+      { type: 'toolCall', id: 'reused-call', name: 'read', arguments: { path: 'active.txt' } },
+    ] } },
+    { type: 'message', id: 'active-result', parentId: 'active-call', message: {
+      role: 'toolResult', toolCallId: 'reused-call', content: [{ type: 'text', text: 'active result' }],
+    } },
+    { type: 'message', id: 'abandoned-call', parentId: 'root', message: { role: 'assistant', content: [
+      { type: 'toolCall', id: 'reused-call', name: 'read', arguments: { path: 'abandoned.txt' } },
+    ] } },
+    { type: 'message', id: 'abandoned-result', parentId: 'abandoned-call', message: {
+      role: 'toolResult', toolCallId: 'reused-call', content: [{ type: 'text', text: 'abandoned result' }],
+    } },
+    { type: 'leaf', id: 'active-leaf', parentId: 'abandoned-result', targetId: 'active-result' },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  const calls = records.filter(record => record.kind === 'tool_call');
+  const results = records.filter(record => record.kind === 'tool_result');
+  assert.equal(new Set(calls.map(call => call.id)).size, 2);
+  assert.deepEqual(
+    calls.map(call => [JSON.parse(call.input_json).path, results.find(result => result.tool_use_id === call.id)?.content]).sort(),
+    [['abandoned.txt', 'abandoned result'], ['active.txt', 'active result']],
+  );
+
+  const detailCalls = assembleSessionDetail(records).messages.flatMap(message => message.tool_calls ?? []);
+  assert.deepEqual(
+    detailCalls.map(call => [JSON.parse(call.input_json).path, call.result?.content]).sort(),
+    [['abandoned.txt', 'abandoned result'], ['active.txt', 'active result']],
+  );
+});
+
+test('Pi checkpoint clears discarded tool scope before a later result', () => {
+  const root = makeTempDir('trajex-pi-checkpoint-tools-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'checkpoint-tools', cwd: '/tmp/project' },
+    { type: 'message', id: 'discarded-call', parentId: null, message: { role: 'assistant', content: [
+      { type: 'toolCall', id: 'discarded-native-id', name: 'read', arguments: { path: 'discarded.txt' } },
+    ] } },
+    { type: 'compaction', id: 'checkpoint', parentId: 'discarded-call', summary: 'clear old context', retainedTail: [] },
+    { type: 'message', id: 'unresolved-result', parentId: 'checkpoint', message: {
+      role: 'toolResult', toolCallId: 'discarded-native-id', content: [{ type: 'text', text: 'standalone result' }],
+    } },
+    { type: 'message', id: 'active-head', parentId: 'checkpoint', message: { role: 'user', content: 'current branch' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  assert.equal(records.filter(record => record.kind === 'tool_result').length, 0);
+  assert.equal(
+    records.find(record => record.kind === 'message' && record.text === 'standalone result').visibility,
+    'inactive',
+  );
 });

@@ -84,7 +84,7 @@ Trajex 当前处理的 message role：
 | `toolResult` | `message(role='tool', content_type='tool_result')` + `tool_result` |
 | `bashExecution` | `message(role='tool', content_type='bash')` |
 
-同一个 assistant entry 可能包含多个 content part，Trajex 会按 part 拆成多条消息，用 `:<part-index>` 区分 UUID，并保持 parent chain。tool call 的 ID 会加 session 命名空间：`pi:<session-hash>:<tool-call-id>`。
+同一个 assistant entry 可能包含多个 content part，Trajex 会按 part 拆成多条消息，用 `:<part-index>` 区分 UUID，并保持 parent chain。Pi 的原始 `toolCallId` 在分叉后可能复用，因此不能直接作为数据库主键：每次 tool call 使用对应 tool-use message UUID 派生独立 canonical ID；tool result 沿 entry 的 `parentId` 工具作用域寻找同一分支内最近的原始 ID。compaction 与 branch summary 会清除旧作用域，retained tail 再从保留消息重建；找不到调用的结果仍保留 message 证据，但不生成错误的 `tool_result` 关联。
 
 工具结果的时间线 message 只保存最多 1,000 字符的首尾预览；`tool_results.content` 保存最多 10,000 字符的首尾内容。这样既能在 `thread()` / FTS 中检索，也避免把大工具输出直接塞进消息列表。
 

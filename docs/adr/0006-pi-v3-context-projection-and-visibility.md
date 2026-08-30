@@ -18,6 +18,14 @@ its `firstKeptEntryId` only when that entry remains inside the bounded path.
 Retained-tail messages are materialized once and reconnect later messages;
 compacted physical ancestors remain indexed as `inactive` evidence.
 
+Pi's native tool-call ID is not a session-wide occurrence identity because a
+fork can reuse it. Canonical tool-call IDs therefore derive from the projected
+tool-use message UUID. Tool results resolve the nearest matching native ID in
+the tool scope inherited through that entry's `parentId`; compaction and branch
+summaries clear inherited scope, while a retained tail rebuilds its own scope.
+An unmatched result remains message evidence but does not create a false
+`tool_result` edge.
+
 Pi session identity is the normalized header `cwd` plus header `id`, not the
 JSONL path. This preserves identity across file moves while preventing
 project-local `--session-id` values from merging across projects. Discovery
@@ -39,9 +47,9 @@ descendant failures are treated as empty subtrees. Force rebuild preflights
 existing Provider roots before cleanup. The retraction and parse-prefix rules
 are shared with the other adapters; see ADR-0002 and ADR-0004.
 
-The canonical projection marker advances together for Claude, Codex, and Pi;
-when an old provider projection is present, the indexer performs one clean
-transcript rebuild before writing the three v3 markers.
+Each Provider owns an independent canonical projection marker. When Pi's
+projection identity or association rules change, its marker advances and the
+indexer performs a clean transcript rebuild before writing the new marker.
 
 ## Consequences
 
@@ -50,5 +58,5 @@ transcript rebuild before writing the three v3 markers.
 - `hidden` remains source-suppressed content and is not a branch state.
 - `is_meta` remains independent from visibility; visible metadata is still
   allowed when the source records it as evidence.
-- Existing Pi IDs and rows require a canonical-index rebuild when the new
-  identity or visibility contract is introduced.
+- Existing Pi IDs and rows require a canonical-index rebuild when identity,
+  visibility, or association rules change.

@@ -16,9 +16,19 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v7__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v8__';
 
 type PiEntry = Record<string, any>;
+type PiToolOccurrence = {
+  id: string;
+  filePath: string | null;
+  visibility: 'visible' | 'inactive';
+};
+type PiToolScope = {
+  nativeId: string;
+  occurrence: PiToolOccurrence | null;
+  parent: PiToolScope | null;
+};
 
 function piId(sessionId: string, entryId: string, suffix = ''): string {
   return `${sessionId}:${entryId}${suffix}`;
@@ -154,6 +164,21 @@ function toolFilePath(name: unknown, input: unknown): string | null {
   return typeof args.path === 'string' ? args.path : typeof args.file_path === 'string' ? args.file_path : null;
 }
 
+function findToolOccurrence(
+  scope: PiToolScope | null,
+  nativeId: string,
+  visibility: 'visible' | 'inactive',
+): PiToolOccurrence | null {
+  for (let current = scope; current; current = current.parent) {
+    if (current.nativeId !== nativeId) continue;
+    if (current.occurrence === null) return null;
+    return visibility === 'inactive' || current.occurrence.visibility === 'visible'
+      ? current.occurrence
+      : null;
+  }
+  return null;
+}
+
 /** Full replay is required because the current Pi transcript is a tree path. */
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
   const meta = unit.meta as { kind?: string } | undefined;
@@ -245,6 +270,45 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     entries.push(entry);
     const retained = syntheticByCompaction.get(entry.id as string);
     if (retained) entries.push(...retained);
+  }
+  const toolScopeByEntry = new Map<string, PiToolScope | null>();
+  const toolCallByMessage = new Map<string, PiToolOccurrence>();
+  const toolResultByEntry = new Map<string, PiToolOccurrence>();
+  const checkpointBySyntheticTail = new Map<string, string>();
+  for (const [checkpointId, retained] of syntheticByCompaction) {
+    const tailId = retained.at(-1)?.id;
+    if (tailId) checkpointBySyntheticTail.set(tailId, checkpointId);
+  }
+  for (const entry of entries) {
+    if (entry.type === 'leaf') {
+      toolScopeByEntry.set(entry.id, typeof entry.targetId === 'string' ? toolScopeByEntry.get(entry.targetId) ?? null : null);
+      continue;
+    }
+    let scope = typeof entry.parentId === 'string' ? toolScopeByEntry.get(entry.parentId) ?? null : null;
+    if (entry.type === 'compaction' || entry.type === 'branch_summary') scope = null;
+    const visibility: PiToolOccurrence['visibility'] = activeIds.has(entry.id) ? 'visible' : 'inactive';
+    const message = entry.message;
+    if (entry.type === 'message' && message?.role === 'assistant' && Array.isArray(message.content)) {
+      for (let index = 0; index < message.content.length; index++) {
+        const part = message.content[index];
+        if (part?.type !== 'toolCall' || typeof part.id !== 'string') continue;
+        const messageId = piId(sessionId, entry.id, `:${index}`);
+        const occurrence = {
+          id: `${messageId}:tool`,
+          filePath: toolFilePath(part.name, part.arguments),
+          visibility,
+        };
+        toolCallByMessage.set(messageId, occurrence);
+        scope = { nativeId: part.id, occurrence, parent: scope };
+      }
+    } else if (entry.type === 'message' && message?.role === 'toolResult' && typeof message.toolCallId === 'string') {
+      const occurrence = findToolOccurrence(scope, message.toolCallId, visibility);
+      if (occurrence) toolResultByEntry.set(entry.id, occurrence);
+      scope = { nativeId: message.toolCallId, occurrence: null, parent: scope };
+    }
+    toolScopeByEntry.set(entry.id, scope);
+    const checkpointId = checkpointBySyntheticTail.get(entry.id);
+    if (checkpointId) toolScopeByEntry.set(checkpointId, scope);
   }
   const finalMessageByEntry = new Map<string, string | null>();
   const resolvingFinal = new Set<string>();
@@ -359,7 +423,8 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
         else if (part?.type === 'toolCall' && typeof part.id === 'string') {
           const uuid = addMessage(entry, 'assistant', null, 'tool_use', parentUuid, suffix, entryVisibility, isLast ? inputTokens : null, isLast ? outputTokens : null);
           parentUuid = uuid;
-          records.push({ kind: 'tool_call', id: piId(sessionId, part.id), message_uuid: uuid, session_id: sessionId, name: typeof part.name === 'string' ? part.name : 'tool', input_json: truncJson(part.arguments) ?? '{}', file_path: toolFilePath(part.name, part.arguments) });
+          const occurrence = toolCallByMessage.get(uuid)!;
+          records.push({ kind: 'tool_call', id: occurrence.id, message_uuid: uuid, session_id: sessionId, name: typeof part.name === 'string' ? part.name : 'tool', input_json: truncJson(part.arguments) ?? '{}', file_path: occurrence.filePath });
         }
       }
       continue;
@@ -367,7 +432,8 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     if (message.role === 'toolResult') {
       const text = textParts(message.content, 'text').join('\n');
       const uuid = addMessage(entry, 'tool', toolResultPreview(text), 'tool_result', parentUuid, '', entryVisibility);
-      if (typeof message.toolCallId === 'string') records.push({ kind: 'tool_result', tool_use_id: piId(sessionId, message.toolCallId), message_uuid: uuid, session_id: sessionId, content: truncToolResult(text), file_path: null, is_error: message.isError ? 1 : 0 });
+      const occurrence = toolResultByEntry.get(entry.id);
+      if (occurrence) records.push({ kind: 'tool_result', tool_use_id: occurrence.id, message_uuid: uuid, session_id: sessionId, content: truncToolResult(text), file_path: occurrence.filePath, is_error: message.isError ? 1 : 0 });
       continue;
     }
     if (message.role === 'bashExecution') addMessage(entry, 'tool', [message.command ? `$ ${message.command}` : '', message.output, message.exitCode ? `[exit code: ${message.exitCode}]` : ''].filter(value => typeof value === 'string' && value).join('\n'), 'bash', parentUuid, '', entryVisibility);

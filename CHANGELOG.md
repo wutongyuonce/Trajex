@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Pi 工具调用现在按具体消息 occurrence 生成 canonical ID，并沿 `parentId` 树只匹配同一分支内最近的原始 `toolCallId`；不同分支复用 native ID 不再互相覆盖或串接结果，compaction 后无法解析到当前工具作用域的结果也不会错误挂到已丢弃调用。Pi canonical marker 升至 v8 后会自动重建旧投影。
 - Pi 现在按完整 checkpoint 链重建多次 compaction 后的当前上下文：最近的 `retainedTail` checkpoint 会截断更早物理链，后续 legacy `firstKeptEntryId` 只在该有效边界内生效；retained tail 只投影一次，压缩祖先保留为 inactive 证据。Pi canonical marker 升至 v7 后会自动重建旧投影。
 - Codex 全量重放现在会跳过已换行结束的损坏 JSONL 记录并继续索引后续消息、工具调用和结果；未换行的残缺尾行仍留待下次重放。Codex canonical marker 升级后会自动重建已卡在永久坏行前的旧投影。
 - Claude 增量解析现在会跳过已换行结束的损坏 JSONL 记录并继续索引后续消息；未换行的残缺尾行仍不推进 cursor，等待文件写完后重试。Claude canonical marker 升级后会自动重建旧投影，修复已卡在永久坏行前的会话。

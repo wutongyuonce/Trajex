@@ -10,6 +10,7 @@
 
 ### Changed
 
+- Activity token 统计改为一次聚合 messages 与 summaries：总量包含无时间戳 usage，每日和峰值只包含有日期记录；summary 的 provider 通过所属 session 判断。
 - Summary 查询默认只返回当前分支；Core 可用 `includeInactive` 显式读取 inactive 摘要，hidden 始终排除，App 详情只展示 visible 摘要。
 - Trajex skill 明确区分“外层 CLI 先刷新索引”与“内层查询脚本只读”：受限 sandbox 必须允许写入 `~/.trajex` 或 `TRAJEX_DIR`，权限失败时应重试同一 Trajex 命令，不直接读取可能过期的 SQLite/JSONL。
 - 主会话详情只读取主线程消息关联的工具调用与结果，不再预加载同一 session 下的子代理工具明细；inactive 主线程分支继续保留，子代理详情仍按 `agent_id` 独立加载。

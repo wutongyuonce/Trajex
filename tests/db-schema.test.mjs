@@ -53,6 +53,8 @@ test('messages schema stores the raw content block type', async () => {
   assert.match(source, /CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages/);
   assert.match(source, /CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages/);
   assert.match(source, /CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages/);
+  assert.match(source, /CREATE INDEX IF NOT EXISTS idx_messages_usage_day/);
+  assert.match(source, /CREATE INDEX IF NOT EXISTS idx_messages_turn_duration/);
 });
 
 test('legacy summaries gain visibility and usage columns', () => {

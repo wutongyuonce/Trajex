@@ -665,44 +665,43 @@ ipcMain.handle('db:getStats', (_, opts = {}) => {
 
 ipcMain.handle('db:getUsageStats', (_, opts = {}) => {
   if (!db) return { daily: [], totalTokens: 0, peakDay: null, longestTurn: null };
-  const sourceFilter = sourceWhereClause(opts, 'source');
-  const sourceSql = sourceFilter.sql ? `AND ${sourceFilter.sql}` : '';
+  const messageFilter = sourceWhereClause(opts, 'm.source');
+  const summaryFilter = sourceWhereClause(opts, 's.source');
 
-  const daily = db.prepare(`
-    SELECT DATE(timestamp) as day,
+  const usageDays = db.prepare(`
+    WITH usage_events AS (
+      SELECT m.timestamp, m.input_tokens, m.output_tokens
+      FROM messages m
+      WHERE (m.input_tokens IS NOT NULL OR m.output_tokens IS NOT NULL)
+        ${messageFilter.sql ? `AND ${messageFilter.sql}` : ''}
+      UNION ALL
+      SELECT su.timestamp, su.input_tokens, su.output_tokens
+      FROM summaries su
+      LEFT JOIN sessions s ON s.id = su.session_id
+      WHERE (su.input_tokens IS NOT NULL OR su.output_tokens IS NOT NULL)
+        ${summaryFilter.sql ? `AND ${summaryFilter.sql}` : ''}
+    )
+    SELECT DATE(timestamp) AS day,
            SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) as tokens
-    FROM messages
-    WHERE timestamp IS NOT NULL AND (input_tokens IS NOT NULL OR output_tokens IS NOT NULL)
-      ${sourceSql}
+    FROM usage_events
     GROUP BY DATE(timestamp)
     ORDER BY day
-  `).all(...sourceFilter.params);
-
-  const totalTokens = db.prepare(`
-    SELECT SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) as total
-    FROM messages
-    ${sourceFilter.sql ? `WHERE ${sourceFilter.sql}` : ''}
-  `).get(...sourceFilter.params)?.total || 0;
-
-  const peakDay = db.prepare(`
-    SELECT DATE(timestamp) as day,
-           SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) as tokens
-    FROM messages
-    WHERE timestamp IS NOT NULL AND (input_tokens IS NOT NULL OR output_tokens IS NOT NULL)
-      ${sourceSql}
-    GROUP BY DATE(timestamp)
-    ORDER BY tokens DESC
-    LIMIT 1
-  `).get(...sourceFilter.params) || null;
+  `).all(...messageFilter.params, ...summaryFilter.params) as Array<{ day: string | null; tokens: number }>;
+  const totalTokens = usageDays.reduce((total, row) => total + row.tokens, 0);
+  const daily = usageDays.filter((row): row is { day: string; tokens: number } => row.day !== null);
+  const peakDay = daily.reduce<{ day: string; tokens: number } | null>(
+    (peak, row) => peak === null || row.tokens > peak.tokens ? row : peak,
+    null,
+  );
 
   const longestTurn = db.prepare(`
     SELECT turn_duration_ms, uuid, session_id, timestamp
-    FROM messages
-    WHERE turn_duration_ms IS NOT NULL
-      ${sourceSql}
+    FROM messages m
+    WHERE m.turn_duration_ms IS NOT NULL
+      ${messageFilter.sql ? `AND ${messageFilter.sql}` : ''}
     ORDER BY turn_duration_ms DESC
     LIMIT 1
-  `).get(...sourceFilter.params) || null;
+  `).get(...messageFilter.params) || null;
 
   return { daily, totalTokens, peakDay, longestTurn };
 });

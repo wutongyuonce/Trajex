@@ -2266,6 +2266,8 @@ CREATE INDEX idx_messages_session ON messages(session_id);
 | `idx_messages_ts`       | messages        | `session_id, timestamp` | 按时间排序       |
 | `idx_sessions_source`   | sessions        | `source`                | 按来源筛选       |
 | `idx_messages_source`   | messages        | `source`                | 按来源筛选       |
+| `idx_messages_usage_day` | messages       | `timestamp, source 表达式, input/output tokens` | Activity 每日 token 聚合 |
+| `idx_messages_turn_duration` | messages   | `turn_duration_ms DESC, source 表达式` | Activity 最长 turn |
 | `idx_tc_session_name`   | tool_calls      | `session_id, name`      | 按会话+工具名查  |
 | `idx_tc_message`        | tool_calls      | `message_uuid`          | 按消息查工具调用 |
 | `idx_tc_file`           | tool_calls      | `file_path`             | 按文件路径查历史 |

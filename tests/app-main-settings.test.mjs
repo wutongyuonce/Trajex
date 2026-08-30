@@ -526,6 +526,10 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
   const dbPath = join(trajexDir, 'trajex.sqlite');
   const setup = new DatabaseSync(dbPath);
   setup.exec(readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8'));
+  const insertSession = setup.prepare('INSERT INTO sessions (id, source) VALUES (?, ?)');
+  insertSession.run('claude-session', 'claude');
+  insertSession.run('codex:session', 'codex');
+  insertSession.run('pi:session', 'pi');
   setup.prepare(`
     INSERT INTO messages (
       uuid, session_id, type, timestamp, role, text,
@@ -538,6 +542,24 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
       input_tokens, output_tokens, source
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run('codex-message', 'codex:session', 'assistant', '2026-07-10T11:00:00Z', 'assistant', 'ok', 100, 10, 'codex');
+  setup.prepare(`
+    INSERT INTO messages (
+      uuid, session_id, type, timestamp, role, text,
+      input_tokens, output_tokens, source
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run('claude-undated', 'claude-session', 'assistant', null, 'assistant', 'undated', 3, 2, 'claude');
+  setup.prepare(`
+    INSERT INTO summaries (id, session_id, timestamp, source, content, input_tokens, output_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run('claude-summary', 'claude-session', '2026-07-11T10:00:00Z', 'compaction', 'claude summary', 20, 5);
+  setup.prepare(`
+    INSERT INTO summaries (id, session_id, timestamp, source, content, input_tokens, output_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run('codex-summary', 'codex:session', '2026-07-11T11:00:00Z', 'compaction', 'codex summary', 15, 5);
+  setup.prepare(`
+    INSERT INTO summaries (id, session_id, timestamp, source, content, input_tokens, output_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run('pi-summary', 'pi:session', '2026-07-12T12:00:00Z', 'branch_summary', 'pi summary', 10, 2);
   setup.prepare(`
     INSERT INTO messages (uuid, session_id, type, timestamp, role, text, visibility, source)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -601,13 +623,19 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
     await importMain();
 
     const claudeOnly = ipcHandlers.get('db:getUsageStats')(null, {});
-    assert.equal(claudeOnly.totalTokens, 65);
+    assert.equal(claudeOnly.totalTokens, 95);
     assert.equal(claudeOnly.daily[0].tokens, 65);
+    assert.deepEqual(claudeOnly.daily.map(row => row.tokens), [65, 25]);
 
     const allSources = ipcHandlers.get('db:getUsageStats')(null, { source: 'all' });
-    assert.equal(allSources.totalTokens, 175);
+    assert.equal(allSources.totalTokens, 237);
     assert.equal(allSources.daily[0].tokens, 175);
     assert.equal(allSources.peakDay.tokens, 175);
+    assert.equal(allSources.daily.reduce((total, row) => total + row.tokens, 0), 232, 'undated usage stays in total only');
+
+    const codexOnly = ipcHandlers.get('db:getUsageStats')(null, { source: 'codex' });
+    assert.equal(codexOnly.totalTokens, 130);
+    assert.deepEqual(codexOnly.daily.map(row => row.tokens), [110, 20]);
 
     assert.deepEqual(
       ipcHandlers.get('db:getSessionMessages')(null, 'pi:session').map(row => row.uuid),

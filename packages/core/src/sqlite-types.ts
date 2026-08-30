@@ -18,13 +18,28 @@ export interface SqliteStatement {
   all(...bindings: any[]): SqliteRow[];
   get(...bindings: any[]): SqliteRow | undefined;
   run(...bindings: any[]): unknown;
+  /** better-sqlite3：语句没有写入效果时为 true。 */
+  readonly readonly?: boolean;
+  /** node:sqlite：SQLite 实际编译的第一条语句文本。 */
+  readonly sourceSQL?: string;
 }
 
-/** 连接抽象。业务层只依赖 exec/prepare/close，不依赖具体驱动的运行时对象。 */
+/** node:sqlite authorizer 回调的共享签名。 */
+export type SqliteAuthorizer = (
+  action: number,
+  p1: string | null,
+  p2: string | null,
+  dbName: string | null,
+  triggerOrView: string | null,
+) => number;
+
+/** 连接抽象。业务层只依赖共享能力，可选能力由驱动在运行时提供。 */
 export interface SqliteDb {
   exec(sql: string): unknown;
   prepare(sql: string): SqliteStatement;
   close(): void;
+  /** node:sqlite >= 24.10；旧版 Node 和 better-sqlite3 不提供。 */
+  setAuthorizer?(callback: SqliteAuthorizer): void;
 }
 
 /** node:sqlite 驱动的扩展标记，供协调层判断当前是否处于事务中。 */

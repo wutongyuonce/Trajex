@@ -12,9 +12,10 @@
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { isAbsolute, normalize, resolve, sep } from 'node:path';
+import { constants as sqliteConstants } from 'node:sqlite';
 import { createBuiltinProviderRegistry } from './providers/builtins.ts';
 import type { ProviderRegistry } from './providers/registry.ts';
-import type { SqliteDb, SqliteRow } from './sqlite-types.ts';
+import type { SqliteDb, SqliteRow, SqliteStatement } from './sqlite-types.ts';
 
 type DbRow = SqliteRow;
 
@@ -117,15 +118,95 @@ function buildWhere(opts: QueryOptions, aliases: ColumnAliases) {
 
 const BASH_EXIT_PAT = 'Exit code %';
 
-/** 只允许 SELECT/WITH 开头的语句，禁止任何写/管理关键字，防止沙箱内 sql() 被用来改库。 */
-function assertReadOnlySql(sql: unknown): void {
-  const text = String(sql || '').trim();
-  if (!/^(SELECT|WITH)\b/i.test(text)) {
-    throw new Error('sql() only supports read-only SELECT/WITH queries');
+const READ_ONLY_SQL_MESSAGE = 'sql() only supports read-only SELECT/WITH queries';
+const MULTI_STATEMENT_SQL_MESSAGE =
+  'sql() accepts exactly one SQL statement per call; split multiple statements into separate sql() calls';
+
+/** 保留稳定的入口契约：只接受 SELECT/WITH，排除语句级 PRAGMA。 */
+function assertReadOnlySqlPrefix(text: string): void {
+  if (!/^\s*(SELECT|WITH)\b/i.test(text)) throw new Error(READ_ONLY_SQL_MESSAGE);
+}
+
+/** SQLite authorizer 中会写数据、改 schema 或改变连接边界的 action。 */
+const DENIED_SQLITE_ACTIONS: ReadonlySet<number> = new Set([
+  sqliteConstants.SQLITE_INSERT,
+  sqliteConstants.SQLITE_UPDATE,
+  sqliteConstants.SQLITE_DELETE,
+  sqliteConstants.SQLITE_CREATE_INDEX,
+  sqliteConstants.SQLITE_CREATE_TABLE,
+  sqliteConstants.SQLITE_CREATE_TEMP_INDEX,
+  sqliteConstants.SQLITE_CREATE_TEMP_TABLE,
+  sqliteConstants.SQLITE_CREATE_TEMP_TRIGGER,
+  sqliteConstants.SQLITE_CREATE_TEMP_VIEW,
+  sqliteConstants.SQLITE_CREATE_TRIGGER,
+  sqliteConstants.SQLITE_CREATE_VIEW,
+  sqliteConstants.SQLITE_CREATE_VTABLE,
+  sqliteConstants.SQLITE_DROP_INDEX,
+  sqliteConstants.SQLITE_DROP_TABLE,
+  sqliteConstants.SQLITE_DROP_TEMP_INDEX,
+  sqliteConstants.SQLITE_DROP_TEMP_TABLE,
+  sqliteConstants.SQLITE_DROP_TEMP_TRIGGER,
+  sqliteConstants.SQLITE_DROP_TEMP_VIEW,
+  sqliteConstants.SQLITE_DROP_TRIGGER,
+  sqliteConstants.SQLITE_DROP_VIEW,
+  sqliteConstants.SQLITE_DROP_VTABLE,
+  sqliteConstants.SQLITE_ALTER_TABLE,
+  sqliteConstants.SQLITE_REINDEX,
+  sqliteConstants.SQLITE_ANALYZE,
+  sqliteConstants.SQLITE_ATTACH,
+  sqliteConstants.SQLITE_DETACH,
+  sqliteConstants.SQLITE_SAVEPOINT,
+]);
+
+/** Node 24.10+ 在 prepare 时拒绝写操作；旧运行时继续依赖只读连接兜底。 */
+function installWriteDenylist(db: SqliteDb): void {
+  if (typeof db.setAuthorizer !== 'function') return;
+  db.setAuthorizer(action =>
+    DENIED_SQLITE_ACTIONS.has(action) ? sqliteConstants.SQLITE_DENY : sqliteConstants.SQLITE_OK);
+}
+
+/** better-sqlite3 没有 authorizer，使用语句自带的 readonly 分类。 */
+function assertReadOnlyStatement(stmt: SqliteStatement): void {
+  if (stmt.readonly === false) throw new Error(READ_ONLY_SQL_MESSAGE);
+}
+
+/** 第一条语句之后只允许空白或注释。 */
+function isBlankOrCommentTail(text: string): boolean {
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (/\s/.test(ch)) { i += 1; continue; }
+    if (ch === '-' && text[i + 1] === '-') {
+      const end = text.indexOf('\n', i + 2);
+      i = end === -1 ? text.length : end + 1;
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      if (end === -1) return false;
+      i = end + 2;
+      continue;
+    }
+    return false;
   }
-  if (/\b(INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER|PRAGMA|VACUUM|ATTACH|DETACH)\b/i.test(text)) {
-    throw new Error('sql() only supports read-only SELECT/WITH queries');
+  return true;
+}
+
+function prepareReadOnlyStatement(db: SqliteDb, text: string): SqliteStatement {
+  let stmt: SqliteStatement;
+  try {
+    stmt = db.prepare(text);
+  } catch (error) {
+    if (error instanceof Error && /not authorized/i.test(error.message)) {
+      throw new Error(READ_ONLY_SQL_MESSAGE, { cause: error });
+    }
+    throw error;
   }
+  assertReadOnlyStatement(stmt);
+  if (typeof stmt.sourceSQL === 'string' && !isBlankOrCommentTail(text.slice(stmt.sourceSQL.length))) {
+    throw new Error(MULTI_STATEMENT_SQL_MESSAGE);
+  }
+  return stmt;
 }
 
 // 记忆层仅按英文索引，故拒绝中日韩（含假名/谚文）字符的正文。
@@ -158,10 +239,12 @@ function createQueryApi(
   db: SqliteDb,
   { providerRegistry = createBuiltinProviderRegistry() }: { providerRegistry?: ProviderRegistry } = {},
 ) {
+  installWriteDenylist(db);
   /** 受控只读 SQL 入口：先校验只读，再执行并返回全部行。 */
   const q = (sql: string, ...p: any[]) => {
-    assertReadOnlySql(sql);
-    return db.prepare(sql).all(...p);
+    const text = String(sql || '');
+    assertReadOnlySqlPrefix(text);
+    return prepareReadOnlyStatement(db, text).all(...p);
   };
 
   /** overview 专用重载：字符串 → project，数字 → limit。 */

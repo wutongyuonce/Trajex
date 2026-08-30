@@ -2806,7 +2806,7 @@ ON CONFLICT(agent_id) DO UPDATE SET
 
 **只读与 FTS 防护**：
 
-- `assertReadOnlySql`：`sql()` 双重校验——只允许 `SELECT`/`WITH` 开头，且黑名单命中 `INSERT/UPDATE/DELETE/REPLACE/CREATE/DROP/ALTER/PRAGMA/VACUUM/ATTACH/DETACH` 即抛错。**它是沙箱内唯一能拿到原生 SQL 的入口，必须锁死只读**；
+- `sql()` 保留 `SELECT`/`WITH` 入口契约，但不再扫描整段文本里的写操作单词。新版本优先使用 SQLite authorizer 拒绝真实的写入/schema 动作，兼容 `statement.readonly` 能力，并通过 `sourceSQL` 拒绝第二条语句；所有运行时最终仍由 `openReadDb()` 的只读连接兜底。因此字符串、注释和引用标识符里出现 `update`/`delete` 不会被误拒，真实写入仍 fail closed；完整决策见 [ADR-0012](../adr/0012-semantic-read-only-sql-validation.md)；
 - `buildSafeFtsQuery`：把文本拆成 ≤12 个 token 逐个加引号，规避 FTS5 把连字符/标点误解析为运算符（`search()` 在原始 FTS 语法抛错时退回此写法）；
 - `assertEnglishMemoryText`：记忆层只按英文索引，`memories()` 的 query 与 `remember()` 的 summary 含 CJK 字符直接抛错，引导先翻译术语。
 

@@ -208,6 +208,57 @@ test('query api is read-only and does not expose attune helpers', () => {
   db.close();
 });
 
+test('sql() accepts mutation keywords when they are read-only data or syntax', () => {
+  const db = memoryDb();
+  const api = createQueryApi(db);
+
+  assert.equal(api.sql("SELECT 'live update' AS text")[0].text, 'live update');
+  assert.equal(api.sql('SELECT 1 AS "delete"')[0].delete, 1);
+  assert.equal(api.sql('SELECT 1 AS x -- INSERT INTO memories')[0].x, 1);
+  assert.equal(api.sql('SELECT 1 AS x /* DROP TABLE memories */')[0].x, 1);
+  assert.deepEqual(api.sql("SELECT id FROM memories WHERE summary LIKE '%update%'"), []);
+  assert.equal(
+    api.sql('WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x<3) SELECT x FROM c').length,
+    3,
+  );
+  assert.ok(api.sql("SELECT name FROM pragma_table_info('memories')").length > 0);
+
+  db.close();
+});
+
+test('sql() rejects multiple statements while allowing trailing comments', () => {
+  const db = memoryDb();
+  const api = createQueryApi(db);
+
+  assert.throws(() => api.sql('SELECT 1; SELECT 2'), /exactly one SQL statement/);
+  assert.throws(() => api.sql('SELECT 1;; SELECT 2'), /exactly one SQL statement/);
+  assert.throws(() => api.sql('SELECT 1; /* unterminated'), /exactly one SQL statement/);
+  assert.equal(api.sql('SELECT 1;')[0]['1'], 1);
+  assert.equal(api.sql('SELECT 1; -- trailing comment')[0]['1'], 1);
+  assert.equal(api.sql('SELECT 1; /* trailing comment */')[0]['1'], 1);
+
+  db.close();
+});
+
+test('a read-only connection remains the final write boundary', () => {
+  const dir = makeTempDir('trajex-readonly-boundary-');
+  const dbPath = join(dir, 'index.sqlite');
+  const seed = new DatabaseSync(dbPath);
+  seed.exec(SCHEMA);
+  seed.prepare('INSERT INTO memories (id, path, summary, created_at) VALUES (?, ?, ?, ?)')
+    .run('mem-1', '/m.md', 'seed memory', '2026-08-01T00:00:00Z');
+  seed.close();
+
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  const api = createQueryApi(db);
+  assert.throws(
+    () => api.sql("WITH c AS (SELECT 1) INSERT INTO memories (id, path, summary) SELECT 'mem-x', '/tmp/x.md', 'x' FROM c"),
+    /read-only SELECT\/WITH|readonly database/i,
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM memories').get().c, 1);
+  db.close();
+});
+
 test('attune api exposes only memory mutation helpers', () => {
   const db = memoryDb();
   const api = createAttuneApi(db);

@@ -1,7 +1,7 @@
 # Architecture decision records
 
 Canonical ADR order follows the runtime architecture from source ingestion to
-packaging. The directory contains only the current eleven ADRs.
+packaging. The directory contains only the current twelve ADRs.
 
 | ADR | Responsibility |
 | --- | --- |
@@ -16,7 +16,9 @@ packaging. The directory contains only the current eleven ADRs.
 | [0009](0009-skill-artifact-readable-not-bundled.md) | Readable CLI package versus docs-only Skill artifact |
 | [0010](0010-app-electron-vite-ts-esm.md) | Electron build, preload boundary, and packaging |
 | [0011](0011-adaptive-watching-and-bounded-index-scheduling.md) | App watch targets, adaptive invalidation, bounded scheduling, and periodic reconciliation |
+| [0012](0012-semantic-read-only-sql-validation.md) | Query sandbox semantic read-only SQL validation and single-statement enforcement |
 
 The first six ADRs describe the indexing architecture itself. ADR-0011 records
 the App daemon's freshness path; ADR-0007 through ADR-0010 describe runtime
-compatibility and delivery mechanics around the architecture.
+compatibility and delivery mechanics around the architecture. ADR-0012 refines
+the query sandbox's Tier-1 read-only contract.

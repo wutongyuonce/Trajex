@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v8__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v9__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -164,7 +164,7 @@ test('Pi stops at a malformed line and returns the valid prefix', () => {
   assert.equal(step.value.split(':')[1], '2');
 });
 
-test('Pi treats a cyclic model parent chain as an unknown model', () => {
+test('Pi rejects a cyclic parent chain instead of truncating the active path', () => {
   const root = makeTempDir('trajex-pi-model-cycle-');
   const dir = join(root, 'sessions', '--project--');
   const path = join(dir, 'fixture.jsonl');
@@ -177,8 +177,7 @@ test('Pi treats a cyclic model parent chain as an unknown model', () => {
 
   const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
   const unit = provider.discover({ lastCursor: () => null })[0];
-  const messages = drain(provider.parse(unit, null)).filter(record => record.kind === 'message');
-  assert.deepEqual(messages.map(record => record.model), [null, null]);
+  assert.throws(() => drain(provider.parse(unit, null)), /Pi session contains a cycle at/);
 });
 
 test('Pi durable leaf selects the target branch instead of the last physical entry', () => {
@@ -421,4 +420,82 @@ test('Pi checkpoint clears discarded tool scope before a later result', () => {
     records.find(record => record.kind === 'message' && record.text === 'standalone result').visibility,
     'inactive',
   );
+});
+
+test('Pi rejects duplicate entry ids instead of overwriting tree identity', () => {
+  const root = makeTempDir('trajex-pi-duplicate-entry-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'duplicate-entry', cwd: '/tmp/project' },
+    { type: 'message', id: 'duplicate', parentId: null, message: { role: 'user', content: 'first identity' } },
+    { type: 'message', id: 'duplicate', parentId: null, message: { role: 'user', content: 'replacement identity' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  assert.throws(() => drain(provider.parse(unit, null)), /Duplicate Pi entry id: duplicate/);
+});
+
+test('Pi rejects a durable leaf whose target does not exist', () => {
+  const root = makeTempDir('trajex-pi-missing-leaf-target-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'missing-leaf-target', cwd: '/tmp/project' },
+    { type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'valid evidence' } },
+    { type: 'leaf', id: 'leaf', parentId: 'root', targetId: 'missing' },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  assert.throws(() => drain(provider.parse(unit, null)), /Pi leaf target missing does not exist/);
+});
+
+test('Pi rejects a compaction with malformed retainedTail', () => {
+  const root = makeTempDir('trajex-pi-malformed-retained-tail-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'malformed-retained-tail', cwd: '/tmp/project' },
+    { type: 'message', id: 'root', parentId: null, message: { role: 'user', content: 'valid evidence' } },
+    { type: 'compaction', id: 'checkpoint', parentId: 'root', summary: 'invalid checkpoint', retainedTail: {} },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  assert.throws(() => drain(provider.parse(unit, null)), /Malformed retainedTail at Pi entry checkpoint/);
+});
+
+test('Pi rejects a malformed message inside an active retainedTail', () => {
+  const root = makeTempDir('trajex-pi-malformed-retained-message-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'malformed-retained-message', cwd: '/tmp/project' },
+    { type: 'compaction', id: 'checkpoint', parentId: null, summary: 'invalid retained message', retainedTail: [null] },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  assert.throws(() => drain(provider.parse(unit, null)), /Malformed retainedTail message at Pi entry checkpoint/);
+});
+
+test('Pi rejects a non-string parentId instead of treating it as an orphan root', () => {
+  const root = makeTempDir('trajex-pi-malformed-parent-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'malformed-parent', cwd: '/tmp/project' },
+    { type: 'message', id: 'message', parentId: 42, message: { role: 'user', content: 'invalid parent' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  assert.throws(() => drain(provider.parse(unit, null)), /Malformed Pi entry: message/);
 });

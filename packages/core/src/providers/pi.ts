@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v8__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v9__';
 
 type PiEntry = Record<string, any>;
 type PiToolOccurrence = {
@@ -194,7 +194,12 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!.replace(/\r$/, '');
     if (!line) { processedLineCount = index + 1; continue; }
-    try { parsed.push(JSON.parse(line)); } catch { break; }
+    let value: unknown;
+    try { value = JSON.parse(line); } catch { break; }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Malformed Pi JSONL value at line ${index + 1}`);
+    }
+    parsed.push(value as PiEntry);
     processedLineCount = index + 1;
   }
   const outCursor = snapshotCursor(after, processedLineCount);
@@ -203,11 +208,51 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
 
   const sessionRawId = header.id as string;
   const sessionId = piSessionId(sessionRawId, header.cwd);
-  const physicalEntries = parsed.filter(entry => entry.type !== 'session' && typeof entry.id === 'string');
-  const byId = new Map(physicalEntries.map(entry => [entry.id as string, entry]));
-  const checkpoints = new Set(physicalEntries
-    .filter(entry => entry.type === 'compaction' && Array.isArray(entry.retainedTail))
-    .map(entry => entry.id as string));
+  const physicalEntries = parsed.filter(entry => entry.type !== 'session');
+  for (const entry of physicalEntries) {
+    if (
+      typeof entry.type !== 'string'
+      || typeof entry.id !== 'string'
+      || (entry.parentId !== null && typeof entry.parentId !== 'string')
+    ) {
+      throw new Error(`Malformed Pi entry: ${typeof entry.id === 'string' ? entry.id : 'unknown'}`);
+    }
+  }
+  const byId = new Map<string, PiEntry>();
+  for (const entry of physicalEntries) {
+    if (byId.has(entry.id)) throw new Error(`Duplicate Pi entry id: ${entry.id}`);
+    byId.set(entry.id, entry);
+  }
+  for (const entry of physicalEntries) {
+    if (entry.type !== 'leaf') continue;
+    if (entry.targetId !== null && typeof entry.targetId !== 'string') {
+      throw new Error(`Malformed Pi leaf target: ${entry.id}`);
+    }
+    if (typeof entry.targetId === 'string' && !byId.has(entry.targetId)) {
+      throw new Error(`Pi leaf target ${entry.targetId} does not exist`);
+    }
+  }
+  const resolvedParents = new Set<string>();
+  for (const entry of physicalEntries) {
+    const path: string[] = [];
+    const visiting = new Set<string>();
+    let current: PiEntry | undefined = entry;
+    while (current && !resolvedParents.has(current.id)) {
+      if (visiting.has(current.id)) throw new Error(`Pi session contains a cycle at ${current.id}`);
+      visiting.add(current.id);
+      path.push(current.id);
+      current = typeof current.parentId === 'string' ? byId.get(current.parentId) : undefined;
+    }
+    for (const id of path) resolvedParents.add(id);
+  }
+  const checkpoints = new Set<string>();
+  for (const entry of physicalEntries) {
+    if (entry.type !== 'compaction' || entry.retainedTail === undefined) continue;
+    if (!Array.isArray(entry.retainedTail)) {
+      throw new Error(`Malformed retainedTail at Pi entry ${entry.id}`);
+    }
+    checkpoints.add(entry.id);
+  }
   let active: PiEntry | undefined;
   for (const entry of physicalEntries) {
     active = entry.type === 'leaf'
@@ -251,7 +296,10 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     if (!checkpoints.has(checkpoint.id as string) || !activeIds.has(checkpoint.id as string)) continue;
     const synthetic: PiEntry[] = [];
     for (const [index, message] of checkpoint.retainedTail.entries()) {
-      if (!message || typeof message !== 'object' || typeof message.role !== 'string') continue;
+      if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        throw new Error(`Malformed retainedTail message at Pi entry ${checkpoint.id}`);
+      }
+      if (typeof message.role !== 'string') continue;
       const entry = {
         type: 'message',
         id: `${checkpoint.id}:retained:${index}`,

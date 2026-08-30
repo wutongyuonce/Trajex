@@ -183,6 +183,8 @@ Pi 的物理文件是完整树，不等于当前 LLM 看到的线性上下文。
 
 Trajex 不从 message 文本猜分支关系，也不把时间顺序当作当前上下文；`parentId` 和 `leaf` 才是 Pi 的结构事实。
 
+进入上述计算前，Provider 会验证 entry ID 唯一、`parentId` 类型、父链无环、leaf target 存在，以及 `retainedTail` 容器和 active retained value 的对象结构。字符串父 ID 不存在时按 Pi 官方 orphan root 结束父链，不报错。JSON 语法损坏仍采用有效前缀；JSON 已能解析但树结构不可信时整份 unit 抛错，由索引事务保留上一次成功投影。
+
 ## 6. 与其他 JSONL provider 的关键区别
 
 | | Pi | Codex | Claude |

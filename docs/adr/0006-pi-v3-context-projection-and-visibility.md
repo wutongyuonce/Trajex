@@ -26,6 +26,14 @@ summaries clear inherited scope, while a retained tail rebuilds its own scope.
 An unmatched result remains message evidence but does not create a false
 `tool_result` edge.
 
+Tree identity is validated before projection. Entry IDs must be unique,
+`parentId` must be a string or `null`, durable leaf targets must be `null` or
+resolve to an entry, parent chains must be acyclic, and checkpoint
+`retainedTail` values must have valid container structure. A missing string
+parent remains an official orphan root rather than corruption. JSON syntax
+damage still ends replay at the valid prefix; a structurally invalid parsed
+tree fails the whole unit so the indexer cannot commit a fabricated context.
+
 Pi session identity is the normalized header `cwd` plus header `id`, not the
 JSONL path. This preserves identity across file moves while preventing
 project-local `--session-id` values from merging across projects. Discovery

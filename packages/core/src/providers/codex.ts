@@ -18,7 +18,7 @@
 // record uses countMode 'total' (persist replaces the count, never accumulates).
 // The per-line logic mirrors the original indexCodexJsonl.
 
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative } from 'node:path';
 
@@ -31,6 +31,7 @@ import {
   codexToolInput, codexToolOutput,
   extractMessageIsMeta, isSkillInstructions,
 } from '../parsing.ts';
+import { cursorMatchesSnapshot, fileSnapshot, sameSnapshot, snapshotCursor } from './file-snapshot.ts';
 
 import type {
   Cursor,
@@ -44,7 +45,7 @@ import type {
 } from './types.ts';
 
 export const name = 'codex';
-export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v4__';
+export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v5__';
 const CODEX_TRANSCRIPT_DIRS = ['sessions', 'archived_sessions'] as const;
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
@@ -119,7 +120,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     const fileChanged = changedFiles.has(normalize(file.path));
     if (ctx.changedPaths !== undefined && !sessionIndexChanged && !fileChanged) return [];
     const cursor = ctx.lastCursor(file.path);
-    if (!sessionIndexChanged && !fileChanged && cursor !== null && Number(cursor.split(':')[0]) >= statSync(file.path).mtimeMs) {
+    if (!sessionIndexChanged && !fileChanged && cursorMatchesSnapshot(cursor, fileSnapshot(file.path))) {
       return [];
     }
     let meta: any = null;
@@ -176,7 +177,7 @@ export function discover(ctx: DiscoverContext): IndexUnit[] {
  */
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
   if ((unit.meta as { kind?: string } | undefined)?.kind === 'codex-tombstone') return '0:0';
-  const mtime = statSync(unit.key).mtimeMs;
+  const before = fileSnapshot(unit.key);
   const records: { lineNum: number; obj: any }[] = [];
   let lineNum = 0;
   let processedLineCount = 0;
@@ -189,7 +190,9 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     processedLineCount = lineNum;
   });
-  const outCursor = `${mtime}:${processedLineCount}`;
+  const after = fileSnapshot(unit.key);
+  if (!sameSnapshot(before, after)) throw new Error(`Codex transcript changed while reading: ${unit.key}`);
+  const outCursor = snapshotCursor(after, processedLineCount);
 
   const metaRecord = records.find(r => r.obj?.type === 'session_meta' && r.obj.payload?.id);
   if (!metaRecord) return outCursor;

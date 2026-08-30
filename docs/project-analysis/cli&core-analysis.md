@@ -627,7 +627,7 @@ provider.parse(unit, oldCursor)
 type Cursor = string | null;
 ```
 
-它在 `Provider` 接口上是进度水位。Core 原样保存字符串，但仍把前两段投影到 `mtime` / `lines_processed`，供排序、旧库兼容和 marker 检查使用。消费语义由 Provider 决定：Claude 使用五段 cursor 做增量恢复与文件身份判断；Pi 使用同样的五段快照签名但仍全量重放；Codex 目前只比较 mtime。lines 对 Pi/Codex 只是记录信息。
+它在 `Provider` 接口上是进度水位。Core 原样保存字符串，但仍把前两段投影到 `mtime` / `lines_processed`，供排序、旧库兼容和 marker 检查使用。消费语义由 Provider 决定：Claude 使用五段 cursor 做增量恢复与文件身份判断；Codex/Pi 使用同样的五段快照签名但仍全量重放。lines 对 Codex/Pi 只是记录信息。
 
 ```text
 index_state 的 key = unit.key
@@ -635,7 +635,7 @@ index_state.cursor = Provider 原始 Cursor
 index_state.mtime / lines_processed = 前两段兼容投影
        │
        ├─ Claude 使用 "mtime:已处理行数:size:ctime:inode"
-       ├─ Codex 使用 "mtime:总行数"，实际只用 mtime，整文件重放
+       ├─ Codex 使用 "mtime:总行数:size:ctime:inode" 判断快照，整文件重放
        ├─ Pi 使用 "mtime:总行数:size:ctime:inode" 判断快照，整文件重放
        └─ 新 Provider 可增加后续段，但前两段目前仍须为数值
 ```
@@ -664,7 +664,7 @@ index_state.mtime / lines_processed = 前两段兼容投影
 
 | 成员                      | 含义                                                         |
 | ------------------------- | ------------------------------------------------------------ |
-| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的原始 cursor。Claude 比较 mtime/size/ctime/inode 并用行数恢复；Pi 比较同一快照签名但全量 replay；Codex 目前主要比较 mtime。 |
+| `lastCursor(key)`         | 读取某个候选 unit 上次成功提交的原始 cursor。Claude 比较 mtime/size/ctime/inode 并用行数恢复；Codex/Pi 比较同一快照签名但全量 replay。 |
 | `changedPaths?: string[]` | Electron daemon 监听到文件变化时提供的路径缩小范围。它是优化提示，不是事实来源；Provider 仍要保证漏传或没有它时的完整 discover 正确。 |
 | `indexedSessions?: () => readonly IndexedSession[]` | 返回当前 Provider 已索引的 `sessionId`、`jsonlPath` 清单。Provider 在来源根层枚举成功后用它生成删除 tombstone；临时库 rebuild 的清单来自旧数据库 provenance。 |
 | `reportUnavailableRoot?(issue)` | 报告 Provider 来源根缺失或根层枚举失败。普通 build 保留该 Provider 旧快照；全量重建在清理前整体中止。后代目录失败不走这个通道，而是按空子树参与删除 reconciliation。 |
@@ -942,7 +942,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 
 它负责：
 
-  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，并按自己的 cursor 规则判断是否需要处理。Claude/Pi 比较 mtime、size、ctime、inode；Codex 目前主要比较 mtime。例如 Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
+  - 负责找到变化了的来源单元：`discover()` 按 Provider 自己的目录结构发现 JSONL/JSON 文件，并按自己的 cursor 规则判断是否需要处理。Claude、Codex、Pi 都比较 mtime、size、ctime、inode；Codex 扫描 `~/.codex/sessions`，Pi 扫描配置的 session directory。
 
     > cursor 是每个 transcript 文件的索引进度记录，用来判断文件是否变化，以及在支持增量解析的 provider 中知道从哪一行继续处理。
     >
@@ -951,7 +951,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
     > * Codex 是 full-reparse，所以对 Codex：
     >
     >   ```
-    >   mtime 用来判断文件有没有变
+    >   mtime + size + ctime + inode 用来判断文件快照有没有变
     >   linesProcessed 更多是记录文件当前总行数
     >   ```
 
@@ -966,7 +966,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | Provider | 解析策略 | 损坏行边界 | 删除与目录缺失保护 |
 | --- | --- | --- | --- |
 | Claude | `mtime:lines:size:ctime:inode` 增量读取；cursor 后只读新增行，截断、替换或身份签名变化时按当前文件重新判断 | 新增尾部遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `projects/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
-| Codex | 变更 rollout 全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 全量读取遇到坏 JSON 即停止，提交有效前缀，cursor 停在坏行前 | `sessions/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
+| Codex | `mtime:lines:size:ctime:inode` 稳定快照全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 全量读取遇到坏 JSON 即停止，提交有效前缀；读取期间快照变化则整次放弃 | `sessions/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
 | Pi | `mtime:lines:size:ctime:inode` 稳定快照全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀；读取期间快照变化则整次放弃 | session 根层可枚举后，缺失/不可读后代按空子树并发撤回；来源根不可用时保留快照 |
 
 这些策略都汇入同一个持久化流程：
@@ -1843,7 +1843,7 @@ source.subagent.parent_thread_id
 {"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"hi"}]}}
 ```
 
-两行只应投影为一条 assistant `message`。因此 `parse(unit, _cursor)` 忽略传入 cursor：先读完整个 JSONL，第一遍收集所有 `event_msg.user_message` / `agent_message` 的 `(role, text)`，第二遍再投影记录，遇到同键的 `response_item.message` 就跳过。最后 cursor 仍记录为 `mtime:lineCount`，而 `session` 使用 `countMode: 'total'`，表示本次重放得到的是完整事实而不是可累加的增量。
+两行只应投影为一条 assistant `message`。因此 `parse(unit, _cursor)` 忽略传入 cursor：先读完整个 JSONL，第一遍收集所有 `event_msg.user_message` / `agent_message` 的 `(role, text)`，第二遍再投影记录，遇到同键的 `response_item.message` 就跳过。读取前后必须保持同一份 `mtime + size + ctime + inode` 快照，否则本次 unit 事务放弃；最后 cursor 记录为 `mtime:lineCount:size:ctime:inode`。`session` 使用 `countMode: 'total'`，表示本次重放得到的是完整事实而不是可累加的增量。
 
 `insertMessage()` 是唯一创建 Codex message 的位置：它顺序串联 `parent_uuid`，记录当时的 `cwd` 与 model，并把环境上下文 user message 设为 hidden、skill instruction 等设为 meta；最近一条 assistant text message 还会成为 token 和 turn-duration 的回填目标。
 
@@ -2216,7 +2216,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcript_v4__" / "__pi_canonical_transcript_v6__"
+jsonl_path = "__claude_canonical_transcript_v4__" / "__codex_canonical_transcript_v5__" / "__pi_canonical_transcript_v6__"
               ↑ 不是路径，而是状态 key
 ```
 

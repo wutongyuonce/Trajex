@@ -10,7 +10,7 @@ import { makeTempDir } from './temp-dirs.mjs';
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createCodexProvider, parse } from '../packages/core/src/providers/codex.ts';
@@ -121,6 +121,33 @@ test('codex full replay stops at a malformed line and returns the valid prefix',
   const { values, ret } = drain(parse({ key: path, sessionId: '' }, null));
   assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.text), ['before corruption']);
   assert.equal(ret.split(':')[1], '2');
+  assert.equal(ret.split(':').length, 5);
+});
+
+test('codex discovery notices a same-mtime rewrite and upgrades a legacy cursor', () => {
+  const root = makeTempDir('trajex-codex-snapshot-');
+  const dir = join(root, 'sessions', '2026', '06', '10');
+  const path = join(dir, `rollout-${META.id}.jsonl`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session_meta', timestamp: META.timestamp, payload: META },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'one' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const provider = createCodexProvider({ rootDir: root });
+  const [unit] = provider.discover({ lastCursor: () => null });
+  const { ret: cursor } = drain(provider.parse(unit, null));
+  const before = statSync(path);
+
+  assert.equal(provider.discover({ lastCursor: () => cursor }).length, 0);
+  assert.equal(provider.discover({ lastCursor: () => `${before.mtimeMs}:2` }).length, 1, 'legacy cursors replay once');
+
+  writeFileSync(path, [
+    { type: 'session_meta', timestamp: META.timestamp, payload: META },
+    { type: 'event_msg', payload: { type: 'user_message', message: 'two' } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  utimesSync(path, before.atime, before.mtime);
+
+  assert.deepEqual(provider.discover({ lastCursor: () => cursor }).map(found => found.key), [path]);
 });
 
 test('codex parse() ignores a guardian thread and emits nothing', () => {

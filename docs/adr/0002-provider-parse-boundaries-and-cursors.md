@@ -1,6 +1,6 @@
 # Provider parse boundaries and cursor semantics
 
-> Revised 2026-08-29. This ADR also records the current identity relationship
+> Revised 2026-08-30. This ADR also records the current identity relationship
 > between a discovered unit, its cursor key, and the persisted session source
 > path, plus the deferred extension point for multi-file providers.
 
@@ -25,14 +25,19 @@ content into canonical records and a cursor.
 | Provider | Cursor and parse flow | Malformed JSONL policy |
 | --- | --- | --- |
 | Claude | `mtime:lines:size:ctime:inode`; skip accepted lines, stream the new tail, aggregate the session at the end | Stop after a malformed line beyond the cursor; return a cursor before the bad line. Legacy `mtime:lines` cursors remain readable. If the cursor is past EOF, restart from line 1 |
-| Codex | Record `mtime:lines`, but replay the whole rollout; collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Stop at the first malformed line and return a cursor before it |
-| Pi | Record `mtime:lines`, but replay the whole v3 tree; resolve durable leaf/compaction and project `visible` / `inactive` / `hidden` | Stop at the first malformed line and return a cursor before it |
+| Codex | `mtime:lines:size:ctime:inode`; replay the whole stable rollout, collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Stop at the first malformed line and return a cursor before it. If the snapshot changes while reading, abort the unit |
+| Pi | `mtime:lines:size:ctime:inode`; replay the whole stable v3 tree, resolve durable leaf/compaction and project `visible` / `inactive` / `hidden` | Stop at the first malformed line and return a cursor before it. If the snapshot changes while reading, abort the unit |
 
 The valid-prefix rule treats a malformed line as a recoverable boundary. The
 records before it remain eligible for persistence, while later lines are
 retried after the source is repaired. A provider may buffer a complete unit
 when global context is required, but the adapter still emits the same
 provider-neutral `TranscriptRecord` stream.
+
+All file-backed transcript cursors compare `mtime`, `size`, `ctime`, and inode.
+Codex and Pi additionally compare the snapshot before and after their full read,
+so a rewrite cannot commit records from one file version with another version's
+cursor. Legacy two-part full-replay cursors are replayed once and upgraded.
 
 ### Unit keys and persisted source paths
 

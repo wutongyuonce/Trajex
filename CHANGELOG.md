@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- Codex 全量重放现在也使用 `mtime + ctime + size + inode` 判断稳定快照；周期 reconcile 能发现同 mtime 覆盖写，读取期间发生变化时不会提交混合版本。
 - Pi 全量重放改用 `mtime + ctime + size + inode` 快照判断，并在读取前后确认文件未变化；旧两段 cursor 会安全重放一次，同 mtime 覆盖写和原路径换文件不再漏索引。
 - Pi `message_count` 只统计 visible 主线消息，不再把 inactive 分支和 hidden 扩展消息计入会话规模；这些证据仍保存在索引中。
 - 修复 TypeScript 构建将 CLI 入口生成为 `0644`、导致 `npm link` 或直接执行 `trajex.js` 时出现 `permission denied` 的问题；构建结束后会恢复 POSIX 执行位。

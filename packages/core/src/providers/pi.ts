@@ -3,12 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /** Pi JSONL session adapter. One JSONL file is one Pi session. */
-import { readFileSync, readdirSync, statSync, type Dirent } from 'node:fs';
+import { readFileSync, readdirSync, type Dirent } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative } from 'node:path';
 
 import { projectSlugFromPath, trunc, truncJson, truncToolResult, toolResultPreview } from '../parsing.ts';
+import { cursorMatchesSnapshot, fileSnapshot, sameSnapshot, snapshotCursor } from './file-snapshot.ts';
 import type {
   Cursor, DiscoverContext, IndexUnit, IndexedSession, MessageRecord, ProviderAdapter,
   RawLookup, RawRecord, TranscriptRecord,
@@ -18,29 +19,6 @@ export const name = 'pi';
 export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v6__';
 
 type PiEntry = Record<string, any>;
-type FileSnapshot = { mtimeMs: number; size: number; ctimeMs: number; ino: number };
-
-function fileSnapshot(path: string): FileSnapshot {
-  const stats = statSync(path);
-  return { mtimeMs: stats.mtimeMs, size: stats.size, ctimeMs: stats.ctimeMs, ino: stats.ino };
-}
-
-function cursorMatchesSnapshot(cursor: Cursor, snapshot: FileSnapshot): boolean {
-  if (!cursor) return false;
-  const parts = cursor.split(':');
-  return parts.length >= 5
-    && Number(parts[0]) === snapshot.mtimeMs
-    && Number(parts[2]) === snapshot.size
-    && Number(parts[3]) === snapshot.ctimeMs
-    && Number(parts[4]) === snapshot.ino;
-}
-
-function sameSnapshot(left: FileSnapshot, right: FileSnapshot): boolean {
-  return left.mtimeMs === right.mtimeMs
-    && left.size === right.size
-    && left.ctimeMs === right.ctimeMs
-    && left.ino === right.ino;
-}
 
 function piId(sessionId: string, entryId: string, suffix = ''): string {
   return `${sessionId}:${entryId}${suffix}`;
@@ -194,7 +172,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     try { parsed.push(JSON.parse(line)); } catch { break; }
     processedLineCount = index + 1;
   }
-  const outCursor = `${after.mtimeMs}:${processedLineCount}:${after.size}:${after.ctimeMs}:${after.ino}`;
+  const outCursor = snapshotCursor(after, processedLineCount);
   const header = parsed.find(entry => entry.type === 'session' && typeof entry.id === 'string');
   if (!header || header.version !== 3) return outCursor;
 

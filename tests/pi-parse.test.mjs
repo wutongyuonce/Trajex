@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v11__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v12__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -658,4 +658,67 @@ test('Pi retains nested model usage on its tool-result message', () => {
   const result = records.find(record => record.kind === 'message');
   assert.equal(result.input_tokens, 16);
   assert.equal(result.output_tokens, 7);
+});
+
+test('Pi preserves distinct summaries copied into a retained tail', () => {
+  const root = makeTempDir('trajex-pi-retained-summaries-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'retained-summaries', cwd: '/tmp/project' },
+    {
+      type: 'compaction',
+      id: 'checkpoint',
+      parentId: null,
+      summary: 'Outer compaction',
+      retainedTail: [
+        { role: 'branchSummary', summary: 'First retained summary' },
+        { role: 'branchSummary', summary: 'Second retained summary' },
+      ],
+    },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  const retained = records.filter(record => record.kind === 'summary' && record.source === 'branch_summary');
+  assert.deepEqual(retained.map(record => record.content), ['First retained summary', 'Second retained summary']);
+  assert.equal(new Set(retained.map(record => record.id)).size, 2);
+});
+
+test('Pi does not count usage copied into a retained-tail snapshot twice', () => {
+  const root = makeTempDir('trajex-pi-retained-usage-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'retained-usage', cwd: '/tmp/project' },
+    {
+      type: 'message',
+      id: 'physical-response',
+      parentId: null,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'copied response' }], usage: { input: 5, output: 2 } },
+    },
+    {
+      type: 'compaction',
+      id: 'checkpoint',
+      parentId: 'physical-response',
+      summary: 'Outer compaction',
+      usage: { input: 10, output: 3 },
+      retainedTail: [
+        { role: 'assistant', content: [{ type: 'text', text: 'copied response' }], usage: { input: 5, output: 2 } },
+        { role: 'toolResult', toolCallId: 'nested', content: [{ type: 'text', text: 'copied result' }], usage: { input: 11, output: 7 } },
+        { role: 'branchSummary', summary: 'Copied summary', usage: { input: 13, output: 4 } },
+      ],
+    },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  const physical = records.find(record => record.kind === 'message' && record.visibility === 'inactive');
+  const retainedMessages = records.filter(record => record.kind === 'message' && record.visibility === 'visible');
+  const retainedSummary = records.find(record => record.kind === 'summary' && record.content === 'Copied summary');
+  assert.deepEqual([physical.input_tokens, physical.output_tokens], [5, 2]);
+  assert.deepEqual(retainedMessages.map(record => [record.input_tokens, record.output_tokens]), [[null, null], [null, null]]);
+  assert.deepEqual([retainedSummary.input_tokens, retainedSummary.output_tokens], [null, null]);
 });

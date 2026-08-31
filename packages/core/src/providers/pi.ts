@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v11__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v12__';
 
 type PiEntry = Record<string, any>;
 type PiToolOccurrence = {
@@ -298,6 +298,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   }
 
   const syntheticByCompaction = new Map<string, PiEntry[]>();
+  const retainedIds = new Set<string>();
   for (const checkpoint of physicalEntries) {
     if (!checkpoints.has(checkpoint.id as string) || !activeIds.has(checkpoint.id as string)) continue;
     const synthetic: PiEntry[] = [];
@@ -314,6 +315,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
         message,
       };
       synthetic.push(entry);
+      retainedIds.add(entry.id);
       byId.set(entry.id, entry);
       activeIds.add(entry.id);
     }
@@ -470,7 +472,21 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (entry.type !== 'message' || !entry.message || typeof entry.id !== 'string') continue;
     const message = entry.message;
+    const retained = retainedIds.has(entry.id);
     let parentUuid = finalMessage(entry.parentId);
+    if (
+      retained
+      && (message.role === 'branchSummary' || message.role === 'compactionSummary')
+      && typeof message.summary === 'string'
+    ) {
+      records.push({
+        kind: 'summary', id: piId(sessionId, entry.id), session_id: sessionId,
+        timestamp: entry.timestamp ?? null,
+        source: message.role === 'branchSummary' ? 'branch_summary' : 'compaction',
+        content: message.summary, visibility: entryVisibility, input_tokens: null, output_tokens: null,
+      });
+      continue;
+    }
     if (message.role === 'user') {
       if (typeof message.content === 'string') {
         if (message.content) addMessage(entry, 'user', message.content, 'text', parentUuid, '', entryVisibility);
@@ -488,7 +504,9 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (message.role === 'assistant') {
       const parts: any[] = Array.isArray(message.content) ? message.content : [];
-      const { inputTokens, outputTokens } = usageFields(message.usage);
+      const { inputTokens, outputTokens } = retained
+        ? { inputTokens: null, outputTokens: null }
+        : usageFields(message.usage);
       const hasError = typeof message.errorMessage === 'string' && message.errorMessage.length > 0;
       const lastPart = parts.reduce((last, part, i) => (
         part?.type === 'text'
@@ -513,7 +531,9 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (message.role === 'toolResult') {
       const text = textParts(message.content, 'text').join('\n');
-      const { inputTokens, outputTokens } = usageFields(message.usage);
+      const { inputTokens, outputTokens } = retained
+        ? { inputTokens: null, outputTokens: null }
+        : usageFields(message.usage);
       const uuid = addMessage(entry, 'tool', toolResultPreview(text), 'tool_result', parentUuid, '', entryVisibility, inputTokens, outputTokens);
       const occurrence = toolResultByEntry.get(entry.id);
       if (occurrence) records.push({ kind: 'tool_result', tool_use_id: occurrence.id, message_uuid: uuid, session_id: sessionId, content: truncToolResult(text), file_path: occurrence.filePath, is_error: message.isError ? 1 : 0 });

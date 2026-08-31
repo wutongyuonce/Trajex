@@ -1914,7 +1914,7 @@ Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",vers
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | session header                                               | 最后的 `session`                                             | 提供 session ID、cwd、version、起止时间；自身不产出 message。 |
 | `{type:"session_info",name}` / `{type:"model_change",modelId}` | 无独立 record                                                | 前者更新最后的 session title；后者只参与后续 message 的 model 继承。 |
-| `{type:"compaction"|"branch_summary",summary,usage}`         | `summary` + retained tail messages                           | `source` 保留具体 entry type；摘要继承分支 visibility 与 usage，compaction 的保留尾部也投影为 canonical message。 |
+| `{type:"compaction"|"branch_summary",summary,usage}`         | `summary` + retained tail messages/summaries                 | 物理摘要继承分支 visibility 与 usage；retained summary 保留内容与独立 ID，但快照中复制的 usage 不重复计费。 |
 | `{type:"custom_message",content,display}`                    | custom `message`                                             | 扩展插入的 Entry，role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
 | `{type:"message",message:{role:"user",content}}`             | user `message`                                               | text 与 image 按 block 投影；image 只保留 MIME 与 base64 长度占位符，不存 payload。 |
 | assistant 的 `content[]` text / thinking / toolCall part 与 `errorMessage` | 每个有效 part 各产生 assistant `message`；toolCall 另有 `tool_call` | 以 `:partIndex` 后缀生成稳定 message ID 并串成 parent chain；空 thinking 跳过，`errorMessage` 作为最后的 `error` block，usage 只附到最后一条真实证据。 |
@@ -2209,7 +2209,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v11__"
+jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v12__"
               ↑ 不是路径，而是状态 key
 ```
 

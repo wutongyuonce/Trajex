@@ -17,6 +17,9 @@ earlier physical messages, while a legacy compaction may retain ancestors from
 its `firstKeptEntryId` only when that entry remains inside the bounded path.
 Retained-tail messages are materialized once and reconnect later messages;
 compacted physical ancestors remain indexed as `inactive` evidence.
+Retained-tail branch and compaction summaries remain distinct summary evidence,
+but all usage copied into the retained snapshot is excluded from accounting:
+the snapshot preserves context and does not represent another model execution.
 
 Pi's native tool-call ID is not a session-wide occurrence identity because a
 fork can reuse it. Canonical tool-call IDs therefore derive from the projected

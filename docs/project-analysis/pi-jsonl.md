@@ -117,7 +117,8 @@ Trajex 当前处理的 message role：
 对 Trajex 来说：
 
 - `summary` 产生一条独立 `summary(source='compaction')`。
-- `retainedTail` 会被合成为消息，显示在 compact checkpoint 后面。
+- `retainedTail` 会被合成为消息或 summary，显示在 compact checkpoint 后面；其中每条 branch/compaction summary 都有独立 canonical ID。
+- `retainedTail` 是上下文快照，不是新的模型执行；嵌套 message 与 summary 中复制的 usage 不再计入 Activity，避免与物理记录重复。
 - `retainedTail` 中的合成消息没有独立物理 JSONL 行；回查会通过 UUID 中的 retained index 取出对应的嵌套消息，不返回整条 compaction，也不暴露其他 retained sibling。
 - 有 `retainedTail` 时，compact 之前的 active ancestor 被截断；没有它时，使用 `firstKeptEntryId` 确定保留边界。
 - compact 之后的真实物理 `message` 继续沿 `parentId=compaction.id` 写入。

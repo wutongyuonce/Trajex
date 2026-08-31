@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Pi 现在会保留 compaction `retainedTail` 中的 branch/compaction summary，并为同一 checkpoint 内的每条摘要生成独立 canonical ID；retained 快照里复制的 message 与 summary usage 不再重复计费，物理执行记录的 token 仍保留。Pi canonical marker 升至 v12 后会自动重建旧投影。
 - Pi `toolResult` 自带的模型 usage 现在会写入对应 canonical message，输入 token 继续包含 cache read/write；Activity 和 usage 查询不再漏算 `agent` 等嵌套模型工具的消耗。Pi canonical marker 升至 v11 后会自动重建旧投影。
 - Pi 现在会把用户图片块投影为不含 base64 正文的 `image` 证据，并保留空响应中的 assistant `errorMessage`；空 thinking 占位不再生成无意义消息，响应 token 仍归到最后一条真实证据。Pi canonical marker 升至 v10 后会自动重建旧投影。
 - Pi 原文回查现在会校验 session 身份与来源路径，并按 UUID 精确定位 assistant block 或 compaction `retainedTail` 中的合成消息；详情页可获得完整 `messageText`，回查单条 retained 消息时不再连带暴露同一 checkpoint 的其他消息。

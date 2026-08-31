@@ -26,6 +26,13 @@ summaries clear inherited scope, while a retained tail rebuilds its own scope.
 An unmatched result remains message evidence but does not create a false
 `tool_result` edge.
 
+Source content blocks remain distinct canonical evidence. User text and image
+blocks keep source order; images are represented by MIME type and encoded
+length rather than persisting their base64 payload. Empty assistant thinking
+placeholders are omitted, while `errorMessage` is retained as the final error
+block and receives that response's usage. This keeps failed model calls and
+multimodal input visible without bloating the index.
+
 Tree identity is validated before projection. Entry IDs must be unique,
 `parentId` must be a string or `null`, durable leaf targets must be `null` or
 resolve to an entry, parent chains must be acyclic, and checkpoint

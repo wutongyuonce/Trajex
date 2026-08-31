@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v9__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v10__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -551,4 +551,83 @@ test('Pi raw lookup returns the exact assistant block text', () => {
     session,
     agentId: null,
   }), null);
+});
+
+test('Pi preserves image inputs without storing their base64 payload', () => {
+  const root = makeTempDir('trajex-pi-image-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'image-input', cwd: '/tmp/project' },
+    {
+      type: 'message',
+      id: 'user-image',
+      parentId: null,
+      message: { role: 'user', content: [{ type: 'image', mimeType: 'image/png', data: 'QUJDRA==' }] },
+    },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  assert.deepEqual(
+    records.filter(record => record.kind === 'message').map(record => [record.content_type, record.text]),
+    [['image', '[image image/png; base64 chars=8]']],
+  );
+});
+
+test('Pi preserves an assistant error when the response has no content', () => {
+  const root = makeTempDir('trajex-pi-error-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'assistant-error', cwd: '/tmp/project' },
+    {
+      type: 'message',
+      id: 'failed-response',
+      parentId: null,
+      message: { role: 'assistant', content: [], errorMessage: '404 not found', usage: { input: 3, output: 0 } },
+    },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  const message = records.find(record => record.kind === 'message');
+  assert.deepEqual(
+    (({ content_type, text, input_tokens, output_tokens }) => ({ content_type, text, input_tokens, output_tokens }))(message),
+    { content_type: 'error', text: '404 not found', input_tokens: 3, output_tokens: 0 },
+  );
+});
+
+test('Pi skips empty thinking placeholders without losing response usage', () => {
+  const root = makeTempDir('trajex-pi-empty-thinking-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'empty-thinking', cwd: '/tmp/project' },
+    {
+      type: 'message',
+      id: 'response',
+      parentId: null,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: 'final answer' }],
+        usage: { input: 3, cacheRead: 4, cacheWrite: 5, output: 2 },
+      },
+    },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  assert.deepEqual(
+    records.filter(record => record.kind === 'message').map(record => ({
+      content_type: record.content_type,
+      text: record.text,
+      input_tokens: record.input_tokens,
+      output_tokens: record.output_tokens,
+    })),
+    [{ content_type: 'text', text: 'final answer', input_tokens: 12, output_tokens: 2 }],
+  );
 });

@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v9__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v10__';
 
 type PiEntry = Record<string, any>;
 type PiToolOccurrence = {
@@ -143,6 +143,12 @@ function textParts(content: unknown, kind: 'text' | 'thinking'): string[] {
   if (typeof content === 'string') return kind === 'text' ? [content] : [];
   if (!Array.isArray(content)) return [];
   return content.flatMap((part) => part?.type === kind && typeof part[kind] === 'string' ? [part[kind]] : []);
+}
+
+function imagePlaceholder(part: PiEntry): string {
+  const mime = typeof part.mimeType === 'string' && part.mimeType ? part.mimeType : 'unknown';
+  const chars = typeof part.data === 'string' ? part.data.length : 0;
+  return `[image ${mime}; base64 chars=${chars}]`;
 }
 
 function timestamp(value: unknown): string | null {
@@ -374,14 +380,28 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       own = finalMessage(retained.at(-1)?.id);
     } else if (entry.type === 'custom_message' && textParts(entry.content, 'text').length) own = piId(sessionId, entryId);
     else if (entry.type === 'message' && message) {
-      if (message.role === 'user' && textParts(message.content, 'text').length) own = piId(sessionId, entryId);
+      if (message.role === 'user') {
+        if (typeof message.content === 'string' && message.content) own = piId(sessionId, entryId);
+        else if (Array.isArray(message.content)) {
+          const last = message.content.reduce((result: number, part: PiEntry, index: number) => (
+            (part?.type === 'text' && typeof part.text === 'string') || part?.type === 'image' ? index : result
+          ), -1);
+          if (last >= 0) own = piId(sessionId, entryId, `:${last}`);
+        }
+      }
       else if (message.role === 'toolResult' || message.role === 'bashExecution') own = piId(sessionId, entryId);
       else if (message.role === 'assistant') {
         const parts: any[] = Array.isArray(message.content) ? message.content : [];
-        const last = parts.reduce((result, part, index) => (
-          part?.type === 'text' || part?.type === 'thinking' || part?.type === 'toolCall' ? index : result
-        ), -1);
-        if (last >= 0) own = piId(sessionId, entryId, `:${last}`);
+        if (typeof message.errorMessage === 'string' && message.errorMessage) {
+          own = piId(sessionId, entryId, `:${parts.length}`);
+        } else {
+          const last = parts.reduce((result, part, index) => (
+            part?.type === 'text'
+            || (part?.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.length > 0)
+            || part?.type === 'toolCall' ? index : result
+          ), -1);
+          if (last >= 0) own = piId(sessionId, entryId, `:${last}`);
+        }
       }
     }
     const result = own ?? finalMessage(entry.parentId);
@@ -452,29 +472,43 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     const message = entry.message;
     let parentUuid = finalMessage(entry.parentId);
     if (message.role === 'user') {
-      const text = textParts(message.content, 'text').join('\n');
-      if (text) addMessage(entry, 'user', text, 'text', parentUuid, '', entryVisibility);
+      if (typeof message.content === 'string') {
+        if (message.content) addMessage(entry, 'user', message.content, 'text', parentUuid, '', entryVisibility);
+      } else if (Array.isArray(message.content)) {
+        for (let index = 0; index < message.content.length; index++) {
+          const part = message.content[index];
+          if (part?.type === 'text' && typeof part.text === 'string') {
+            parentUuid = addMessage(entry, 'user', part.text, 'text', parentUuid, `:${index}`, entryVisibility);
+          } else if (part?.type === 'image') {
+            parentUuid = addMessage(entry, 'user', imagePlaceholder(part), 'image', parentUuid, `:${index}`, entryVisibility);
+          }
+        }
+      }
       continue;
     }
     if (message.role === 'assistant') {
       const parts: any[] = Array.isArray(message.content) ? message.content : [];
       const { inputTokens, outputTokens } = usageFields(message.usage);
+      const hasError = typeof message.errorMessage === 'string' && message.errorMessage.length > 0;
       const lastPart = parts.reduce((last, part, i) => (
-        part?.type === 'text' || part?.type === 'thinking' || part?.type === 'toolCall' ? i : last
+        part?.type === 'text'
+        || (part?.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.length > 0)
+        || part?.type === 'toolCall' ? i : last
       ), -1);
       let index = 0;
       for (const part of parts) {
         const suffix = `:${index++}`;
         const isLast = index - 1 === lastPart;
-        if (part?.type === 'text' && typeof part.text === 'string') parentUuid = addMessage(entry, 'assistant', part.text, 'text', parentUuid, suffix, entryVisibility, isLast ? inputTokens : null, isLast ? outputTokens : null);
-        else if (part?.type === 'thinking' && typeof part.thinking === 'string') parentUuid = addMessage(entry, 'assistant', part.thinking, 'thinking', parentUuid, suffix, entryVisibility, isLast ? inputTokens : null, isLast ? outputTokens : null);
+        if (part?.type === 'text' && typeof part.text === 'string') parentUuid = addMessage(entry, 'assistant', part.text, 'text', parentUuid, suffix, entryVisibility, !hasError && isLast ? inputTokens : null, !hasError && isLast ? outputTokens : null);
+        else if (part?.type === 'thinking' && typeof part.thinking === 'string' && part.thinking.length > 0) parentUuid = addMessage(entry, 'assistant', part.thinking, 'thinking', parentUuid, suffix, entryVisibility, !hasError && isLast ? inputTokens : null, !hasError && isLast ? outputTokens : null);
         else if (part?.type === 'toolCall' && typeof part.id === 'string') {
-          const uuid = addMessage(entry, 'assistant', null, 'tool_use', parentUuid, suffix, entryVisibility, isLast ? inputTokens : null, isLast ? outputTokens : null);
+          const uuid = addMessage(entry, 'assistant', null, 'tool_use', parentUuid, suffix, entryVisibility, !hasError && isLast ? inputTokens : null, !hasError && isLast ? outputTokens : null);
           parentUuid = uuid;
           const occurrence = toolCallByMessage.get(uuid)!;
           records.push({ kind: 'tool_call', id: occurrence.id, message_uuid: uuid, session_id: sessionId, name: typeof part.name === 'string' ? part.name : 'tool', input_json: truncJson(part.arguments) ?? '{}', file_path: occurrence.filePath });
         }
       }
+      if (hasError) addMessage(entry, 'assistant', message.errorMessage, 'error', parentUuid, `:${parts.length}`, entryVisibility, inputTokens, outputTokens);
       continue;
     }
     if (message.role === 'toolResult') {
@@ -493,7 +527,9 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
 
 function rawMessageText(message: PiEntry, blockIndex: number): string | null | undefined {
   if (message.role === 'assistant') {
-    const part = Array.isArray(message.content) ? message.content[blockIndex] : undefined;
+    const content = Array.isArray(message.content) ? message.content : [];
+    if (blockIndex === content.length && typeof message.errorMessage === 'string' && message.errorMessage) return message.errorMessage;
+    const part = content[blockIndex];
     if (part?.type === 'thinking' && typeof part.thinking === 'string') return part.thinking;
     if (part?.type === 'text' && typeof part.text === 'string') return part.text;
     if (part?.type === 'toolCall') return null;
@@ -506,7 +542,11 @@ function rawMessageText(message: PiEntry, blockIndex: number): string | null | u
       .filter(value => typeof value === 'string' && value)
       .join('\n');
   }
-  return blockIndex === 0 ? textParts(message.content, 'text').join('\n') : undefined;
+  if (typeof message.content === 'string') return blockIndex === 0 ? message.content : undefined;
+  const part = Array.isArray(message.content) ? message.content[blockIndex] : undefined;
+  if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+  if (part?.type === 'image') return imagePlaceholder(part);
+  return undefined;
 }
 
 function rawPi(sessionDir: string, input: RawLookup): RawRecord | null {

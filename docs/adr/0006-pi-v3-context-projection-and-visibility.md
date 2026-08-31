@@ -34,6 +34,15 @@ parent remains an official orphan root rather than corruption. JSON syntax
 damage still ends replay at the valid prefix; a structurally invalid parsed
 tree fails the whole unit so the indexer cannot commit a fabricated context.
 
+Raw lookup follows the same projected identity instead of returning an entire
+physical entry indiscriminately. It validates the configured source boundary,
+the indexed session ID, and the session header, then resolves the entry plus an
+optional assistant-block or retained-tail index. The raw `text` is the selected
+message object and `messageText` is the complete selected block. A retained
+message therefore does not expose sibling messages stored in the same
+compaction entry. Invalid or stale lookup coordinates return `null`; this is a
+read-time evidence rule and does not change canonical IDs or persisted rows.
+
 Pi session identity is the normalized header `cwd` plus header `id`, not the
 JSONL path. This preserves identity across file moves while preventing
 project-local `--session-id` values from merging across projects. Discovery

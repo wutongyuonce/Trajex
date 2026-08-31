@@ -21,6 +21,7 @@
 
 ### Fixed
 
+- Pi 原文回查现在会校验 session 身份与来源路径，并按 UUID 精确定位 assistant block 或 compaction `retainedTail` 中的合成消息；详情页可获得完整 `messageText`，回查单条 retained 消息时不再连带暴露同一 checkpoint 的其他消息。
 - Pi 在投影前会校验 v3 entry 与整棵父链：重复 ID、非字符串 `parentId`、循环、非法 durable leaf target，以及格式错误的 `retainedTail` 现在会让该 session 原子失败，不再静默覆盖、截断或生成空上下文；指向缺失父节点的官方 orphan root 仍然合法，JSON 语法损坏行的有效前缀策略不变。Pi canonical marker 升至 v9 后会自动重建旧投影。
 - Pi 工具调用现在按具体消息 occurrence 生成 canonical ID，并沿 `parentId` 树只匹配同一分支内最近的原始 `toolCallId`；不同分支复用 native ID 不再互相覆盖或串接结果，compaction 后无法解析到当前工具作用域的结果也不会错误挂到已丢弃调用。Pi canonical marker 升至 v8 后会自动重建旧投影。
 - Pi 现在按完整 checkpoint 链重建多次 compaction 后的当前上下文：最近的 `retainedTail` checkpoint 会截断更早物理链，后续 legacy `firstKeptEntryId` 只在该有效边界内生效；retained tail 只投影一次，压缩祖先保留为 inactive 证据。Pi canonical marker 升至 v7 后会自动重建旧投影。

@@ -499,3 +499,56 @@ test('Pi rejects a non-string parentId instead of treating it as an orphan root'
   const unit = provider.discover({ lastCursor: () => null })[0];
   assert.throws(() => drain(provider.parse(unit, null)), /Malformed Pi entry: message/);
 });
+
+test('Pi raw lookup isolates one retainedTail message from its siblings', () => {
+  const root = makeTempDir('trajex-pi-retained-raw-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  const retained = [
+    { role: 'user', content: 'visible retained evidence' },
+    { role: 'user', content: 'SIBLING MUST NOT LEAK' },
+  ];
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'retained-raw', cwd: '/tmp/project' },
+    { type: 'compaction', id: 'checkpoint', parentId: null, summary: 'checkpoint', retainedTail: retained },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  const session = records.find(record => record.kind === 'session');
+  const message = records.find(record => record.kind === 'message' && record.text === retained[0].content);
+  const raw = provider.raw({ source: 'pi', messageUuid: message.uuid, session, agentId: null });
+  assert.equal(raw.text, JSON.stringify(retained[0]));
+  assert.equal(raw.messageText, retained[0].content);
+  assert.doesNotMatch(raw.text, /SIBLING MUST NOT LEAK/);
+});
+
+test('Pi raw lookup returns the exact assistant block text', () => {
+  const root = makeTempDir('trajex-pi-block-raw-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  const sourceMessage = { role: 'assistant', content: [
+    { type: 'thinking', thinking: 'complete private reasoning' },
+    { type: 'text', text: 'final answer' },
+  ] };
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'block-raw', cwd: '/tmp/project' },
+    { type: 'message', id: 'assistant-entry', parentId: null, message: sourceMessage },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  const session = records.find(record => record.kind === 'session');
+  const thinking = records.find(record => record.kind === 'message' && record.content_type === 'thinking');
+  const raw = provider.raw({ source: 'pi', messageUuid: thinking.uuid, session, agentId: null });
+  assert.equal(raw.text, JSON.stringify(sourceMessage));
+  assert.equal(raw.messageText, 'complete private reasoning');
+  assert.equal(provider.raw({
+    source: 'pi',
+    messageUuid: `${session.id}:assistant-entry:99`,
+    session,
+    agentId: null,
+  }), null);
+});

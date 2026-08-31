@@ -884,7 +884,7 @@ interface ProviderDescriptor {
 
 | 字段           | 含义                                                         |
 | -------------- | ------------------------------------------------------------ |
-| `text`         | Provider 回读的原始文本。当前内置 adapter 返回完整原始行，公开 `query.raw()` 再对它分片。 |
+| `text`         | Provider 回读的来源文本：Claude/Codex 返回原始行，Pi 对 block 和 retained-tail 定位返回所属消息对象的 JSON。公开 `query.raw()` 再对它分片。 |
 | `totalLength?` | Provider 若已知完整文本长度可以显式提供；query 层否则使用 `text.length`。 |
 | `offset?`      | Provider 级响应的可选片段位置；当前公开分片主要由 query 层完成。 |
 | `limit?`       | Provider 级响应的可选长度元数据。 |
@@ -1958,22 +1958,15 @@ cursor 形状为 `mtimeMs:lines:size:ctimeMs:inode`，但与 Claude 的"行增�
 
 #### 原文回查 `rawPi()`
 
-Pi 的 message UUID 由 Trajex 构造：`pi:<rawId>:<cwdHash>:<entryId>`（assistant 的多 part 消息会再拼 `:<partIndex>` 后缀）。因此 `rawPi()` 不需要扫描正文猜测目标：
+Pi 的 message UUID 由 Trajex 构造：普通消息使用 `<sessionId>:<entryId>[:<partIndex>]`，compaction 嵌套消息使用 `<sessionId>:<entryId>:retained:<tailIndex>[:<partIndex>]`。`rawPi()` 按这个结构回到准确的消息和 block：
 
-* 用 `input.session.jsonl_path` 定位文件，并防御性校验它必须位于 session 目录内，防止越界读任意路径；
-* 把 message UUID 按 `:` 切分，取 `parts[3]` 作为 entry id（part 后缀在 `parts[4]`，不影响定位）；
-* 逐行 `JSON.parse` 比对 `entry.id`，命中即返回该行原文。
+* `jsonl_path` 必须真正位于已配置的 Pi session 根目录下，不再用字符串前缀判断路径；
+* UUID 的 session 前缀必须与 SQLite session 一致，文件 header 重算的 Pi session ID 也必须相同，避免用过期或伪造上下文读取其他文件；
+* entry ID 先按最长命中，再解析 block index 或 retained index，因此 ID 本身包含 `:` 或是其他 ID 前缀时也不会定位错误；
+* `text` 返回所属消息对象的 JSON，`messageText` 返回目标 block 的完整可展示文本。`retainedTail` 只返回指定的嵌套消息，不会把同一 compaction 中的其他 retained 消息一起交给调用方；
+* 路径、session、entry 或 block 不匹配，以及文件无法读取时，都以 `null` 失败，不把回源错误升级为详情页崩溃。
 
-```ts
-// uuid = "pi:<rawId>:<cwdHash>:<entryId>[:<partIndex>]"
-const parts = input.messageUuid.split(':');
-const entryId = parts[3];
-```
-
-与 `rawClaude()` / `rawCodex()` 的两个差异：
-
-* **不提取 messageText**：`rawPi()` 的返回值只有原始行 `text`。分页字段呈一次性直读形态——`totalLength` = 行长度、`offset: 0`、`limit` = 行长度、`hasMore: false`，即把整行当作一段返回，不像 `rawClaude()` 那样顺带解析出可展示的完整文本（`messageText`）。App 在详情页展开被截断的消息时，对 Pi 只能回落到数据库里已 `trunc` 截断的 `msg.text`，拿不到原始完整行；
-* **按 entry id 定位，而非按消息定位**：同一 entry 投影出的多条消息（assistant 的 text / thinking / toolCall part，以及 toolResult 消息与它附带的 `tool_result` 记录）共享同一个 entry id，回查都会返回同一行原始 entry；compaction `retainedTail` 合成的消息 UUID 指向 compaction entry id，回查实际命中 compaction 行本身，无法还原合成消息的"原文"。
+这个改动不改消息 UUID 或持久化投影，因此不需要提升 Pi canonical marker。App 已使用 `raw.messageText ?? msg.text` 展开完整消息，Core 补齐 `messageText` 后即可生效，不需要改页面或数据库 schema。
 
 ### `registry.ts`、 `builtins.ts`
 

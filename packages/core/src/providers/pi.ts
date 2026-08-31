@@ -491,15 +491,72 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   return outCursor;
 }
 
+function rawMessageText(message: PiEntry, blockIndex: number): string | null | undefined {
+  if (message.role === 'assistant') {
+    const part = Array.isArray(message.content) ? message.content[blockIndex] : undefined;
+    if (part?.type === 'thinking' && typeof part.thinking === 'string') return part.thinking;
+    if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+    if (part?.type === 'toolCall') return null;
+    return part === undefined ? undefined : JSON.stringify(part);
+  }
+  if (message.role === 'toolResult') return blockIndex === 0 ? textParts(message.content, 'text').join('\n') : undefined;
+  if (message.role === 'bashExecution') {
+    if (blockIndex !== 0) return undefined;
+    return [message.command ? `$ ${message.command}` : '', message.output, message.exitCode ? `[exit code: ${message.exitCode}]` : '']
+      .filter(value => typeof value === 'string' && value)
+      .join('\n');
+  }
+  return blockIndex === 0 ? textParts(message.content, 'text').join('\n') : undefined;
+}
+
 function rawPi(sessionDir: string, input: RawLookup): RawRecord | null {
-  const path = input.session?.jsonl_path;
-  if (typeof path !== 'string' || !path.startsWith(normalize(sessionDir))) return null;
-  const parts = input.messageUuid.split(':');
-  const entryId = parts[3];
-  if (!entryId) return null;
-  const line = readFileSync(path, 'utf8').split('\n').find((value: string) => { try { return JSON.parse(value)?.id === entryId; } catch { return false; } });
-  if (!line) return null;
-  return { text: line, totalLength: line.length, offset: 0, limit: line.length, hasMore: false };
+  try {
+    const path = input.session?.jsonl_path;
+    const sessionId = input.session?.id;
+    if (typeof path !== 'string' || typeof sessionId !== 'string') return null;
+    const normalizedRoot = normalize(sessionDir);
+    const normalizedPath = normalize(path);
+    const inside = relative(normalizedRoot, normalizedPath);
+    if (!inside || inside.startsWith('..') || isAbsolute(inside)) return null;
+    const prefix = `${sessionId}:`;
+    if (!input.messageUuid.startsWith(prefix)) return null;
+
+    const entries: PiEntry[] = [];
+    for (const line of readFileSync(normalizedPath, 'utf8').split('\n')) {
+      if (!line) continue;
+      try { entries.push(JSON.parse(line)); } catch { break; }
+    }
+    const header = entries.find(entry => entry?.type === 'session' && typeof entry.id === 'string');
+    if (!header || piSessionId(header.id, header.cwd) !== sessionId) return null;
+
+    const suffix = input.messageUuid.slice(prefix.length);
+    const source = entries
+      .filter(entry => entry?.type !== 'session' && typeof entry.id === 'string')
+      .sort((left, right) => right.id.length - left.id.length)
+      .find(entry => suffix === entry.id || suffix.startsWith(`${entry.id}:`));
+    if (!source) return null;
+    const location = suffix.slice(source.id.length);
+    let message: PiEntry | null = null;
+    let blockIndex = 0;
+    const retainedMatch = /^:retained:(\d+)(?::(\d+))?$/.exec(location);
+    if (retainedMatch && source.type === 'compaction' && Array.isArray(source.retainedTail)) {
+      const retained = source.retainedTail[Number(retainedMatch[1])];
+      if (retained && typeof retained === 'object' && !Array.isArray(retained)) message = retained;
+      blockIndex = retainedMatch[2] === undefined ? 0 : Number(retainedMatch[2]);
+    } else if (source.type === 'message' && (location === '' || /^:\d+$/.test(location))) {
+      if (source.message && typeof source.message === 'object' && !Array.isArray(source.message)) message = source.message;
+      if (location) blockIndex = Number(location.slice(1));
+    } else if (source.type === 'custom_message' && location === '') {
+      message = { role: 'custom', content: source.content, display: source.display };
+    }
+    if (!message) return null;
+    const messageText = rawMessageText(message, blockIndex);
+    if (messageText === undefined) return null;
+    const text = JSON.stringify(message);
+    return { text, totalLength: text.length, offset: 0, limit: text.length, hasMore: false, messageText };
+  } catch {
+    return null;
+  }
 }
 
 export function createPiProvider({ sessionDir = process.env.PI_CODING_AGENT_SESSION_DIR || join(homedir(), '.pi', 'agent', 'sessions') }: { sessionDir?: string } = {}): ProviderAdapter {

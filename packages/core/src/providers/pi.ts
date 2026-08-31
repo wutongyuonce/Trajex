@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v12__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v13__';
 
 type PiEntry = Record<string, any>;
 type PiToolOccurrence = {
@@ -149,6 +149,17 @@ function imagePlaceholder(part: PiEntry): string {
   const mime = typeof part.mimeType === 'string' && part.mimeType ? part.mimeType : 'unknown';
   const chars = typeof part.data === 'string' ? part.data.length : 0;
   return `[image ${mime}; base64 chars=${chars}]`;
+}
+
+function physicalUserTitle(message: unknown): string | null {
+  if (!message || typeof message !== 'object' || Array.isArray(message) || (message as PiEntry).role !== 'user') return null;
+  const content = (message as PiEntry).content;
+  if (typeof content === 'string') return content.trim() || null;
+  if (!Array.isArray(content)) return null;
+  return content
+    .flatMap(part => part?.type === 'text' && typeof part.text === 'string' ? [part.text] : [])
+    .join(' ')
+    .trim() || null;
 }
 
 function timestamp(value: unknown): string | null {
@@ -430,7 +441,10 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   const records: TranscriptRecord[] = [{
     kind: 'delete-session', sessionId,
   }];
-  let title: string | null = null;
+  const firstUserTitle = physicalEntries
+    .map(entry => entry.type === 'message' ? physicalUserTitle(entry.message) : null)
+    .find(value => value !== null) ?? null;
+  let latestName: string | null = null;
   let count = 0;
   let startedAt: string | null = header.timestamp ?? null;
   let endedAt: string | null = header.timestamp ?? null;
@@ -452,7 +466,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
 
   for (const entry of entries) {
     const entryVisibility: 'visible' | 'inactive' = activeIds.has(entry.id) ? 'visible' : 'inactive';
-    if (entry.type === 'session_info' && typeof entry.name === 'string') { title = entry.name; continue; }
+    if (entry.type === 'session_info') { latestName = typeof entry.name === 'string' ? entry.name.trim() || null : null; continue; }
     if (entry.type === 'model_change') continue;
     if (entry.type === 'compaction' || entry.type === 'branch_summary') {
       if (typeof entry.summary === 'string') {
@@ -541,7 +555,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (message.role === 'bashExecution') addMessage(entry, 'tool', [message.command ? `$ ${message.command}` : '', message.output, message.exitCode ? `[exit code: ${message.exitCode}]` : ''].filter(value => typeof value === 'string' && value).join('\n'), 'bash', parentUuid, '', entryVisibility);
   }
-  records.push({ kind: 'session', id: sessionId, title, project: projectSlugFromPath(header.cwd), started_at: startedAt, ended_at: endedAt, git_branch: null, version: typeof header.version === 'number' ? String(header.version) : null, message_count: count, countMode: 'total', jsonl_path: unit.key, source: name });
+  records.push({ kind: 'session', id: sessionId, title: latestName ?? firstUserTitle, project: projectSlugFromPath(header.cwd), started_at: startedAt, ended_at: endedAt, git_branch: null, version: typeof header.version === 'number' ? String(header.version) : null, message_count: count, countMode: 'total', jsonl_path: unit.key, source: name });
   yield* records;
   return outCursor;
 }

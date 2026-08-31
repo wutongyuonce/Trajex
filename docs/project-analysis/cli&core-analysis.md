@@ -1913,7 +1913,7 @@ Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",vers
 | 原始条目或字段                                               | 产出的 record                                                | 设计细节 / 不产出情况                                        |
 | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | session header                                               | 最后的 `session`                                             | 提供 session ID、cwd、version、起止时间；自身不产出 message。 |
-| `{type:"session_info",name}` / `{type:"model_change",modelId}` | 无独立 record                                                | 前者更新最后的 session title；后者只参与后续 message 的 model 继承。 |
+| `{type:"session_info",name}` / `{type:"model_change",modelId}` | 无独立 record                                                | 最后一个非空、已 trim 的名称作为 session title；空白名称清除旧值并回退到首条物理 user text（忽略图片，不受 visibility 影响）。model change 只参与后续 message 的 model 继承。 |
 | `{type:"compaction"|"branch_summary",summary,usage}`         | `summary` + retained tail messages/summaries                 | 物理摘要继承分支 visibility 与 usage；retained summary 保留内容与独立 ID，但快照中复制的 usage 不重复计费。 |
 | `{type:"custom_message",content,display}`                    | custom `message`                                             | 扩展插入的 Entry，role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
 | `{type:"message",message:{role:"user",content}}`             | user `message`                                               | text 与 image 按 block 投影；image 只保留 MIME 与 base64 长度占位符，不存 payload。 |
@@ -2209,7 +2209,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v12__"
+jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v13__"
               ↑ 不是路径，而是状态 key
 ```
 

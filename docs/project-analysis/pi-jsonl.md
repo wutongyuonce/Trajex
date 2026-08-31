@@ -152,7 +152,7 @@ Trajex 将 `summary` 投影为 `summary(source='branch_summary')`。如果它不
 
 这类 entry 会参与 Pi 的上下文构建。Trajex 将其投影为 role `custom` 的消息：`display=false` 时为 `hidden`，否则沿当前分支显示，并标记为 meta/扩展内容。
 
-普通 `custom` entry 是扩展状态持久化，不参与 LLM context；当前 Trajex 不把它当普通 conversation message。`session_info` 只更新 session 标题；`model_change` 和 `thinking_level_change` 只影响 Pi 运行时状态，当前不产出独立消息。
+普通 `custom` entry 是扩展状态持久化，不参与 LLM context；当前 Trajex 不把它当普通 conversation message。`session_info` 只更新 session 标题：最后一个去除首尾空白后仍非空的名称优先，空白名称会清除旧名称并回退到物理日志的第一条用户文本；回退只读取 text 块、忽略图片，也不受该消息当前是 `visible` 还是 `inactive` 影响。`model_change` 和 `thinking_level_change` 只影响 Pi 运行时状态，当前不产出独立消息。
 
 ## 4. 当前上下文与历史分支
 

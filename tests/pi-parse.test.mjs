@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v12__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v13__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -721,4 +721,32 @@ test('Pi does not count usage copied into a retained-tail snapshot twice', () =>
   assert.deepEqual([physical.input_tokens, physical.output_tokens], [5, 2]);
   assert.deepEqual(retainedMessages.map(record => [record.input_tokens, record.output_tokens]), [[null, null], [null, null]]);
   assert.deepEqual([retainedSummary.input_tokens, retainedSummary.output_tokens], [null, null]);
+});
+
+test('Pi falls back to the first physical user text when the latest session name is blank', () => {
+  const root = makeTempDir('trajex-pi-title-fallback-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'title-fallback', cwd: '/tmp/project' },
+    {
+      type: 'message',
+      id: 'physical-user',
+      parentId: null,
+      message: { role: 'user', content: [
+        { type: 'image', mimeType: 'image/png', data: 'AAAA' },
+        { type: 'text', text: 'physical' },
+        { type: 'text', text: 'fallback' },
+      ] },
+    },
+    { type: 'session_info', id: 'named', parentId: 'physical-user', name: ' Named session ' },
+    { type: 'session_info', id: 'blank-name', parentId: 'named', name: '   ' },
+    { type: 'leaf', id: 'null-leaf', parentId: 'blank-name', targetId: null },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  assert.equal(records.find(record => record.kind === 'session').title, 'physical fallback');
+  assert.equal(records.find(record => record.kind === 'message' && record.text.trim() === 'physical').visibility, 'inactive');
 });

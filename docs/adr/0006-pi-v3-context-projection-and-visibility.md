@@ -39,6 +39,12 @@ Tool-result messages also retain their own model usage, including normalized
 cache read and write input, because nested model tools spend tokens independently
 of the assistant turn that invoked them.
 
+Session titles prefer the latest trimmed, non-empty `session_info.name`. A
+later blank name clears that override and falls back to the first physical user
+text, excluding image blocks. The fallback is derived before visibility
+projection, so branch changes do not make an otherwise unnamed session lose
+its stable display title.
+
 Tree identity is validated before projection. Entry IDs must be unique,
 `parentId` must be a string or `null`, durable leaf targets must be `null` or
 resolve to an entry, parent chains must be acyclic, and checkpoint

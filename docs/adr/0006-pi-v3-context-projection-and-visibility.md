@@ -32,6 +32,9 @@ length rather than persisting their base64 payload. Empty assistant thinking
 placeholders are omitted, while `errorMessage` is retained as the final error
 block and receives that response's usage. This keeps failed model calls and
 multimodal input visible without bloating the index.
+Tool-result messages also retain their own model usage, including normalized
+cache read and write input, because nested model tools spend tokens independently
+of the assistant turn that invoked them.
 
 Tree identity is validated before projection. Entry IDs must be unique,
 `parentId` must be a string or `null`, durable leaf targets must be `null` or

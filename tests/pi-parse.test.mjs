@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v10__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v11__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -630,4 +630,32 @@ test('Pi skips empty thinking placeholders without losing response usage', () =>
     })),
     [{ content_type: 'text', text: 'final answer', input_tokens: 12, output_tokens: 2 }],
   );
+});
+
+test('Pi retains nested model usage on its tool-result message', () => {
+  const root = makeTempDir('trajex-pi-tool-result-usage-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'tool-result-usage', cwd: '/tmp/project' },
+    {
+      type: 'message',
+      id: 'result',
+      parentId: null,
+      message: {
+        role: 'toolResult',
+        toolCallId: 'nested-call',
+        toolName: 'agent',
+        content: [{ type: 'text', text: 'nested result' }],
+        usage: { input: 11, cacheRead: 3, cacheWrite: 2, output: 7 },
+      },
+    },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const records = drain(provider.parse(provider.discover({ lastCursor: () => null })[0], null));
+  const result = records.find(record => record.kind === 'message');
+  assert.equal(result.input_tokens, 16);
+  assert.equal(result.output_tokens, 7);
 });

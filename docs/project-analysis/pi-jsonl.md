@@ -83,12 +83,12 @@ Trajex 当前处理的 message role：
 | `assistant` 的非空 `thinking` | `message(role='assistant', content_type='thinking')` |
 | `assistant.errorMessage` | `message(role='assistant', content_type='error')` |
 | `assistant` 的 `toolCall` | 空文本的 `message(content_type='tool_use')` + `tool_call` |
-| `toolResult` | `message(role='tool', content_type='tool_result')` + `tool_result` |
+| `toolResult` | `message(role='tool', content_type='tool_result')` + `tool_result`；自带 usage 写入 message token 字段 |
 | `bashExecution` | `message(role='tool', content_type='bash')` |
 
 同一个 user 或 assistant entry 可能包含多个 content part，Trajex 会按 part 拆成多条消息，用 `:<part-index>` 区分 UUID，并保持 parent chain。图片不将 base64 正文写入索引；空 thinking 不投影，assistant 失败则把 `errorMessage` 连在 content parts 后面，并承接该响应 usage。Pi 的原始 `toolCallId` 在分叉后可能复用，因此不能直接作为数据库主键：每次 tool call 使用对应 tool-use message UUID 派生独立 canonical ID；tool result 沿 entry 的 `parentId` 工具作用域寻找同一分支内最近的原始 ID。compaction 与 branch summary 会清除旧作用域，retained tail 再从保留消息重建；找不到调用的结果仍保留 message 证据，但不生成错误的 `tool_result` 关联。
 
-工具结果的时间线 message 只保存最多 1,000 字符的首尾预览；`tool_results.content` 保存最多 10,000 字符的首尾内容。这样既能在 `thread()` / FTS 中检索，也避免把大工具输出直接塞进消息列表。
+工具结果的时间线 message 只保存最多 1,000 字符的首尾预览；`tool_results.content` 保存最多 10,000 字符的首尾内容。这样既能在 `thread()` / FTS 中检索，也避免把大工具输出直接塞进消息列表。若 `toolResult` 本身携带嵌套模型 usage，输入按 `input + cacheRead + cacheWrite` 归一化后写入这条 message，让 Activity 统计实际消耗。
 
 ### 3.2 Compact：`compaction`
 

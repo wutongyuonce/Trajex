@@ -1918,7 +1918,7 @@ Pi 只支持官方 v3 文件，递归发现。第一行是 `{type:"session",vers
 | `{type:"custom_message",content,display}`                    | custom `message`                                             | 扩展插入的 Entry，role 为 `custom`、`is_meta: 1`；`display:false` 映射为 `visibility: 'hidden'`。 |
 | `{type:"message",message:{role:"user",content}}`             | user `message`                                               | text 与 image 按 block 投影；image 只保留 MIME 与 base64 长度占位符，不存 payload。 |
 | assistant 的 `content[]` text / thinking / toolCall part 与 `errorMessage` | 每个有效 part 各产生 assistant `message`；toolCall 另有 `tool_call` | 以 `:partIndex` 后缀生成稳定 message ID 并串成 parent chain；空 thinking 跳过，`errorMessage` 作为最后的 `error` block，usage 只附到最后一条真实证据。 |
-| `message.role === "toolResult"`                              | tool-result `message` + `tool_result`                        | `toolCallId` 关联前述工具；message 保留最多 1,000 字符首尾预览，result 保留最多 10,000 字符首尾内容。 |
+| `message.role === "toolResult"`                              | tool-result `message` + `tool_result`                        | `toolCallId` 关联前述工具；message 保留最多 1,000 字符首尾预览，result 保留最多 10,000 字符首尾内容；自带的嵌套模型 usage 写入 message token 字段。 |
 | `message.role === "bashExecution"`                           | bash `message`                                               | 形成 `content_type: 'bash'` 的文本投影；不另造 `tool_result`。未知条目和无可投影文本的条目不产出。 |
 
 #### 增量发现 `discoverAt()`
@@ -2209,7 +2209,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v10__"
+jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v11__"
               ↑ 不是路径，而是状态 key
 ```
 

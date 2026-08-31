@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v10__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v11__';
 
 type PiEntry = Record<string, any>;
 type PiToolOccurrence = {
@@ -513,7 +513,8 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     }
     if (message.role === 'toolResult') {
       const text = textParts(message.content, 'text').join('\n');
-      const uuid = addMessage(entry, 'tool', toolResultPreview(text), 'tool_result', parentUuid, '', entryVisibility);
+      const { inputTokens, outputTokens } = usageFields(message.usage);
+      const uuid = addMessage(entry, 'tool', toolResultPreview(text), 'tool_result', parentUuid, '', entryVisibility, inputTokens, outputTokens);
       const occurrence = toolResultByEntry.get(entry.id);
       if (occurrence) records.push({ kind: 'tool_result', tool_use_id: occurrence.id, message_uuid: uuid, session_id: sessionId, content: truncToolResult(text), file_path: occurrence.filePath, is_error: message.isError ? 1 : 0 });
       continue;

@@ -2,7 +2,7 @@
 name: trajex
 description: >
   Search and query past Claude Code, Codex, and Pi session history.
-  Reactive: when the user asks "how did I fix X", "what did we do last time", "find the session where", "上次怎么修的", "之前的session", "历史记录".
+  Reactive: when the user asks "how did I fix X", "what did we do last time", "find the session where", "resume session", "上次怎么修的", "之前的session", "历史记录".
   Proactive: when the user references past work you lack context for, when you're about to modify a file with complex edit history, when the user says "继续之前的" or "continue where we left off", or when understanding prior decisions would improve your current response.
   Memory: when the user says "记住这个", "remember this", "写入记忆", "save this conclusion", or when you determine a retrieval result contains a conclusion worth persisting.
 allowed-tools:
@@ -96,7 +96,7 @@ Use references by job, not by habit:
 
 | Reference | Use when |
 |---|---|
-| `references/query-patterns.md` | Broad synthesis, progress summaries, design history, weekly/monthly reviews, approved memory write/archive/update scripts, or questions about what the user did/learned/decided/tried/abandoned. |
+| `references/query-patterns.md` | Scoped session resume, broad synthesis, progress summaries, design history, weekly/monthly reviews, approved memory write/archive/update scripts, or questions about what the user did/learned/decided/tried/abandoned. |
 | `references/retrieval-semantics.md` | Multi-step retrieval, scoped project/file/session searches, or when scope/artifact/semantic boundaries affect query design. |
 | `references/schema.md` | Raw SQL field and join quick reference before writing non-trivial `sql()`. |
 | `references/api-reference.md` | Helper signatures, option names, return fields, or exact `remember()` / `forget()` parameter details are unclear. |

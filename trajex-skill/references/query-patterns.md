@@ -135,6 +135,97 @@ return thread(sessionId)
   }));
 ```
 
+## Resume Session By Title And Time
+
+Use this when the user identifies one or more historical sessions by title,
+time range, project, or provider. Resolve candidates first. Read summaries and
+messages only when exactly one candidate matches each requested session; if a
+request is missing or ambiguous, return candidates and ask the user to choose.
+Do not call `thread()` for unresolved candidates. Keep only visible text
+messages; tool calls and tool results are not part of this resume context.
+
+```js
+const requests = [
+  // Fill these from the user's request. Use null for an unspecified constraint.
+  { title: 'requested session title', after: '2026-08-01T00:00:00Z', before: '2026-09-01T00:00:00Z' },
+  { title: 'second session title', after: null, before: null },
+];
+const source = 'codex'; // null to search all providers
+const project = null; // e.g. '%Trajex%'
+const maxMessages = 40;
+const maxCharsPerMessage = 1200;
+
+const normalize = value => String(value || '').trim().toLowerCase();
+const sessionOpts = { limit: 100 };
+if (source) sessionOpts.source = source;
+if (project) sessionOpts.project = project;
+const after = requests.reduce((v, r) => r.after && (!v || r.after < v) ? r.after : v, null);
+const before = requests.reduce((v, r) => r.before && (!v || r.before > v) ? r.before : v, null);
+if (after) sessionOpts.after = after;
+if (before) sessionOpts.before = before;
+const all = sessions(sessionOpts);
+
+const matches = request => all.filter(session => {
+  const title = normalize(request.title);
+  return (!title || normalize(session.title) === title) &&
+    (!request.after || session.started_at >= request.after) &&
+    (!request.before || session.started_at <= request.before);
+});
+
+const resolved = [];
+const unresolved = [];
+for (const request of requests) {
+  const candidates = matches(request);
+  if (candidates.length === 1) resolved.push({ request, session: candidates[0] });
+  else unresolved.push({ request, reason: candidates.length ? 'ambiguous' : 'not_found', candidates });
+}
+
+const readSession = session => ({
+    id: session.id,
+    title: session.title,
+    source: session.source,
+    project: session.project,
+    started_at: session.started_at,
+    ended_at: session.ended_at,
+    summaries: summaries({ sessionId: session.id, limit: 10 }).map(summary => ({
+      timestamp: summary.timestamp,
+      content: summary.content?.slice(0, maxCharsPerMessage),
+    })),
+    messages: thread(session.id)
+      .filter(message => message.content_type === 'text' && (message.role === 'user' || message.role === 'assistant'))
+      .slice(-maxMessages)
+      .map(message => ({
+        uuid: message.uuid,
+        role: message.role,
+        timestamp: message.timestamp,
+        text: message.text?.slice(0, maxCharsPerMessage),
+      })),
+});
+
+return {
+  status: unresolved.length ? 'needs_selection' : 'resumed',
+  sessions: resolved.map(({ session }) => readSession(session)),
+  unresolved: unresolved.map(({ request, reason, candidates }) => ({
+    request,
+    reason,
+    candidates: candidates.map(s => ({
+      id: s.id,
+      title: s.title,
+      source: s.source,
+      project: s.project,
+      started_at: s.started_at,
+      ended_at: s.ended_at,
+      message_count: s.message_count,
+    })),
+  })),
+};
+```
+
+The character limits are intentional context bounds, not exact token limits;
+reduce them for large sessions. A `needs_selection` or `not_found` result means
+only uniquely resolved sessions were read; unresolved sessions remain unread
+until the user chooses one.
+
 ## Memory Plus Session Evidence
 
 Use this when prior conclusions may exist but the answer still depends on raw

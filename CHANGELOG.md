@@ -10,6 +10,7 @@
 
 ### Changed
 
+- Claude、Codex、Pi 的 canonical marker 统一重置到全新的 `v1` 基线；后续投影语义更新按 `v1.1`、`v1.2` 递增。三个历史 marker 均未使用过 v1，因此旧索引会在下次正常 build 时自动进入一次完整 canonical rebuild，无需手动迁移。
 - Activity token 统计改为一次聚合 messages 与 summaries：总量包含无时间戳 usage，每日和峰值只包含有日期记录；summary 的 provider 通过所属 session 判断。
 - Summary 查询默认只返回当前分支；Core 可用 `includeInactive` 显式读取 inactive 摘要，hidden 始终排除，App 详情只展示 visible 摘要。
 - Trajex skill 明确区分“外层 CLI 先刷新索引”与“内层查询脚本只读”：受限 sandbox 必须允许写入 `~/.trajex` 或 `TRAJEX_DIR`，权限失败时应重试同一 Trajex 命令，不直接读取可能过期的 SQLite/JSONL。
@@ -21,14 +22,15 @@
 
 ### Fixed
 
-- Pi 会话标题现在优先使用最后一个非空、已去除首尾空白的 `session_info.name`；后续空白名称会清除旧自定义标题，并回退到物理日志中第一条用户文本（忽略图片块，不受当前分支可见性影响）。Pi canonical marker 升至 v13 后会自动重建旧投影。
-- Pi 现在会保留 compaction `retainedTail` 中的 branch/compaction summary，并为同一 checkpoint 内的每条摘要生成独立 canonical ID；retained 快照里复制的 message 与 summary usage 不再重复计费，物理执行记录的 token 仍保留。Pi canonical marker 升至 v12 后会自动重建旧投影。
-- Pi `toolResult` 自带的模型 usage 现在会写入对应 canonical message，输入 token 继续包含 cache read/write；Activity 和 usage 查询不再漏算 `agent` 等嵌套模型工具的消耗。Pi canonical marker 升至 v11 后会自动重建旧投影。
-- Pi 现在会把用户图片块投影为不含 base64 正文的 `image` 证据，并保留空响应中的 assistant `errorMessage`；空 thinking 占位不再生成无意义消息，响应 token 仍归到最后一条真实证据。Pi canonical marker 升至 v10 后会自动重建旧投影。
+- Pi 会跳过无法解析的物理 JSONL 行并继续索引后续有效记录；已经能解析但 `message` 结构损坏时整份 session 原子失败并保留旧投影，不再永久漏掉坏行后的消息或静默提交残缺结果。
+- Pi 会话标题现在优先使用最后一个非空、已去除首尾空白的 `session_info.name`；后续空白名称会清除旧自定义标题，并回退到物理日志中第一条用户文本（忽略图片块，不受当前分支可见性影响）。
+- Pi 现在会保留 compaction `retainedTail` 中的 branch/compaction summary，并为同一 checkpoint 内的每条摘要生成独立 canonical ID；retained 快照里复制的 message 与 summary usage 不再重复计费，物理执行记录的 token 仍保留。
+- Pi `toolResult` 自带的模型 usage 现在会写入对应 canonical message，输入 token 继续包含 cache read/write；Activity 和 usage 查询不再漏算 `agent` 等嵌套模型工具的消耗。
+- Pi 现在会把用户图片块投影为不含 base64 正文的 `image` 证据，并保留空响应中的 assistant `errorMessage`；空 thinking 占位不再生成无意义消息，响应 token 仍归到最后一条真实证据。
 - Pi 原文回查现在会校验 session 身份与来源路径，并按 UUID 精确定位 assistant block 或 compaction `retainedTail` 中的合成消息；详情页可获得完整 `messageText`，回查单条 retained 消息时不再连带暴露同一 checkpoint 的其他消息。
-- Pi 在投影前会校验 v3 entry 与整棵父链：重复 ID、非字符串 `parentId`、循环、非法 durable leaf target，以及格式错误的 `retainedTail` 现在会让该 session 原子失败，不再静默覆盖、截断或生成空上下文；指向缺失父节点的官方 orphan root 仍然合法，JSON 语法损坏行的有效前缀策略不变。Pi canonical marker 升至 v9 后会自动重建旧投影。
-- Pi 工具调用现在按具体消息 occurrence 生成 canonical ID，并沿 `parentId` 树只匹配同一分支内最近的原始 `toolCallId`；不同分支复用 native ID 不再互相覆盖或串接结果，compaction 后无法解析到当前工具作用域的结果也不会错误挂到已丢弃调用。Pi canonical marker 升至 v8 后会自动重建旧投影。
-- Pi 现在按完整 checkpoint 链重建多次 compaction 后的当前上下文：最近的 `retainedTail` checkpoint 会截断更早物理链，后续 legacy `firstKeptEntryId` 只在该有效边界内生效；retained tail 只投影一次，压缩祖先保留为 inactive 证据。Pi canonical marker 升至 v7 后会自动重建旧投影。
+- Pi 在投影前会校验 v3 entry 与整棵父链：重复 ID、非字符串 `parentId`、循环、非法 durable leaf target，以及格式错误的 `retainedTail` 现在会让该 session 原子失败，不再静默覆盖、截断或生成空上下文；指向缺失父节点的官方 orphan root 仍然合法。
+- Pi 工具调用现在按具体消息 occurrence 生成 canonical ID，并沿 `parentId` 树只匹配同一分支内最近的原始 `toolCallId`；不同分支复用 native ID 不再互相覆盖或串接结果，compaction 后无法解析到当前工具作用域的结果也不会错误挂到已丢弃调用。
+- Pi 现在按完整 checkpoint 链重建多次 compaction 后的当前上下文：最近的 `retainedTail` checkpoint 会截断更早物理链，后续 legacy `firstKeptEntryId` 只在该有效边界内生效；retained tail 只投影一次，压缩祖先保留为 inactive 证据。
 - Codex 全量重放现在会跳过已换行结束的损坏 JSONL 记录并继续索引后续消息、工具调用和结果；未换行的残缺尾行仍留待下次重放。Codex canonical marker 升级后会自动重建已卡在永久坏行前的旧投影。
 - Claude 增量解析现在会跳过已换行结束的损坏 JSONL 记录并继续索引后续消息；未换行的残缺尾行仍不推进 cursor，等待文件写完后重试。Claude canonical marker 升级后会自动重建旧投影，修复已卡在永久坏行前的会话。
 - Codex 全量重放现在也使用 `mtime + ctime + size + inode` 判断稳定快照；周期 reconcile 能发现同 mtime 覆盖写，读取期间发生变化时不会提交混合版本。

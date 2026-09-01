@@ -967,7 +967,7 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | --- | --- | --- | --- |
 | Claude | `mtime:lines:size:ctime:inode` 增量读取；cursor 后只读新增行，截断、替换或身份签名变化时按当前文件重新判断 | 已换行结束的坏 JSON 被消费并跳过；未换行的残缺尾行不推进 cursor，等待续写 | `projects/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
 | Codex | `mtime:lines:size:ctime:inode` 稳定快照全量重放；整文件收集 `event_msg` 再对 `response_item` 去重 | 已换行结束的坏 JSON 被消费并跳过；未换行的残缺尾行留待重放；读取期间快照变化则整次放弃 | `sessions/` 根层可枚举后，缺失/不可读后代按空子树并发 tombstone；来源根不可用时保留快照 |
-| Pi | `mtime:lines:size:ctime:inode` 稳定快照全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 全量读取遇到坏 JSON 即停止，提交有效前缀；读取期间快照变化则整次放弃 | session 根层可枚举后，缺失/不可读后代按空子树并发撤回；来源根不可用时保留快照 |
+| Pi | `mtime:lines:size:ctime:inode` 稳定快照全量重放；根据 durable leaf、branch、compaction 与 visibility 重算投影 | 跳过语法坏行并继续；合法 JSON 的 message/tree 结构损坏则整次失败；读取期间快照变化也整次放弃 | session 根层可枚举后，缺失/不可读后代按空子树并发撤回；来源根不可用时保留快照 |
 
 这些策略都汇入同一个持久化流程：
 
@@ -989,7 +989,7 @@ persist(unit, generator)  [一个 unit 一个事务]
   └─ memories 永不随 transcript 撤回
 ```
 
-删除判断的关键是“完整清单证明”，不是单个 watcher 事件。目录暂时不可见时宁可保留旧投影；明确的删除或身份替换才生成清理单元。Claude 和 Codex 跳过已结束坏记录，只把未结束尾行留作下次重试边界；Pi 的损坏行仍采用有效前缀语义。
+删除判断的关键是“完整清单证明”，不是单个 watcher 事件。目录暂时不可见时宁可保留旧投影；明确的删除或身份替换才生成清理单元。Claude 和 Codex 跳过已结束坏记录，只把未结束尾行留作下次重试边界；Pi 全量重放会跳过语法坏行，但对已解析的结构损坏原子失败。
 
 ### Claude Code：主会话、子会话与 Workflow 的 JSONL/JSON 映射 `claude.ts`
 
@@ -2209,7 +2209,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v5__" / "__codex_canonical_transcript_v6__" / "__pi_canonical_transcript_v13__"
+jsonl_path = "__claude_canonical_transcript_v1__" / "__codex_canonical_transcript_v1__" / "__pi_canonical_transcript_v1__"
               ↑ 不是路径，而是状态 key
 ```
 
@@ -3004,7 +3004,7 @@ Trajex 有三个不同尺度的“重新来过”：
 
 ### 版本标记是投影协议，不是 schema 版本
 
-当 Provider 的去重、可见性、分支选择或 ID 策略发生变化时，仅修改代码不会自动修复已有 SQLite 投影。正确做法是提升 `indexVersionMarker`。当新 marker 缺失且旧数据存在时，计划层使用空游标全量重放；只有该 Provider 的所有 unit 都成功且构建未中途停止，新 marker 才会写入。
+当 Provider 的去重、可见性、分支选择或 ID 策略发生变化时，仅修改代码不会自动修复已有 SQLite 投影。正确做法是提升 `indexVersionMarker`。三个内建 Provider 从未使用过的 `v1` 重新建立统一基线，后续按不透明字符串 `v1.1`、`v1.2` 递增；代码不会执行数值比较。当新 marker 缺失且旧数据存在时，计划层使用空游标全量重放；只有该 Provider 的所有 unit 都成功且构建未中途停止，新 marker 才会写入。
 
 当前 `createProviderIndexPlan()` 将任一已有 Provider 的 marker 升级视为 `fullRebuild`，所有 Provider 都用空游标重放。文档中不应再把它表述为“只重放某一个 Provider”。
 

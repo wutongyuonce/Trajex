@@ -49,9 +49,10 @@ Tree identity is validated before projection. Entry IDs must be unique,
 `parentId` must be a string or `null`, durable leaf targets must be `null` or
 resolve to an entry, parent chains must be acyclic, and checkpoint
 `retainedTail` values must have valid container structure. A missing string
-parent remains an official orphan root rather than corruption. JSON syntax
-damage still ends replay at the valid prefix; a structurally invalid parsed
-tree fails the whole unit so the indexer cannot commit a fabricated context.
+parent remains an official orphan root rather than corruption. A physical line
+with invalid JSON is skipped so later valid entries remain available; an
+invalid parsed message or tree fails the whole unit so the indexer cannot
+commit a fabricated context.
 
 Raw lookup follows the same projected identity instead of returning an entire
 physical entry indiscriminately. It validates the configured source boundary,
@@ -83,9 +84,11 @@ descendant failures are treated as empty subtrees. Force rebuild preflights
 existing Provider roots before cleanup. The retraction and parse-prefix rules
 are shared with the other adapters; see ADR-0002 and ADR-0004.
 
-Each Provider owns an independent canonical projection marker. When Pi's
-projection identity or association rules change, its marker advances and the
-indexer performs a clean transcript rebuild before writing the new marker.
+Each Provider owns an independent canonical projection marker. The built-in
+providers share a fresh `v1` naming baseline and advance through opaque string
+revisions (`v1.1`, `v1.2`, and so on); revisions are never parsed as numbers.
+When Pi's projection identity or association rules change, the indexer performs
+a clean transcript rebuild before writing the new marker.
 
 ## Consequences
 

@@ -45,7 +45,7 @@ import type {
 } from './types.ts';
 
 export const name = 'codex';
-export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v6__';
+export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v1__';
 const CODEX_TRANSCRIPT_DIRS = ['sessions', 'archived_sessions'] as const;
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;

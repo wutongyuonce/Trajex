@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v13__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v1__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -142,7 +142,7 @@ test('Pi discovery retracts a prior identity when a session file is reused', () 
   assert.deepEqual(replacement.retractSessionIds, [oldUnit.sessionId]);
 });
 
-test('Pi stops at a malformed line and returns the valid prefix', () => {
+test('Pi skips a malformed physical line and keeps later valid messages', () => {
   const root = makeTempDir('trajex-pi-malformed-');
   const dir = join(root, 'sessions', '--project--');
   const path = join(dir, 'fixture.jsonl');
@@ -151,7 +151,7 @@ test('Pi stops at a malformed line and returns the valid prefix', () => {
     JSON.stringify({ type: 'session', version: 3, id: 'malformed' }),
     JSON.stringify({ type: 'message', id: 'before', parentId: null, message: { role: 'user', content: 'must index' } }),
     '{bad json}',
-    JSON.stringify({ type: 'message', id: 'after', parentId: null, message: { role: 'user', content: 'must not index' } }),
+    JSON.stringify({ type: 'message', id: 'after', parentId: 'before', message: { role: 'user', content: 'must also index' } }),
   ].join('\n') + '\n');
 
   const provider = createPiProvider({ sessionDir: join(root, 'sessions') });
@@ -160,8 +160,23 @@ test('Pi stops at a malformed line and returns the valid prefix', () => {
   const records = [];
   let step = generator.next();
   while (!step.done) { records.push(step.value); step = generator.next(); }
-  assert.deepEqual(records.filter(record => record.kind === 'message').map(record => record.text), ['must index']);
-  assert.equal(step.value.split(':')[1], '2');
+  assert.deepEqual(records.filter(record => record.kind === 'message').map(record => record.text), ['must index', 'must also index']);
+  assert.equal(step.value.split(':')[1], '4');
+});
+
+test('Pi rejects a structurally malformed message instead of indexing a partial session', () => {
+  const root = makeTempDir('trajex-pi-malformed-message-');
+  const dir = join(root, 'sessions');
+  const path = join(dir, 'fixture.jsonl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, [
+    { type: 'session', version: 3, id: 'malformed-message', cwd: '/tmp/project' },
+    { type: 'message', id: 'invalid', parentId: null, message: null },
+  ].map(JSON.stringify).join('\n') + '\n');
+
+  const provider = createPiProvider({ sessionDir: dir });
+  const unit = provider.discover({ lastCursor: () => null })[0];
+  assert.throws(() => drain(provider.parse(unit, null)), /Malformed Pi message/);
 });
 
 test('Pi rejects a cyclic parent chain instead of truncating the active path', () => {

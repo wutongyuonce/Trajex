@@ -22,7 +22,7 @@ Trajex 对 Pi 文件采用全量 replay：active context 依赖 durable `leaf`�
 
 - 根目录暂时不可枚举时，保留上一次快照。
 - 根目录可枚举但某个 session 文件消失时，发出 tombstone，清理该文件的可再生索引数据。
-- JSONL 中出现损坏行时，只提交损坏行以前的有效前缀，cursor 停在损坏行之前。
+- JSONL 中单行语法损坏时跳过该物理行并继续解析；合法 JSON 的 entry/message 结构不可信时整份 session 原子失败，保留上一次成功投影。
 
 ## 2. 树结构
 
@@ -174,7 +174,7 @@ Pi 的物理文件是完整树，不等于当前 LLM 看到的线性上下文。
 
 `packages/core/src/providers/pi.ts` 的处理顺序如下：
 
-1. 读取整个 JSONL，遇到损坏行停止。
+1. 读取整个 JSONL，跳过无法解析的物理行；非对象 JSON 值直接报错。
 2. 找到 v3 session header，计算 `session_id = pi:<raw-id>:<cwd-hash>`。
 3. 建立 `id → entry` 索引，解析 durable leaf 和 active path。
 4. 从 active head 反向追溯，遇到最近的 `retainedTail` checkpoint 就停止，更早物理链不再参与当前上下文计算。
@@ -186,7 +186,7 @@ Pi 的物理文件是完整树，不等于当前 LLM 看到的线性上下文。
 
 Trajex 不从 message 文本猜分支关系，也不把时间顺序当作当前上下文；`parentId` 和 `leaf` 才是 Pi 的结构事实。
 
-进入上述计算前，Provider 会验证 entry ID 唯一、`parentId` 类型、父链无环、leaf target 存在，以及 `retainedTail` 容器和 active retained value 的对象结构。字符串父 ID 不存在时按 Pi 官方 orphan root 结束父链，不报错。JSON 语法损坏仍采用有效前缀；JSON 已能解析但树结构不可信时整份 unit 抛错，由索引事务保留上一次成功投影。
+进入上述计算前，Provider 会验证 message 对象、entry ID 唯一、`parentId` 类型、父链无环、leaf target 存在，以及 `retainedTail` 容器和 active retained value 的对象结构。字符串父 ID 不存在时按 Pi 官方 orphan root 结束父链，不报错。单行 JSON 语法损坏会被跳过；JSON 已能解析但消息或树结构不可信时整份 unit 抛错，由索引事务保留上一次成功投影。
 
 ## 6. 与其他 JSONL provider 的关键区别
 

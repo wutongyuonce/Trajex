@@ -16,7 +16,7 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v13__';
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v1__';
 
 type PiEntry = Record<string, any>;
 type PiToolOccurrence = {
@@ -212,7 +212,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     const line = lines[index]!.replace(/\r$/, '');
     if (!line) { processedLineCount = index + 1; continue; }
     let value: unknown;
-    try { value = JSON.parse(line); } catch { break; }
+    try { value = JSON.parse(line); } catch { processedLineCount = index + 1; continue; }
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new Error(`Malformed Pi JSONL value at line ${index + 1}`);
     }
@@ -233,6 +233,9 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       || (entry.parentId !== null && typeof entry.parentId !== 'string')
     ) {
       throw new Error(`Malformed Pi entry: ${typeof entry.id === 'string' ? entry.id : 'unknown'}`);
+    }
+    if (entry.type === 'message' && (!entry.message || typeof entry.message !== 'object' || Array.isArray(entry.message))) {
+      throw new Error(`Malformed Pi message: ${entry.id}`);
     }
   }
   const byId = new Map<string, PiEntry>();
@@ -484,7 +487,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       if (text) addMessage(entry, 'custom', text, 'text', finalMessage(entry.parentId), '', entry.display === false ? 'hidden' : entryVisibility, null, null, 1);
       continue;
     }
-    if (entry.type !== 'message' || !entry.message || typeof entry.id !== 'string') continue;
+    if (entry.type !== 'message') continue;
     const message = entry.message;
     const retained = retainedIds.has(entry.id);
     let parentUuid = finalMessage(entry.parentId);

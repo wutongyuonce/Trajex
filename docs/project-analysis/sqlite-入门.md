@@ -290,11 +290,13 @@ const hits = db.prepare(`
 `).all('sqlite AND transaction', 20);
 ```
 
-因为这里是 content-backed FTS，批量删除或重建原表后需要重建索引。Trajex 在索引收尾时执行：
+因为这里是 content-backed FTS，普通消息增删改由 trigger 同步，不需要每次重建。Trajex 只在首次建立 readiness marker 或 force/canonical rebuild 修复完整索引时执行：
 
 ```sql
 INSERT INTO messages_fts(messages_fts) VALUES('rebuild');
 ```
+
+普通增量索引会直接跳过这条全量命令；`__fts_triggers_ready__` 表示两张 FTS 已完成首次建立。force rebuild 仍无条件重建，作为派生索引损坏时的完整修复路径。
 
 ## 9. 原子写入：事务
 

@@ -394,7 +394,7 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 - `indexer-worker-client.ts`：main 侧客户端。懒创建 `Worker`，给每个请求分配递增 `id`，在 `pending: Map<id, {resolve,reject}>` 里等待响应；worker 出错/退出时拒绝所有未完成请求。
 - `indexer-worker.ts`：真正的 worker 入口。收到 `{ id, args }` 后调用 `buildIndex(args)`，把 `result` 或序列化的错误传回。
 
-索引包含文件扫描、JSONL 解析、事务写入和 FTS 重建，放在 worker 的目的就是保证 `BrowserWindow`、IPC 和窗口拖动仍然流畅。
+索引包含文件扫描、JSONL 解析、事务写入和必要的 FTS 修复，放在 worker 的目的就是保证 `BrowserWindow`、IPC 和窗口拖动仍然流畅。
 
 ### 5.3 `main/indexer.ts`：App 版的索引执行器
 
@@ -409,7 +409,7 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 4. force/canonical rebuild 先预检现有 Provider 来源根，通过后才清理会话派生表（保留 memories）
 5. 逐项执行 provider plan
    └─ 每个 unit 通过可重试 SQLite 写事务进入数据库
-6. 一个 finalize 事务：增量时只补本轮相关 session 的 project_path，再补 Workflow 父链接、保证 FTS、写索引 marker
+6. 一个 finalize 事务：增量时只补本轮相关 session 的 project_path，再补 Workflow 父链接、确认 FTS readiness、写索引 marker
 7. PASSIVE WAL checkpoint，关闭本次 worker 的数据库连接
 8. 返回 affectedSessionIds 与最近 transcript watchHints，供 UI 精确刷新并更新 hot set
 ```
@@ -417,6 +417,8 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 几个容易混淆的点：
 
 - **writer lease** 在独立的 `writer.lock.sqlite` 上保证同一时刻只有一个索引写者，避免 App 与 CLI 抢写。
+- `project_path` 刷新、FTS trigger readiness 和批量替换前的 trigger 移除来自 Core 的 `index-finalize.ts`。App 仍负责 changed paths、延期重试和 Electron 结果格式，但不再复制派生数据策略。
+- 普通增量 build 依赖 SQLite trigger 维护 FTS，不执行全量 rebuild；首次数据库初始化或 force rebuild 才完整修复两张 FTS。这个变化只影响索引成本，不改变 session 详情接口或 renderer 展示。
 
 Workflow 的 `parent_tool_use_id` 最终指向 `tool_calls.id`。App finalize 会调用 Core 的 `healWorkflowParentLinks()`：当 workflow JSON 先入库、主 transcript 的 `tool_result` 后到时，按同一 session 的唯一 `run_id` 从 `tool_results.content` 找到对应的 `Workflow` tool call，并把 `tool_results.tool_use_id` 回填；无法确认时保持 `NULL`，不按 workflow 名称猜测。
 - **deferred 不是失败**。遇到锁忙时 service 会稍后再试，不把数据库并发看成解析错误。

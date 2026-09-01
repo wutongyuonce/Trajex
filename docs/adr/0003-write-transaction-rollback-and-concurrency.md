@@ -1,7 +1,7 @@
 # Unified persistence, transaction safety, and SQLite concurrency
 
-> Revised 2026-08-10. This ADR also defines schema-readiness checks for passive
-> reads and App database publication.
+> Revised 2026-09-01. This ADR also defines schema-readiness checks, bounded
+> derived-data finalization, and App database publication.
 
 ## Context
 
@@ -52,6 +52,23 @@ remains before any malformed tail that the Provider leaves unconsumed.
   preflight from ADR-0004 completes before force cleanup begins; a failed
   preflight performs no destructive write.
 
+### Bounded derived-data finalization
+
+- `indexProviderPlan()` invokes `onPersisted` after `persist()` but before the
+  unit transaction commits. Core uses that hook to refresh `project_path` only
+  for the unit session and any retracted session IDs, so facts, cursor, and the
+  affected derived path commit or roll back together.
+- Legacy rows whose `project_path` is still unresolved are scanned once under
+  `__project_path_backfill_v1__`. The marker is written in the same finalize
+  transaction, so rollback leaves the repair eligible for a clean retry.
+- Ordinary builds trust the schema's insert/update/delete triggers to maintain
+  `messages_fts` and `memories_fts`. A complete FTS rebuild runs only before
+  `__fts_triggers_ready__` exists or when a force/canonical rebuild explicitly
+  requests repair.
+- Force rebuild remains the correctness escape hatch: it refreshes every
+  session path and rebuilds both FTS indexes. The optimization changes ordinary
+  work bounds, not indexed facts or query semantics.
+
 ### Writer ownership and concurrency
 
 - A fresh `__app_heartbeat__` means the App owns writes; passive CLI paths stay
@@ -92,6 +109,7 @@ remains before any malformed tail that the Provider leaves unconsumed.
 
 ## Consequences
 
-CLI and App share the same write semantics, full replay cannot accumulate stale
-rows, deletion cleanup cannot remove durable memories, and a database failure
-cannot silently advance a cursor.
+CLI and App share the same write and finalize semantics, ordinary builds scale
+with affected units instead of the full corpus, full replay cannot accumulate
+stale rows, deletion cleanup cannot remove durable memories, and a database
+failure cannot silently advance a cursor.

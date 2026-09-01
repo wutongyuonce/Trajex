@@ -11,7 +11,12 @@
  */
 // Passive-pull indexing orchestration for the Core package.
 import { existsSync } from 'node:fs';
-import { DB_PATH, openDb, openReadDb, openWriterLeaseDb, rebuildMemoryFts } from './db.ts';
+import { DB_PATH, openDb, openReadDb, openWriterLeaseDb } from './db.ts';
+import {
+  backfillUnresolvedSessionProjectPathsOnce,
+  ensureFtsReady,
+  refreshSessionProjectPaths,
+} from './index-finalize.ts';
 import { inferProjectPath } from './parsing.ts';
 import {
   assertRebuildRootsAvailable,
@@ -24,7 +29,7 @@ import { acquireWriterLease, writerLockPathFor } from './writer-lease.ts';
 import { runRetryableWriteTransaction, isBeginBusyFailure, hasUnusableTransaction } from './write-coordinator.ts';
 import { createBuiltinProviderRegistry } from './providers/builtins.ts';
 import { coreSchemaNeedsMigration } from './schema-migrations.ts';
-import type { NodeSqliteDb, SqliteDb, SqliteRow } from './sqlite-types.ts';
+import type { NodeSqliteDb, SqliteDb } from './sqlite-types.ts';
 
 /** 单个失败 unit 的摘要：路径 + 错误消息 + 可选 trajex 诊断。 */
 interface SkippedFile {
@@ -44,26 +49,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-
-/**
- * 在全部 Provider unit 写入后，以 messages.cwd 的众数回填 session.project_path。
- * Provider 给出的 project 常是 slug，必须集中收尾才能汇集主线程和子线程的证据。
- */
-function refreshSessionProjectPaths(db: NodeSqliteDb): void {
-  const sessions = db.prepare('SELECT id, project FROM sessions').all();
-  const cwdStmt = db.prepare(`
-    SELECT cwd
-    FROM messages
-    WHERE session_id = ? AND cwd IS NOT NULL AND cwd != ''
-    ORDER BY timestamp IS NULL, timestamp
-  `);
-  const update = db.prepare('UPDATE sessions SET project_path = ? WHERE id = ?');
-  for (const session of sessions) {
-    const cwds = cwdStmt.all(session.id).map((row: SqliteRow) => row.cwd);
-    const projectPath = inferProjectPath(session.project, cwds);
-    if (projectPath) update.run(projectPath, session.id);
-  }
-}
 
 /**
  * 补齐 workflow → Workflow tool_use 的延迟关联。
@@ -231,6 +216,12 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
         db,
         plan: providerPlan,
         runTransaction: (label, work) => runRetryableWriteTransaction(txDb, work, { label }),
+        onPersisted: ({ unit }) => {
+          refreshSessionProjectPaths(db, new Set([
+            unit.sessionId,
+            ...(unit.retractSessionIds ?? []),
+          ]));
+        },
         onError: (error, { provider, unit }) => {
           if (isBeginBusyFailure(error)) return 'stop';
           if (hasUnusableTransaction(error)) throw error;
@@ -247,10 +238,14 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
       // 收尾必须是不可吞错的单一事务，否则 FTS、project_path 与 cursor 会处于不同版本。
       try {
         runRetryableWriteTransaction(txDb, () => {
-          refreshSessionProjectPaths(db);
+          if (providerPlan.fullRebuild) {
+            refreshSessionProjectPaths(db, null);
+            backfillUnresolvedSessionProjectPathsOnce(db);
+          } else {
+            backfillUnresolvedSessionProjectPathsOnce(db);
+          }
           healWorkflowParentLinks(db);
-          db.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
-          rebuildMemoryFts(db);
+          ensureFtsReady(db, { force: providerPlan.fullRebuild });
           db.prepare("INSERT OR REPLACE INTO index_state (jsonl_path, mtime, lines_processed) VALUES ('__last_build__', ?, 0)").run(Date.now());
           writeProviderIndexMarkers(db, providerPlan, providerResult);
         }, { label: 'finalize' });

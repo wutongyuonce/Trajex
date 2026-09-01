@@ -18,7 +18,8 @@
 - Provider 监听契约从无类型的路径数组改为 `watchTargets()`，明确区分递归目录 `tree` 与精确文件 `file`；Claude、Codex、Pi 的监听目标现在完全由各自 adapter 声明。
 - 自动索引调度改为 250ms debounce、500ms 稳定窗口和 1.5s 最大等待；build 运行期间的新变化只合并为一个 pending batch，避免持续写入导致无限延后或旧定时器额外触发。
 - `index_state` 新增原样 `cursor` 列；Claude cursor 扩展为 `mtime:lines:size:ctime:inode`，旧数据库的 `mtime:lines` 仍可读取。
-- 增量 finalize 只刷新本次变更、撤回或延期重试涉及的 session project path，不再为单文件更新扫描全部 session。
+- CLI/Core 的普通增量索引现在把 `project_path` 刷新放进对应 unit 的同一事务，只处理本次写入或撤回的 session；旧库中尚未解析的路径通过一次性 marker 补偿。App 与 Core 复用同一套收尾策略，不再维护两份实现。
+- 普通增量索引依赖 SQLite trigger 维护消息与记忆 FTS，不再每次全量重建；首次初始化和 force rebuild 仍执行完整 FTS 修复并写入 readiness marker。
 
 ### Fixed
 

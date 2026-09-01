@@ -179,12 +179,15 @@ export function indexProviderPlan({
   db,
   plan,
   runTransaction,
+  onPersisted = () => {},
   onCommitted = () => {},
   onError,
 }: {
   db: SqliteDb;
   plan: ProviderIndexPlan;
   runTransaction: <T>(label: string, work: () => T) => T;
+  /** persist 成功后、同一事务提交前运行派生数据收尾。 */
+  onPersisted?: (item: ProviderIndexItem, cursor: Cursor) => void;
   onCommitted?: (item: ProviderIndexItem, cursor: Cursor) => void;
   onError: (error: unknown, item: ProviderIndexItem) => 'skip' | 'stop';
 }): ProviderIndexResult {
@@ -192,9 +195,11 @@ export function indexProviderPlan({
   const failedProviders = new Set<string>();
   for (const item of plan.items) {
     try {
-      const cursor = runTransaction(`provider:${item.provider.name}:${item.unit.key}`, () => (
-        persist(db, item.unit, item.provider.parse(item.unit, item.cursor))
-      ));
+      const cursor = runTransaction(`provider:${item.provider.name}:${item.unit.key}`, () => {
+        const nextCursor = persist(db, item.unit, item.provider.parse(item.unit, item.cursor));
+        onPersisted(item, nextCursor);
+        return nextCursor;
+      });
       committed.push(item);
       onCommitted(item, cursor);
     } catch (error) {

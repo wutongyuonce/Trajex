@@ -109,6 +109,7 @@ Provider 差异必须留在 adapter，canonical transcript 的写入语义必须
   4、索引编排与并发层                                             
     indexer.ts                 ← 索引编排引擎：所有权、计划、提交、finalize      
     provider-indexing.ts       ← Provider 计划与每 unit 执行
+    index-finalize.ts          ← Core/App 共享的有界 project_path 与 FTS 收尾策略
                │                                                
   3、Provider 适配层                                             
     providers/types.ts         ← TranscriptRecord / Provider 契约
@@ -145,11 +146,12 @@ Provider 差异必须留在 adapter，canonical transcript 的写入语义必须
 | 文件                 | 定位                         | 提供内容 / 作用                                               | 关键关系                                                     |
 | -------------------- | ---------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
 | db.ts                | **数据库生命周期管理**       | 提供 `openDb()`、`openReadDb()`、`openWriterLeaseDb()`、`rebuildMemoryFts()`。`openDb()` 创建并初始化主库；`openReadDb()` 不建库、不迁移；锁库连接不承载业务表。 | 被 `core.ts`、`indexer.ts`、`query.ts` 使用；依赖 `parsing.ts` 的路径工具、`tx.ts` 的连接配置和 `schema-migrations.ts`。 |
+| index-finalize.ts    | **共享派生数据收尾策略**     | 按受影响 session 刷新 `project_path`，执行一次性旧库补偿，并用 readiness marker 控制两张 FTS 的完整修复。 | 被 CLI/Core 与 App indexer 复用；依赖 `parsing.ts` 和 SQLite 结构接口。 |
 | schema.sql           | **DDL 定义**                 | 定义新数据库的表、初始列、索引、FTS5 虚拟表和触发器。          | 由 `db.ts` 的 `openDb()` 通过 `exec` 加载。                  |
 | schema-migrations.ts | **渐进式列迁移**             | 提供 `coreSchemaNeedsMigration()` 与 `migrateCoreSchemaColumns()`；检测/补充已有表的缺失列，不删除列、不修改类型、不搬迁数据。 | 由查询就绪门和 `db.ts` 的可写打开流程调用。                 |
 | sqlite-types.ts      | **SQLite 类型抽象**          | 定义 `SqliteDb`、`SqliteStatement`、`NodeSqliteDb` 等 TypeScript 类型，约束连接、语句和结果行可使用的 API。 | 被几乎所有数据库操作文件作为类型依赖引用；只参与开发/编译，不执行 SQL。 |
 
-`db.ts` 为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责 schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
+`db.ts` 为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责 schema 初始化；`index-finalize.ts` 统一决定何时需要完整 FTS 修复。桌面 App 可通过结构接口复用上层逻辑。
 
 查询不能仅因 `__last_build__` 很新就假设 schema 也是新的。Core 先通过
 `ensureReadableSchema()` 完成独立的可读性检查/迁移，再决定是否刷新 Provider
@@ -196,8 +198,8 @@ function rebuildMemoryFts(db: SqliteDb): void {
 
 | 文件                 | 定位                       | 提供内容 / 作用                                               | 关键关系                                                     |
 | -------------------- | -------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
-| indexer.ts           | **索引编排引擎**           | 提供 `buildIndex()`；依次取得租约、创建 Provider 计划、执行各 unit、最终回填 `project_path` 并重建 FTS。 | 被 `core.ts` 调用；协调 `db.ts`、事务模块、Provider 注册表和 `provider-indexing.ts`。 |
-| provider-indexing.ts | **Provider 索引流水线**    | 提供 `createProviderIndexPlan()`、`indexProviderPlan()`、`writeProviderIndexMarkers()` 与 `readRecentTranscriptHints()`，负责计划、执行、进度标记以及给 App hot set 的最近 transcript 提示。 | 被 CLI/App indexer 调用；执行时将解析出的记录交给 `persist.ts`。 |
+| indexer.ts           | **索引编排引擎**           | 提供 `buildIndex()`；依次取得租约、创建 Provider 计划、执行各 unit，并完成有界派生数据收尾。 | 被 `core.ts` 调用；协调 `db.ts`、`index-finalize.ts`、事务模块、Provider 注册表和 `provider-indexing.ts`。 |
+| provider-indexing.ts | **Provider 索引流水线**    | 提供计划、逐 unit 执行、事务内 `onPersisted`、进度标记以及给 App hot set 的最近 transcript 提示。 | 被 CLI/App indexer 调用；执行时将解析出的记录交给 `persist.ts`。 |
 
 provider-indexing.ts 导出字段：
 
@@ -302,7 +304,7 @@ CLI 每次查询前会调用 `buildIndex()`，这叫 **passive pull mode：没�
 | 3. 初始化与清理 | 打开、迁移 DB；force 时清除旧派生事实       | `db.ts`、`tx.ts`、`write-coordinator.ts`      |
 | 4. 计划         | 注册 Provider，发现本次需要处理的 units     | `builtins.ts`、`provider-indexing.ts`         |
 | 5. 真正索引     | 每个 unit 原子地 parse -> persist           | Provider、`persist.ts`                        |
-| 6. 最终化       | 补项目路径、重建 FTS、提交 marker、释放资源 | `indexer.ts`、`db.ts`、`provider-indexing.ts` |
+| 6. 最终化       | 一次性旧库补偿、确认 FTS、提交 marker、释放资源 | `index-finalize.ts`、`indexer.ts`、`provider-indexing.ts` |
 
 ### 阶段 1：命令入口与实现实体
 
@@ -430,24 +432,24 @@ provider-indexing.ts / indexProviderPlan()
         -> persist.ts / persist(db, unit, generator)
           -> schema.sql：sessions/messages/tools/... 表
           -> index_state：写回新 cursor
+        -> index-finalize.ts / refreshSessionProjectPaths(本 unit session IDs)
 ```
 
 `indexProviderPlan()` 是真正逐 unit 索引的起点。单个坏文件可以记录到 `skippedFiles` 并让其他 unit 继续；每个健康 unit 都将整段“解析 + 写入”放进一个 `runRetryableWriteTransaction()` 重试事务，而不是只重试最后一条 SQL，收集 committed/failed/stopped 的 `ProviderIndexItem[]`。
 
 * Provider 的 `parse(unit, cursor)` 读取原始 JSONL，生成 provider 无关的 `TranscriptRecord` 流。
 * `persist()` 消费该流，按 `kind` 做 upsert、字段合并或删除；它是事实写入 SQLite 的唯一共享入口。只有 generator 正常结束后才把新 cursor 写入 `index_state`，使其成为下一次增量发现的水位线。
+* Core 通过 `onPersisted` 在同一 unit 事务提交前刷新该 unit 的 `sessionId` 与 `retractSessionIds`。因此 `project_path` 不再等到最后扫描全库，而且任何路径推导失败都会和本 unit 的事实、cursor 一起回滚。
 
 ### 阶段 6：统一最终化并释放 writer
 
 ```ts
 indexer.ts / buildIndex()
   -> runRetryableWriteTransaction(finalize)
-    -> indexer.ts / refreshSessionProjectPaths()
-      -> parsing.ts / inferProjectPath()
+    -> index-finalize.ts / backfillUnresolvedSessionProjectPathsOnce()
     -> indexer.ts / healWorkflowParentLinks()
       -> workflows.run_id → tool_results.content → tool_calls.id
-    -> schema.sql：messages_fts rebuild
-    -> db.ts / rebuildMemoryFts()
+    -> index-finalize.ts / ensureFtsReady()
     -> provider-indexing.ts / writeProviderIndexMarkers() // 只写完全无失败且未 stopped 的 Provider marker，避免错误地宣布新投影已完成。
     -> index_state：写 __last_build__
   -> DatabaseSync.close() + writer-lease.ts / lease.release()
@@ -455,7 +457,8 @@ indexer.ts / buildIndex()
 
 finalize 只在所有 unit 已提交或被明确跳过后运行；它失败会使 build 失败，不能被当成普通坏文件吞掉。
 
-* `refreshSessionProjectPaths()` 聚合已写入的 `messages.cwd`，再由 `inferProjectPath()` 按出现频率和首次出现顺序选择可靠路径，必要时才回退 slug 反解。CLI full build 处理全部 session；App 的 changed-path build 只传入本轮提交、撤回和延期重试涉及的 session ID，避免单文件更新扫描全库。
+* `refreshSessionProjectPaths()` 聚合已写入的 `messages.cwd`，再由 `inferProjectPath()` 按出现频率和首次出现顺序选择可靠路径，必要时才回退 slug 反解。普通 CLI/Core build 在每个 unit 事务内只处理本次写入或撤回的 session；`__project_path_backfill_v1__` 负责把旧库中仍为空的路径集中补一次。force/canonical rebuild 仍刷新全部 session。
+* `ensureFtsReady()` 以 `__fts_triggers_ready__` 记录完整 FTS 已建立。普通 build 此后只依赖 schema 中的 insert/update/delete trigger 增量维护 `messages_fts` 与 `memories_fts`；首次初始化或 force rebuild 才执行两张 FTS 的全量 rebuild。这样无变化查询不会再按数据库总量重复付费，但 force 仍可修复外部损坏的派生索引。
 * `healWorkflowParentLinks()` 处理 Workflow JSON 早于主 transcript `tool_result` 入库的竞态：只对 `parent_tool_use_id IS NULL` 的行，按同一 session 的唯一 `run_id` 找 `Workflow` tool call 并补链；找不到时保持 `NULL`。
 
   > **为什么不直接用文件名 slug？**
@@ -700,7 +703,7 @@ type TranscriptRecord =
 | `jsonl_path`              | 此 session 的主要原始 transcript 路径，用于证据定位/回源；它不是工具使用的文件路径。 |
 | `source`                  | Provider 名称，例如 `claude`、`codex`、`pi`，由 adapter 显式写入 `sessions.source`。 |
 
-`project_path` 不在该接口中。`indexer.ts` 的 `refreshSessionProjectPaths()` 会在 unit 写完后，从持久化的 `messages.cwd` 统计并调用 `inferProjectPath()` 推断它。全量 build 处理所有 session；App 增量 build 只处理本轮受影响和延期重试的 session。这避免 Provider 在各自局部视角中做不一致的路径猜测，也避免增量更新退化为全库扫描。
+`project_path` 不在该接口中。`index-finalize.ts` 的 `refreshSessionProjectPaths()` 会在 unit 写完后，从持久化的 `messages.cwd` 统计并调用 `inferProjectPath()` 推断它。Core 普通增量 build 在该 unit 的同一事务中只处理写入或撤回的 session；App 增量 build 处理本轮受影响和延期重试的 session；全量 build 才处理全部 session。这避免 Provider 在各自局部视角中做不一致的路径猜测，也避免增量更新退化为全库扫描。
 
 2、**`MessageRecord` -> `messages`，并由触发器同步 `messages_fts`**
 
@@ -2211,6 +2214,10 @@ jsonl_path = "__app_heartbeat__"
 Provider Adapter 版本标记：
 jsonl_path = "__claude_canonical_transcript_v1__" / "__codex_canonical_transcript_v1__" / "__pi_canonical_transcript_v1__"
               ↑ 不是路径，而是状态 key
+
+一次性派生数据状态：
+jsonl_path = "__project_path_backfill_v1__" / "__fts_triggers_ready__"
+              ↑ 分别表示旧路径补偿完成、FTS 已完成首次全量建立
 ```
 
 | 字段              | 类型    | 说明                                                         |
@@ -2721,7 +2728,7 @@ st.ses.run(
 
 - `started_at` 取旧新两者更早值，`ended_at` 取更晚值；
 - title、project、branch、version 只有新值为 `null` 时才保留旧值；
-- `project_path` 始终保留旧值，它由索引 finalize 的 `refreshSessionProjectPaths()` 统一计算；
+- `project_path` 始终保留旧值，它由 unit 事务内或全量 finalize 调用的 `refreshSessionProjectPaths()` 统一计算；
 - Claude 的增量尾部解析传 `countMode: 'delta'`，新增 5 条会累加到旧计数；Codex full-reparse 传 `countMode: 'total'`，本次数会直接替换旧计数，避免 20 + 25 变成错误的 45。
 
 因此 `countMode` 是 adapter 交给 persist 的写入语义提示；除了这个增量差异，provider-specific 格式不应泄漏到 persist。

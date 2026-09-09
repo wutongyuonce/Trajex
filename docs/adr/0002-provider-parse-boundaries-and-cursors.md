@@ -28,6 +28,14 @@ content into canonical records and a cursor.
 | Codex | `mtime:lines:size:ctime:inode`; replay the whole stable rollout, collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Consume and skip newline-terminated malformed records, then continue. Leave an unterminated malformed tail unconsumed. If the snapshot changes while reading, abort the unit |
 | Pi | `mtime:lines:size:ctime:inode`; replay the whole stable v3 tree, resolve durable leaf/compaction and project `visible` / `inactive` / `hidden` | Stop at the first malformed line and return a cursor before it. If the snapshot changes while reading, abort the unit |
 
+Codex guardian/auto-review threads are filtered from the canonical transcript
+projection. An ordinary incremental build does not proactively delete a
+guardian projection that an older version already wrote; a force rebuild first
+clears all regenerable transcript projections and then reindexes the current
+files, so those stale guardian rows disappear because the parser skips them.
+The force rebuild behavior is the cleanup boundary; a marker-triggered,
+automatic guardian cleanup migration is not part of the current design.
+
 Claude and Codex distinguish a complete malformed record from a possibly torn
 tail: only the unterminated tail remains a retry boundary. Pi retains the
 valid-prefix rule, under which records before a malformed line remain eligible

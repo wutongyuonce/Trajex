@@ -83,6 +83,14 @@ test('search falls back to safe tokenization for FTS-special input instead of th
   db.close();
 });
 
+test('search rethrows non-syntax FTS failures instead of returning no hits', () => {
+  const db = searchDb();
+  const api = createQueryApi(db);
+  db.exec('DROP TABLE messages_fts');
+  assert.throws(() => api.search('needle'), /no such table|messages_fts/i);
+  db.close();
+});
+
 test('search exposes content_type on hits and temporal context', () => {
   const db = searchDb();
   const api = createQueryApi(db);

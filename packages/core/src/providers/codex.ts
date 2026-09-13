@@ -164,14 +164,6 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
 }
 
 /**
- * 用 Codex 的文件 mtime 与存储 cursor 找出需要重放的 session。changedPaths 存在时
- * 只检查 watcher 指出的路径，避免 daemon 每次事件递归扫描全部历史。
- */
-export function discover(ctx: DiscoverContext): IndexUnit[] {
-  return discoverAt(join(homedir(), '.codex'), ctx);
-}
-
-/**
  * 全量读取一个 Codex rollout，并产出完整 session 事实。必须先收集所有可见
  * event_msg，再处理 response_item，才能双向去重这两种可能乱序的消息镜像。
  */
@@ -419,14 +411,12 @@ export function createCodexProvider({ rootDir = join(homedir(), '.codex') }: { r
     name,
     descriptor: { id: name, name: 'Codex', vendor: 'OpenAI', defaultRoot: rootDir, color: '#10a37f' },
     indexVersionMarker: CODEX_CANONICAL_TRANSCRIPT_MARKER,
-    watchTargets: (configuredRoot) => [
-      ...codexTranscriptDirs(configuredRoot).map((dir) => ({ kind: 'tree' as const, path: dir })),
-      { kind: 'file', path: join(configuredRoot, 'session_index.jsonl') },
+    watchTargets: () => [
+      ...codexTranscriptDirs(rootDir).map((dir) => ({ kind: 'tree' as const, path: dir })),
+      { kind: 'file', path: join(rootDir, 'session_index.jsonl') },
     ],
     discover: (ctx) => discoverAt(rootDir, ctx),
     parse,
     raw: (input) => rawCodex(rootDir, input),
   };
 }
-
-export const codexProvider = createCodexProvider();

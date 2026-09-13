@@ -78,10 +78,17 @@ remains before any malformed tail that the Provider leaves unconsumed.
 
 ### Writer ownership and concurrency
 
-- A fresh `__app_heartbeat__` means the App owns writes; passive CLI paths stay
-  read-only. `__app_last_successful_build__` is only an observability marker.
-- `.trajex/writer.lock.sqlite` serializes writers across processes. App builds,
-  heartbeats, CLI builds, migrations, attune, and manual rebuild participate.
+- A fresh `__app_heartbeat__` means the App owns **index** writes; passive CLI
+  paths skip schema setup, indexing, and checkpointing.
+  `__app_last_successful_build__` is only an observability marker.
+- Approved durable memory is a separate write path. `attune` writes through
+  short retryable transactions on an already-initialized memories layer. It
+  does not take the writer lease, does not skip because of a fresh heartbeat,
+  and does not migrate schema. A missing or pre-memory database fails closed
+  without asking a live daemon to upgrade.
+- `.trajex/writer.lock.sqlite` serializes index writers across processes. App
+  builds, heartbeats, CLI builds, migrations, and manual rebuild participate.
+  Attune does not.
 - The App indexer runs one build at a time; lease deferral retains changed paths
   and retries without publishing false success.
 - Bounded busy timeouts complement, but never replace, the lease and complete
@@ -92,13 +99,16 @@ remains before any malformed tail that the Provider leaves unconsumed.
 - Index freshness and schema readability are independent. A recent
   `__last_build__` may skip Provider discovery, but it cannot prove that an
   older database contains every column required by the current executable.
-- Core query and attune entry points call `ensureReadableSchema()` before
-  refreshing Provider data or opening their business connection. If additive
-  migration is needed, it first respects a fresh daemon heartbeat, then obtains
-  the writer lease and migrates through the normal writable open path.
-- A required migration blocked by a fresh daemon or another lease holder fails
-  before query or memory code runs, with `daemon_active` or `writer_busy` in the
-  diagnostic. The caller must not continue and expose a lower-level
+- Core **query** entry points call `ensureReadableSchema()` before refreshing
+  Provider data or opening their business connection. If additive migration is
+  needed, it first respects a fresh daemon heartbeat, then obtains the writer
+  lease and migrates through the normal writable open path.
+- Attune does not call `ensureReadableSchema()`. It only checks that the
+  memories tables exist, so a fresh daemon is never asked to upgrade schema
+  for a memory write.
+- A required query-path migration blocked by a fresh daemon or another lease
+  holder fails before query code runs, with `daemon_active` or `writer_busy` in
+  the diagnostic. The caller must not continue and expose a lower-level
   `no such column` error.
 - The desktop App publishes a real database connection to IPC consumers only
   after either confirming the schema is already readable or migrating it while

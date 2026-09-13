@@ -386,6 +386,7 @@ export interface ProviderAdapter extends Provider {
   readonly descriptor: ProviderDescriptor;
   /** 索引语义版本标记；缺失时触发一次 provider 自有的全量重放。 */
   readonly indexVersionMarker?: string;
-  watchTargets(configuredRoot: string): WatchTarget[];
+  /** 监视目标相对构造时的 defaultRoot；参数保留兼容，内建 adapter 忽略它。 */
+  watchTargets(configuredRoot?: string): WatchTarget[];
   raw(input: RawLookup): RawRecord | null;
 }

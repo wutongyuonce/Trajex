@@ -1,5 +1,9 @@
 # Trajex CLI & Core 架构分析
 
+> 基线：与当前 `packages/core`、`packages/cli` 和 ADR-0002/0003/0007 对齐。
+> 权威顺序是 **代码 + ADR + 黄金测试**；本文是读代码笔记，过期时改 ADR 而不是反过来改代码。
+> 2026-09 已纠正：attune 不拿 writer lease、version marker 按 Provider 隔离、`watchTargets` 用构造时根目录。
+
 ## 阅读导航
 
 这份文档按“结论 → 主路径 → 细节 → 横切不变量”组织：
@@ -39,7 +43,7 @@ return hits.map(hit => ({
 }));
 ```
 
-`search()`、`context()`、`sessions()` 等 helper 只存在于 `--query` 沙箱内；`remember()` / `forget()` 只存在于独立的 `--attune` 沙箱内。读能力和写能力在 API 工厂、数据库连接与 writer lease 三处分开。
+`search()`、`context()`、`sessions()` 等 helper 只存在于 `--query` 沙箱内；`remember()` / `forget()` 只存在于独立的 `--attune` 沙箱内。读能力和写能力在 API 工厂和数据库连接上分开：query 走只读连接，attune 走短事务写 `memories`，不参加索引用的 writer lease。
 
 ## 五个架构结论
 
@@ -93,7 +97,7 @@ Pi     ─┘                         └──> session-detail / App
 展示：SQLite 多表行 → canonical record → session-detail → 可读时间线
 ```
 
-三条路径不完全并列：`searchText()` / `executeQuery()` / `executeAttune()` 会先通过 schema 就绪门，再尝试 `buildIndex()`，所以索引新鲜度是查询的显式前置步骤。`recent_build` 只能跳过 Provider 扫描，不能跳过 schema 可读性检查。
+三条路径不完全并列：`searchText()` / `executeQuery()` 会先通过 schema 就绪门，再尝试 `buildIndex()`，所以索引新鲜度是**查询**的显式前置步骤。`executeAttune()` 不走这扇门：它只检查 memories 表是否已存在，不刷新 Provider、不迁 schema。`recent_build` 只能跳过 Provider 扫描，不能跳过查询路径上的 schema 可读性检查。
 
 Provider 差异必须留在 adapter，canonical transcript 的写入语义必须留在 persist，检索能力必须留在 query，阅读体验必须留在 assembly/renderer。出现 `if (source === 'codex')` 之类的下游分支时，首先应检查 Provider 是否漏掉了应显式表达的语义。
 
@@ -138,14 +142,14 @@ Provider 差异必须留在 adapter，canonical transcript 的写入语义必须
 | 文件       | 定位                             | 提供内容 / 作用                                               | 关键关系                                                     |
 | ---------- | -------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
 | core.ts    | **Core 的聚合面**                | 对外暴露构建、搜索、查询脚本与记忆操作等高层函数；为脚本创建、监督 Worker Thread。 | 依赖 `db.ts`、`indexer.ts`、`query.ts`、`sandbox-worker.ts`；被 CLI 的 `trajex.ts` 直接 `import`。 |
-| sandbox-worker.ts | **脚本执行边界** | 在独立 Worker Thread 内创建 `node:vm` context；query 持有只读连接，attune 持有 writer lease 和写事务。 | 由 `core.ts` 启动；依赖 `db.ts`、`query.ts`、`writer-lease.ts`、`indexer.ts`。 |
-| persist.ts | **唯一写数据库的持久化层**       | 消费 `TranscriptRecord` 流，并将会话、消息、工具等事实写入 SQLite。 | 被 `provider-indexing.ts` 调用；依赖 `sqlite-types.ts` 和 `providers/types.ts`。 |
+| sandbox-worker.ts | **脚本执行边界** | 在独立 Worker Thread 内创建 `node:vm` context；query 持有只读连接，attune 用 `openAttuneDb()` + 短事务 busy 重试写 memories，不拿 writer lease。 | 由 `core.ts` 启动；依赖 `db.ts`、`query.ts`、`tx.ts`、`write-coordinator.ts`。 |
+| persist.ts | **TranscriptRecord 的 schema 写入层** | 消费 `TranscriptRecord` 流，并将会话、消息、工具等事实写入 SQLite。query / attune / 迁移 / finalize 也会碰数据库，但只有 persist 认识 record kind。 | 被 `provider-indexing.ts` 调用；依赖 `sqlite-types.ts` 和 `providers/types.ts`。 |
 
 2、数据库层
 
 | 文件                 | 定位                         | 提供内容 / 作用                                               | 关键关系                                                     |
 | -------------------- | ---------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
-| db.ts                | **数据库生命周期管理**       | 提供 `openDb()`、`openReadDb()`、`openWriterLeaseDb()`、`rebuildMemoryFts()`。`openDb()` 创建并初始化主库；`openReadDb()` 不建库、不迁移；锁库连接不承载业务表。 | 被 `core.ts`、`indexer.ts`、`query.ts` 使用；依赖 `parsing.ts` 的路径工具、`tx.ts` 的连接配置和 `schema-migrations.ts`。 |
+| db.ts                | **数据库生命周期管理**       | 提供 `openDb()`、`openReadDb()`、`openAttuneDb()`、`openWriterLeaseDb()`。`openDb()` 创建并初始化主库；`openReadDb()` 不建库、不迁移；`openAttuneDb()` 要求 memories 表已存在且不迁 schema；锁库连接不承载业务表。 | 被 `core.ts`、`indexer.ts`、`sandbox-worker.ts` 使用；依赖 `tx.ts` 的连接配置和 `schema-migrations.ts`。 |
 | index-finalize.ts    | **共享派生数据收尾策略**     | 普通构建只为受影响且路径为空的 session 推导稳定 `project_path`，执行一次性旧库补偿，并用 readiness marker 控制两张 FTS 的完整修复。 | 被 CLI/Core 与 App indexer 复用；依赖 `parsing.ts` 和 SQLite 结构接口。 |
 | schema.sql           | **DDL 定义**                 | 定义新数据库的表、初始列、索引、FTS5 虚拟表和触发器。          | 由 `db.ts` 的 `openDb()` 通过 `exec` 加载。                  |
 | schema-migrations.ts | **渐进式列迁移**             | 提供 `coreSchemaNeedsMigration()` 与 `migrateCoreSchemaColumns()`；检测/补充已有表的缺失列，不删除列、不修改类型、不搬迁数据。 | 由查询就绪门和 `db.ts` 的可写打开流程调用。                 |
@@ -180,10 +184,6 @@ function openWriterLeaseDb(lockPath: string): NodeSqliteDb {
   return new DatabaseSync(lockPath);
 }
 
-/** 批量写入结束后，由 memories 表重新派生 content-backed FTS。 */
-function rebuildMemoryFts(db: SqliteDb): void {
-  db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
-}
 ```
 
 3、事务与并发控制
@@ -192,7 +192,7 @@ function rebuildMemoryFts(db: SqliteDb): void {
 | -------------------- | ---------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | tx.ts                | **事务抽象**           | 它把 CLI 使用的 `node:sqlite` 与桌面端使用的 `better-sqlite3` 适配成同一种 `BEGIN IMMEDIATE -> work -> COMMIT` 原子写事务，并在失败时尽力回滚，保留足够诊断信息，交给上层判断能否重试。提供 `runWriteTransaction()`、两个 SQLite binding adapter 和 `configureConnection()`。 | 被 `db.ts`、`indexer.ts`、`write-coordinator.ts` 使用。      |
 | write-coordinator.ts | **可重试写入协调器**   | 提供 `runRetryableWriteTransaction()` 及 busy/事务状态判断；只对可确认安全的失败进行有限重试。 | 被 `indexer.ts` 使用；包装 `tx.ts` 的单次事务函数。          |
-| writer-lease.ts      | **跨进程单 writer 锁** | 提供 `writerLockPathFor()`、`acquireWriterLease()`；使用独立 `writer.lock.sqlite` 保证同一时刻仅一个进程可写索引。 | 被 `core.ts`、`indexer.ts` 使用；在主库事务之前取得并在构建结束时释放。 |
+| writer-lease.ts      | **跨进程单 writer 锁** | 提供 `writerLockPathFor()`、`acquireWriterLease()`；使用独立 `writer.lock.sqlite` 保证同一时刻仅一个进程可写**索引**。 | 被 `indexer.ts` 使用；attune 不参加。在主库索引事务之前取得并在构建结束时释放。 |
 
 4、索引引擎
 
@@ -215,7 +215,7 @@ export interface ProviderIndexItem {
 export interface ProviderIndexPlan {
   readonly items: ProviderIndexItem[];
   readonly pendingMarkers: ReadonlyMap<string, string>;
-  readonly fullRebuild: boolean;
+  readonly fullRebuild: boolean; // 仅 force；缺 marker 只让该 Provider 空 cursor 重放
   readonly inventoryIssues: readonly ProviderInventoryRootIssue[];
 }
 
@@ -231,7 +231,7 @@ export interface ProviderIndexResult {
 
 | 文件              | 定位                         | 提供内容 / 作用                                               | 关键关系                                                     |
 | ----------------- | ---------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
-| query.ts          | **查询 API 与记忆操作**     | 提供 `createQueryApi()` 的 `search`、`context`、`thread`、`sessions`、`overview`、`memories` 等查询，以及 `createAttuneApi()` 的 `remember` / `forget`。 | 被 `core.ts` 调用；查询使用索引数据，记忆操作进入 writer lease 保护的写入路径。 |
+| query.ts          | **查询 API 与记忆操作**     | 提供 `createQueryApi()` 的 `search`、`context`、`thread`、`sessions`、`overview`、`memories` 等查询，以及 `createAttuneApi()` 的 `remember` / `forget`。 | 被 `core.ts` / sandbox-worker 调用；查询走只读连接，记忆写入走 attune 短事务，不拿索引 lease。 |
 | session-detail.ts | **会话详情组装**             | 将 `TranscriptRecord` 流或数据库行组装为 `SessionDetailSnapshot`，供界面展示。 | 纯函数，不依赖数据库；被桌面应用或渲染层使用。                |
 
 6、工具函数
@@ -291,7 +291,7 @@ CLI 只做参数路由、脚本文件读取和 JSON 输出。它不拥有数据�
 | `trajex --build`          | core.ts `buildIndex({ force: true })`  | 强制重建会话派生数据，输出 DB 路径 |
 | `trajex --search "text"`  | core.ts `searchText(text)`             | 刷新可用时的索引，再输出 FTS 命中  |
 | `trajex --query file.js`  | core.ts `executeQuery(scriptContent)`  | 在只读 JS 沙箱执行，输出 return 值 |
-| `trajex --attune file.js` | core.ts `executeAttune(scriptContent)` | 在 writer lease 内执行 memory 变更 |
+| `trajex --attune file.js` | core.ts `executeAttune(scriptContent)` | 短事务写 memories；不刷新索引、不迁 schema、不拿 lease |
 
 CLI 每次查询前会调用 `buildIndex()`，这叫 **passive pull mode：没有后台常驻，运行时拉取更新**。
 
@@ -450,7 +450,7 @@ indexer.ts / buildIndex()
     -> indexer.ts / healWorkflowParentLinks()
       -> workflows.run_id → tool_results.content → tool_calls.id
     -> index-finalize.ts / ensureFtsReady()
-    -> provider-indexing.ts / writeProviderIndexMarkers() // 只写完全无失败且未 stopped 的 Provider marker，避免错误地宣布新投影已完成。
+    -> provider-indexing.ts / writeProviderIndexMarkers() // 计划完整跑完才写；skip 不挡 marker，stop 或该 Provider 来源根不可用才不写。
     -> index_state：写 __last_build__
   -> DatabaseSync.close() + writer-lease.ts / lease.release()
 ```
@@ -525,24 +525,18 @@ trajex --query <file.js>
 
 ```ts
 trajex.ts --attune <file.js>
-  -> core.ts executeAttune(scriptContent)
-	-> assertReadableSchema();  // 只读检查发现旧结构 → 协调写锁 → 调用 openDb() 完成幂等加列
-    -> buildIndex()
-    -> runInSandboxWorker()  // 启动 sandbox worker
-      -> acquireWriterLease()         // worker 内获取写入锁
-      -> 锁内再次检查 daemon 活跃状态
-      -> openDb()
-      -> BEGIN IMMEDIATE
-      -> node:vm 在受限 context 中执行脚本
-        -> 沙箱内仅提供 remember() / forget()
-      -> COMMIT；失败则 ROLLBACK
-      -> 关闭 db 并 release()
+  -> core.ts executeAttune(scriptContent)   // 不走 schema 门，不 buildIndex
+    -> runInSandboxWorker('attune')
+      -> openAttuneDb()          // 库不存在或没有 memories 表则失败；不迁 schema
+      -> runRetryableWriteTransaction (短事务，BEGIN busy 可重试)
+      -> node:vm 执行脚本，仅 remember() / forget()
+      -> COMMIT / ROLLBACK，关闭 db
 ```
 
 ```ts
-searchText ：无脚本 → 无沙箱；只读 → 无锁
-executeQuery：有脚本 → 沙箱；只读 → 无锁
-executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
+searchText ：无脚本 → 无沙箱；只读 → 无索引锁
+executeQuery：有脚本 → 沙箱；只读 → 无索引锁
+executeAttune：有脚本 → 沙箱；写 memories → 短事务 + busy 重试，不拿索引 lease
 ```
 
 * 是否沙箱 = 是否有用户代码
@@ -555,7 +549,7 @@ executeAttune：有脚本 → 沙箱；写库 → 锁 + 双检查
 
   - searchText / executeQuery 都只使用 `openReadDb()`（只读连接；executeQuery 由 sandbox worker 打开），不可能改数据，所以不需要 lease；
 
-  - executeAttune 要写 memories，先由主线程执行 buildIndex 检查，再由 sandbox worker 完成 acquireWriterLease → 锁内复查 heartbeat → openDb → 事务执行脚本 → 关库放锁。
+  - executeAttune 要写 memories，worker 打开已有 memories 层，用短事务 + busy 重试写入；daemon 占用索引时仍允许登记 approved durable memory。
 
 > vm sandbox 本质就是：Node 把 V8 的 context 单独开一个，把自己注入的全局全部撤掉。
 >
@@ -921,8 +915,8 @@ interface ProviderAdapter extends Provider {
 | 成员                         | 用途                                                         |
 | ---------------------------- | ------------------------------------------------------------ |
 | `descriptor`                 | 让 `providers/builtins.ts` / registry 将 adapter 暴露给设置页、CLI/App 配置和 UI。 |
-| `indexVersionMarker?`        | Provider 的投影规则版本。它本身是 `index_state` 中的特殊 key；换成新字符串会使新 key 缺失。若库中已有任一 provider 的旧 projection，`createProviderIndexPlan()` 会安排全库 canonical rebuild，全部 unit 成功后才写入待定 markers。可选是为了兼容尚未定义版本语义的 adapter。 |
-| `watchTargets(configuredRoot)` | 根据用户配置返回 typed targets。`tree` 是递归目录，`file` 是精确文件；一个 Provider 可同时声明 transcript 目录和 history/session index metadata。 |
+| `indexVersionMarker?`        | Provider 的投影规则版本。它本身是 `index_state` 中的特殊 key；换成新字符串会使新 key 缺失。若库中已有**该** provider 的旧 projection，计划层只对该来源空 cursor 重放；force 清表仍只属于 `trajex --build`。可选是为了兼容尚未定义版本语义的 adapter。 |
+| `watchTargets()` | 返回 typed targets，根目录用构造 adapter 时的 `defaultRoot`。`tree` 是递归目录，`file` 是精确文件。要换根就重建 registry。 |
 | `raw(input)`                 | 根据规范 lookup 回读原始消息。找不到、来源不支持或已删除时返回 `null`，而不是抛出“数据库记录必然存在原文”的错误。 |
 
 `ProviderAdapter` 因而是 registry 真正接受的完整适配器；`Provider` 则是索引编排只需要的最小子集。前者不要求 `persist` 知道 UI，后者也不要求每个索引调用方依赖 Electron watcher。
@@ -1957,7 +1951,7 @@ Pi 的 session 文件按工作目录分层存放：
 
 cursor 形状为 `mtimeMs:lines:size:ctimeMs:inode`，但与 Claude 的"行增量续读"不同：Pi 的 `parse(unit, _cursor)` 忽略 cursor 里的行数，总是**全量重放**整份文件——active context 由 durable leaf、compaction 的 `firstKeptEntryId` / `retainedTail` 从整棵树推导，无法从某个行号恢复。解析前后会再次比较四项快照；读取期间文件变化就放弃本次事务，不提交混合版本。`message_count` 只统计 visible 主线，inactive/hidden 记录仍保存。Pi 每次产出的 `session.countMode` 恒为 `'total'`，并在记录流开头发出 `delete-session`，让 persist 清理旧投影，避免全量重放叠加出重复行。
 
-`watchTargets(configuredRoot)` 返回 `{kind:'tree', path: configuredRoot}`，不做任何路径拼接——App Settings 里填的就是最终 session directory，这也与 README 中“Pi 不再追加路径”的约定一致。
+`watchTargets()` 返回 `{kind:'tree', path: sessionDir}`，不做任何路径拼接——构造 `createPiProvider({ sessionDir })` 时传入的就是最终 session directory，这也与 README 中“Pi 不再追加路径”的约定一致。
 
 #### 原文回查 `rawPi()`
 
@@ -1990,8 +1984,7 @@ export interface ProviderRegistry {
   /** 返回当前注册的所有 adapter 列表（byId 快照的副本）。 */
   list(): ProviderAdapter[];
   /** 聚合所有 adapter 需要监视的 typed targets，按 kind + path 去重。
-   *  configuredRoots 允许调用方覆盖某个 provider 的默认根目录，
-   *  未覆盖时使用 provider.descriptor.defaultRoot。 */
+   *  根目录以构造时 defaultRoot 为准；configuredRoots 参数保留兼容，不再覆盖。 */
   watchTargets(configuredRoots?: Readonly<Record<string, string>>): WatchTarget[];
   /** 按来源定位 adapter 并查询原始消息行；未找到对应的 adapter 时返回 null。 */
   raw(input: RawLookup): RawRecord | null;
@@ -2843,7 +2836,7 @@ ON CONFLICT(agent_id) DO UPDATE SET
 
 | 方法 | 作用 |
 |---|---|
-| `remember({ path, session_id, message_start, message_end, summary, project })` | 写一条记忆（INSERT OR REPLACE），返回新记录关键字段 |
+| `remember({ path, session_id, message_start, message_end, summary, project })` | 写一条记忆（INSERT；主键冲突换新 UUID，绝不覆盖），返回新记录关键字段 |
 | `forget({ id, reason })` | 软删除记忆（写 deleted_at/deleted_reason）；对同一 id 重复调用返回 `already_deleted` |
 
 "不是通用写库接口"体现在三层约束：
@@ -2854,7 +2847,7 @@ ON CONFLICT(agent_id) DO UPDATE SET
    - `remember` 必填 `path` + `summary`，且 summary 必须英文（记忆层按英文索引，CJK 直接抛错，引导先翻译术语）；`path` 经 `resolveMemoryPath` 校验必须已存在且是文件（有 session_id 时以其 `project_path` 为基准，否则 cwd）；`message_start` / `message_end` 可选，用于标记同一 session 内的消息证据范围；
    - `forget` 必填 `id` + `reason`，找不到即抛错。
 
-所以即便拿到了 Attune API，脚本能做的也只有"往记忆层追加一条、软删一条"，无法改写任何索引数据——这是 `executeAttune` 敢给它开写库连接 + 写锁的底气。
+所以即便拿到了 Attune API，脚本能做的也只有"往记忆层追加一条、软删一条"，无法改写任何索引数据——这是 attune 可以不拿索引 lease、与 daemon 并发写 memories 的底气。
 
 ## 六、Session detail assembly：app 展示用投影 `session-detail.ts`
 
@@ -2914,7 +2907,8 @@ interface SessionDetailSnapshot {
 |---|---|
 | `session` | `countMode === 'delta'` 直接抛错——详情组装要求全新全量解析，不允许 delta 续读；否则写入 session 头 |
 | `message` | `visibility === 'hidden'` 跳过（真正从展示中消失）；`type` 取 `type \|\| role`；`agent_id === null` 的消息记入主线程集合 |
-| `tool_call` / `tool_result` / `subagent` / `workflow` / `summary` | 进各自桶，等待装配 |
+| `tool_call` / `tool_result` / `subagent` / `workflow` | 进各自桶，等待装配 |
+| `summary` | `visibility === 'hidden'` 跳过；其余进摘要桶 |
 | `workflow_agent` | 按 `agent_id` 合并：同一 agent 可能由多条记录补齐字段，非 null 值覆盖旧值 |
 | `message-turn-duration` | 按 `uuid` 回填到已收集 message 的 `turn_duration_ms` |
 | `delete-session` | 忽略（详情层不消费删除指令） |
@@ -2945,7 +2939,7 @@ interface SessionDetailSnapshot {
 
 ## 七、并发与写入所有权
 
-Trajex 有多种可能的写者：App daemon 的增量构建、App 手动重建、CLI 查询前的被动构建、App 心跳以及 `attune` 记忆写入。它们共享一个主库，因此并发正确性不能只靠 `busy_timeout`。
+Trajex 有多种可能的**索引**写者：App daemon 的增量构建、App 手动重建、CLI 查询前的被动构建、App 心跳。它们共享主库的 transcript 表，因此索引并发不能只靠 `busy_timeout`。`attune` 是另一条写路径：只碰 `memories`，用短事务 + busy 重试，不参加下面的 lease 顺序。
 
 ```text
 心跳（policy）       现在应该由谁写？
@@ -2959,7 +2953,7 @@ writer lease（mutex） 无论心跳是否过期，写者都不能重叠
 
 ### 心跳是软所有权，租约是硬互斥
 
-App 默认每 30 秒写入一次 `__app_heartbeat__`，Core 将 60 秒内的心跳视为新鲜。心跳新鲜时 CLI 可以只读查询，但不应建表、迁移、索引或 attune。
+App 默认每 30 秒写入一次 `__app_heartbeat__`，Core 将 60 秒内的心跳视为新鲜。心跳新鲜时 CLI 可以只读查询，但不应建表、迁移或索引。attune 不被心跳跳过。
 
 writer lease 使用独立的 `writer.lock.sqlite`。获取时在锁库上执行 `BEGIN IMMEDIATE`，保持该事务直到 `release()`；进程崩溃或连接关闭时 SQLite 自然释放锁。独立锁库让 `node:sqlite` 和 `better-sqlite3` 共享同一套跨平台互斥语义，也避免主库业务事务与锁的生命周期耦合。
 
@@ -2973,7 +2967,7 @@ writer lease 使用独立的 `writer.lock.sqlite`。获取时在锁库上执行 
 5. 仍无活跃 daemon → 才打开写连接
 ```
 
-第 4 步关闭了首次检查与取锁之间的 TOCTOU 窗口。`buildIndex()` 和 attune worker 都遵守这个顺序。
+第 4 步关闭了首次检查与取锁之间的 TOCTOU 窗口。这条顺序只约束 `buildIndex()` / schema 迁移，不约束 attune。
 
 ### 事务原语与重试策略分开
 
@@ -2997,7 +2991,7 @@ Trajex 有三个不同尺度的“重新来过”：
 | 层次 | 触发 | 作用范围 | 主要用途 |
 |---|---|---|---|
 | Cursor | unit 发生变化或上次失败 | 单个 `IndexUnit` | 增量恢复和自然重试 |
-| Provider 版本标记 | 解析语义的 marker 缺失，且库中已有该来源数据 | 当前实现会进入全局 canonical rebuild | 用重放取代复杂的派生数据迁移 |
+| Provider 版本标记 | 解析语义的 marker 缺失，且库中已有该来源数据 | **只**让该 Provider 的 unit 用空 cursor 重放，不清别人的表 | 用重放取代复杂的派生数据迁移 |
 | Force rebuild | 用户执行 `trajex --build` | 全部 transcript 派生表 | 清理遗留投影、恢复索引一致性 |
 
 ### Cursor 同时是进度与重试队列
@@ -3011,9 +3005,7 @@ Trajex 有三个不同尺度的“重新来过”：
 
 ### 版本标记是投影协议，不是 schema 版本
 
-当 Provider 的去重、可见性、分支选择或 ID 策略发生变化时，仅修改代码不会自动修复已有 SQLite 投影。正确做法是提升 `indexVersionMarker`。三个内建 Provider 从未使用过的 `v1` 重新建立统一基线，后续按不透明字符串 `v1.1`、`v1.2` 递增；代码不会执行数值比较。当新 marker 缺失且旧数据存在时，计划层使用空游标全量重放；只有该 Provider 的所有 unit 都成功且构建未中途停止，新 marker 才会写入。
-
-当前 `createProviderIndexPlan()` 将任一已有 Provider 的 marker 升级视为 `fullRebuild`，所有 Provider 都用空游标重放。文档中不应再把它表述为“只重放某一个 Provider”。
+当 Provider 的去重、可见性、分支选择或 ID 策略发生变化时，仅修改代码不会自动修复已有 SQLite 投影。正确做法是提升 `indexVersionMarker`。三个内建 Provider 从未使用过的 `v1` 重新建立统一基线，后续按不透明字符串 `v1.1`、`v1.2` 递增；代码不会执行数值比较。当新 marker 缺失且旧数据存在时，计划层**只**对该 Provider 使用空游标重放，`fullRebuild`（清全部 transcript 表）仍只属于用户 `trajex --build`。单个坏文件 skip 不阻止写入 marker；构建中途 stop，或该 Provider 来源根不可用时，不写 marker，以免把未完成的投影升级宣布为完成。
 
 ### 破坏性清理前先证明来源清单完整
 

@@ -25,6 +25,20 @@ import {
   executeAttune,
 } from '../../core/src/core.ts';
 
+function readCliVersion(): string {
+  const candidates = [
+    new URL('../package.json', import.meta.url),
+    new URL('../../../package.json', import.meta.url),
+  ];
+  for (const url of candidates) {
+    try {
+      const pkg = JSON.parse(readFileSync(url, 'utf8')) as { name?: string; version?: string };
+      if (pkg.name === '@trajex-apps/cli' && typeof pkg.version === 'string') return pkg.version;
+    } catch { /* source vs dist layout */ }
+  }
+  throw new Error('Unable to read @trajex-apps/cli package version');
+}
+
 /**
  * 分发 CLI 参数到 Core。每个命令分支完成后立即 return，保证一次进程调用只执行
  * 一项顶层动作；错误统一序列化，方便 Agent 消费。
@@ -41,12 +55,9 @@ async function main() {
     process.stdout.write(JSON.stringify(value, null, 2) + '\n');
   };
 
-  // 版本查询完全脱离索引和数据库。
+  // 版本查询完全脱离索引和数据库。源码在 packages/cli/src，产物在 dist/cli/src。
   if (args[0] === '--version' || args[0] === '-v') {
-    const packageJson = JSON.parse(
-      readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'),
-    ) as { version: string };
-    process.stdout.write(`${packageJson.version}\n`);
+    process.stdout.write(`${readCliVersion()}\n`);
     return;
   }
   // 强制构建会要求 Core 清理可再生索引后重放 Provider 数据。

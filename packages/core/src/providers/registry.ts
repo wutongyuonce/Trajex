@@ -27,8 +27,8 @@ export interface ProviderRegistry {
   /** 返回当前注册的所有 adapter 列表（byId 快照的副本）。 */
   list(): ProviderAdapter[];
   /** 聚合所有 adapter 需要监视的目录/文件目标，按 kind + path 去重。
-   *  configuredRoots 允许调用方覆盖某个 provider 的默认根目录，
-   *  未覆盖时使用 provider.descriptor.defaultRoot。 */
+   *  根目录以构造 registry 时的 descriptor.defaultRoot 为准；要换目录就重建 registry。
+   *  configuredRoots 参数保留兼容，不再覆盖 discover/raw 所用的根。 */
   watchTargets(configuredRoots?: Readonly<Record<string, string>>): WatchTarget[];
   /** 按来源定位 adapter 并查询原始消息行；未找到对应的 adapter 时返回 null。 */
   raw(input: RawLookup): RawRecord | null;
@@ -68,12 +68,10 @@ export function createProviderRegistry(providers: readonly ProviderAdapter[]): P
     // list：每次返回新数组，外部增删不影响注册表。
     list,
 
-    watchTargets: (configuredRoots = {}) => {
+    watchTargets: (_configuredRoots = {}) => {
       const seen = new Set<string>();
       return list()
-        .flatMap((provider) =>
-          provider.watchTargets(configuredRoots[provider.name] ?? provider.descriptor.defaultRoot),
-        )
+        .flatMap((provider) => provider.watchTargets(provider.descriptor.defaultRoot))
         .filter((target) => {
           const key = `${target.kind}:${target.path}`;
           if (seen.has(key)) return false;

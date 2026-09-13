@@ -231,6 +231,19 @@ function buildSafeFtsQuery(text: unknown): string {
     .join(' ');
 }
 
+/** 仅 FTS 语法/运算符错误可降级到安全分词；缺表、磁盘、授权失败必须抛出。 */
+function isFtsSyntaxError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /fts5:\s*syntax error|malformed MATCH expression|unrecognized token|unknown special query|no such column/i.test(message);
+}
+
+function isPrimaryKeyConflict(error: unknown): boolean {
+  const raw = error as { errcode?: unknown; code?: unknown; message?: unknown } | null;
+  if (raw?.errcode === 1555 || raw?.errcode === 19) return true;
+  if (typeof raw?.code === 'string' && /CONSTRAINT/i.test(raw.code)) return true;
+  return typeof raw?.message === 'string' && /UNIQUE constraint failed|PRIMARY KEY/i.test(raw.message);
+}
+
 /**
  * 创建只读历史检索 API。该对象会被 core.ts 注入 VM sandbox，因此每个函数既是
  * Agent 脚本的公共能力，也是必须保持稳定的安全接口。
@@ -282,7 +295,8 @@ function createQueryApi(
     let rows;
     try {
       rows = runMatch(text);
-    } catch {
+    } catch (error) {
+      if (!isFtsSyntaxError(error)) throw error;
       const safe = buildSafeFtsQuery(text);
       rows = safe ? runMatch(safe) : [];
     }
@@ -738,7 +752,7 @@ function createAttuneApi(db: SqliteDb, runMutation: <T>(work: () => T) => T = wo
             id, session_id || null, proj, message_start || null, message_end || null, normalizedPath, summary, created_at);
           return;
         } catch (error) {
-          if (attempt < 2 && (error as { errcode?: unknown }).errcode === 1555) {
+          if (attempt < 2 && isPrimaryKeyConflict(error)) {
             id = `mem-${randomUUID()}`;
             continue;
           }

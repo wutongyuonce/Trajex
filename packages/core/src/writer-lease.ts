@@ -5,13 +5,13 @@
 /**
  * 跨进程 SQLite writer lease。
  *
- * 模块定位：所有 Trajex 写操作的硬互斥锁。锁放在独立 SQLite 文件中，以便
+ * 模块定位：索引写入的跨进程硬互斥锁。锁放在独立 SQLite 文件中，以便
  * node:sqlite 与 better-sqlite3 复用相同锁语义；它与 index_state heartbeat 的
- * 软所有权提示互补。
+ * 软所有权提示互补。attune 写 memories 不走这把锁。
  */
-// Cross-process single-writer lease shared by every Trajex mutation. The
-// lock lives in a dedicated SQLite database so node:sqlite and better-sqlite3
-// share identical locking semantics on every supported platform.
+// Cross-process single-writer lease for index mutations. The lock lives in a
+// dedicated SQLite database so node:sqlite and better-sqlite3 share identical
+// locking semantics. Attune does not participate.
 
 import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';

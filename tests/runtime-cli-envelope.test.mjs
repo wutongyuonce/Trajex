@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { makeTempDir } from './temp-dirs.mjs';
-// Tier 1 contract golden tests (see docs/adr/0002-two-tier-runtime-contract.md).
+// Tier 1 contract golden tests (see docs/adr/0007-two-tier-runtime-contract.md).
 //
 // These lock the four-verb CLI I/O envelope at the process boundary so the
 // upcoming TypeScript / runtime-core refactor cannot silently change what an

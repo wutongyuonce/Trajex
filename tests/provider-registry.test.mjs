@@ -47,9 +47,10 @@ test('provider registry drives source catalog, typed watch targets, and raw look
     { id: 'alpha', name: 'alpha display', vendor: 'alpha vendor', defaultRoot: '/default/alpha', color: '#123456' },
     { id: 'beta', name: 'beta display', vendor: 'beta vendor', defaultRoot: '/default/beta', color: '#123456' },
   ]);
+  // Root overrides are ignored: watch/discover/raw all use constructor defaultRoot.
   assert.deepEqual(registry.watchTargets({ alpha: '/custom/alpha' }), [
-    { kind: 'tree', path: '/custom/alpha/sessions' },
-    { kind: 'file', path: '/custom/alpha/session-index' },
+    { kind: 'tree', path: '/default/alpha/sessions' },
+    { kind: 'file', path: '/default/alpha/session-index' },
     { kind: 'tree', path: '/default/beta/sessions' },
     { kind: 'file', path: '/default/beta/session-index' },
   ]);

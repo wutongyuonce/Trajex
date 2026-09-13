@@ -6,6 +6,15 @@
 
 - 普通增量索引只为 `project_path` 为空的受影响会话推导项目根目录，Codex/Pi 全量重放也会跨 `delete-session` 保留已解析路径；不再重扫长会话的全部 `cwd` 历史或用后续子目录覆盖项目根，force rebuild 仍会完整重新计算。
 
+### Core/CLI 审查修复 (`02a184a`)
+
+- Provider version marker 按来源隔离：缺 marker 只让该 Provider 空 cursor 重放，不再触发全家 `fullRebuild` 清表；skip 不挡 marker，stop 或该来源根不可用才不写。
+- `search()` 只对 FTS 语法/运算符错误降级到安全分词；缺表、磁盘、授权失败会抛出。
+- `watchTargets` / `discover` / `raw` 一律使用构造 registry 时的根目录；要换目录就重建 registry。
+- `attune` 文档与实现对齐：与 daemon 并发写 memories，不拿 writer lease、不迁 schema；schema 门只绑 query/build。
+- Pi 发现只读 JSONL 首行；Claude workflow cursor 改为五段快照；session-detail 丢弃 hidden 摘要；CLI `--version` 固定读 `@trajex-apps/cli` 的 package.json。
+- 删除 `rebuildMemoryFts`、三个 provider 单例和 `db.ts` 对 parsing 的再导出。
+
 ## [0.2.7]
 
 ### Added

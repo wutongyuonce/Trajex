@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative } from 'node:path';
 
-import { projectSlugFromPath, trunc, truncJson, truncToolResult, toolResultPreview } from '../parsing.ts';
+import { projectSlugFromPath, trunc, truncJson, truncToolResult, toolResultPreview, readLines } from '../parsing.ts';
 import { cursorMatchesSnapshot, fileSnapshot, sameSnapshot, snapshotCursor } from './file-snapshot.ts';
 import type {
   Cursor, DiscoverContext, IndexUnit, IndexedSession, MessageRecord, ProviderAdapter,
@@ -32,6 +32,15 @@ type PiToolScope = {
 
 function piId(sessionId: string, entryId: string, suffix = ''): string {
   return `${sessionId}:${entryId}${suffix}`;
+}
+
+function firstJsonlLine(path: string): string | null {
+  let first: string | null = null;
+  readLines(path, (line) => {
+    first = line;
+    return false;
+  });
+  return first;
 }
 
 function sessionFiles(dir: string, rootEntries: readonly Dirent[]): string[] {
@@ -94,9 +103,12 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
     const snapshot = fileSnapshot(path);
     const cursor = ctx.lastCursor(path);
     if (cursorMatchesSnapshot(cursor, snapshot)) return [];
+    const headerLine = firstJsonlLine(path);
     let header: PiEntry | null = null;
-    try { header = JSON.parse(readFileSync(path, 'utf8').split('\n')[0] || 'null'); } catch { /* malformed file */ }
-    if (header?.type !== 'session' || header.version !== 3 || typeof header.id !== 'string') return [];
+    if (headerLine) {
+      try { header = JSON.parse(headerLine) as PiEntry; } catch { header = null; }
+    }
+    if (!header || header.type !== 'session' || header.version !== 3 || typeof header.id !== 'string') return [];
     const project = projectSlugFromPath(header.cwd);
     const sessionId = piSessionId(header.id, header.cwd);
     const retractSessionIds = (indexedByPath.get(path) ?? [])
@@ -642,11 +654,9 @@ export function createPiProvider({ sessionDir = process.env.PI_CODING_AGENT_SESS
     name,
     descriptor: { id: name, name: 'Pi', vendor: 'Pi', defaultRoot: sessionDir, color: '#7c3aed' },
     indexVersionMarker: PI_CANONICAL_TRANSCRIPT_MARKER,
-    watchTargets: configuredRoot => [{ kind: 'tree', path: configuredRoot }],
+    watchTargets: () => [{ kind: 'tree', path: sessionDir }],
     discover: ctx => discoverAt(sessionDir, ctx),
     parse,
     raw: input => rawPi(sessionDir, input),
   };
 }
-
-export const piProvider = createPiProvider();

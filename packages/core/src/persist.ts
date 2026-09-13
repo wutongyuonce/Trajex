@@ -13,8 +13,9 @@
 // Provider-agnostic and binding-agnostic: it consumes the TranscriptRecord stream
 // from any adapter's parse() and writes rows into the injected database handle
 // (node:sqlite for the CLI, better-sqlite3 for the app — they share the
-// prepare/run/get API). It is the ONLY layer that touches the database and the
-// only place that knows the schema. Adapters stay pure.
+// prepare/run/get API). It is the only layer that maps TranscriptRecord kinds
+// onto schema writes. Query, attune, migrations, and finalize touch SQLite for
+// other reasons. Adapters stay pure.
 //
 // Write semantics are the canonical ones reconciled from the drift: messages
 // upsert via ON CONFLICT; sessions merge with any existing row (started_at MIN,

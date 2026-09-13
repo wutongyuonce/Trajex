@@ -467,6 +467,7 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
         } as WorkflowAgentRecord);
         break;
       case 'summary':
+        if (record.visibility === 'hidden') break;
         summaries.push(withoutKind(record));
         break;
       case 'message-turn-duration': {

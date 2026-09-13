@@ -98,17 +98,20 @@ heartbeat/last-build markers used for daemon arbitration.
 
 **Daemon arbitration**:
 The policy by which the passive pull mode detects a fresh daemon from the
-`__app_heartbeat__` marker and skips every CLI-side mutation, including schema
-setup, indexing, checkpointing, and `attune`. The heartbeat alone means “the
-daemon should write”; `__app_last_successful_build__` records coverage/freshness,
-not ownership. Both indexing modes use the same persist layer.
+`__app_heartbeat__` marker and skips CLI-side **index** mutations: schema setup,
+indexing, and checkpointing. `attune` is not skipped; it writes approved durable
+memory through short busy-retried transactions without taking the writer lease
+or migrating schema. The heartbeat alone means “the daemon should write the
+index”; `__app_last_successful_build__` records coverage/freshness, not
+ownership. Both indexing modes use the same persist layer.
 
 **Writer lease**:
-The hard cross-process safety mutex behind daemon arbitration. A writer holds
-`BEGIN IMMEDIATE` on `.trajex/writer.lock.sqlite` for the complete mutation;
-manual rebuild holds it through build, target-database replacement, and reopen.
-The heartbeat expresses policy, while the writer lease prevents overlapping
-writes during races, stale heartbeats, or processes from different versions.
+The hard cross-process safety mutex behind daemon arbitration of **index**
+writes. A writer holds `BEGIN IMMEDIATE` on `.trajex/writer.lock.sqlite` for the
+complete mutation; manual rebuild holds it through build, target-database
+replacement, and reopen. Attune does not participate. The heartbeat expresses
+index-write policy, while the writer lease prevents overlapping index writes
+during races, stale heartbeats, or processes from different versions.
 
 ## Memory
 

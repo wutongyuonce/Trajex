@@ -21,7 +21,7 @@
  * - 事务是否仍然存活是上层是否还能复用该连接的关键信号。
  * - 注入的 db 仅需 `exec(sql)`；这与 persist 层的 binding-agnostic 注入模型一致。
  *
- * 相关设计：docs/adr/0006-write-transaction-rollback-and-concurrency.md。
+ * 相关设计：docs/adr/0003-write-transaction-rollback-and-concurrency.md。
  */
 
 export interface WriteTxDb {

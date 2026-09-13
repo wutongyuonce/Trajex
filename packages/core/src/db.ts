@@ -6,17 +6,16 @@
  * SQLite 连接生命周期。
  *
  * 模块定位：为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责
- * schema 初始化和 FTS 重建。桌面 App 可通过结构接口复用上层逻辑。
+ * schema 初始化。桌面 App 可通过结构接口复用上层逻辑。
  */
 // node:sqlite lifecycle and migrations for the Core package.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { CLAUDE_DIR, CODEX_DIR, TEXT_LIMIT, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines } from './parsing.ts';
 import { configureConnection } from './tx.ts';
 import { migrateCoreSchemaColumns } from './schema-migrations.ts';
-import type { NodeSqliteDb, SqliteDb } from './sqlite-types.ts';
+import type { NodeSqliteDb } from './sqlite-types.ts';
 
 // runner 在子进程中指定该目录，使评测索引不触碰用户的默认 ~/.trajex。
 const TRAJEX_DIR = process.env.TRAJEX_DIR || join(homedir(), '.trajex');
@@ -66,10 +65,4 @@ function openWriterLeaseDb(lockPath: string): NodeSqliteDb {
   return new DatabaseSync(lockPath);
 }
 
-/** 批量写入结束后，由 memories 表重新派生 content-backed FTS。 */
-function rebuildMemoryFts(db: SqliteDb): void {
-  db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
-}
-
-
-export { CLAUDE_DIR, CODEX_DIR, TRAJEX_DIR, DB_PATH, TEXT_LIMIT, openDb, openReadDb, openAttuneDb, openWriterLeaseDb, rebuildMemoryFts, trunc, truncJson, extractText, extractContentType, extractMessageIsMeta, filePath, isDir, readLines };
+export { TRAJEX_DIR, DB_PATH, openDb, openReadDb, openAttuneDb, openWriterLeaseDb };

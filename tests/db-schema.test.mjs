@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 
-import { extractContentType, extractMessageIsMeta } from '../packages/core/src/db.ts';
+import { extractContentType, extractMessageIsMeta } from '../packages/core/src/parsing.ts';
 import { migrateCoreSchemaColumns } from '../packages/core/src/schema-migrations.ts';
 
 async function readExecutableSchema() {

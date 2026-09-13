@@ -8,9 +8,9 @@
  * 模块定位：CLI、桌面 App 与未来 transport 共用的业务入口。调用方只选择搜索、
  * 查询、attune 或索引，不重复拥有数据库生命周期和检索语义。
  *
- * 调用链路：CLI/App → core.ts → indexer、query、writer lease、db。
+ * 调用链路：CLI/App → core.ts → indexer / query / db；索引写入另经 writer lease，attune 不经过。
  */
-// Trajex Core package (see docs/adr/0003-core-typescript-esm-precompiled.md).
+// Trajex Core package (see docs/adr/0008-core-typescript-esm-precompiled.md).
 //
 // The single shared implementation behind every transport. The CLI and later
 // the MCP server are thin shells over these four functions;
@@ -33,7 +33,7 @@ const SANDBOX_TIMEOUT_MS = 30000;
 function assertReadableSchema(): void {
   const schema = ensureReadableSchema();
   if (!schema.ready) {
-    throw new Error(`Trajex index schema upgrade is blocked by ${schema.reason ?? 'an unknown writer'}`);
+    throw new Error(`Trajex index schema upgrade is blocked by ${schema.reason ?? 'schema unreadiness'}`);
   }
 }
 
@@ -100,8 +100,9 @@ export async function executeQuery(scriptContent: string): Promise<unknown> {
 }
 
 /**
- * 执行 remember/forget 脚本。记忆属于持久层：先取得 writer lease，并在持锁前后
- * 二次检查 daemon heartbeat，避免 CLI 在 App 接管写入时绕过所有权规则。
+ * 执行 remember/forget 脚本。记忆层与索引写入分家：不刷新 Provider、不迁 schema、
+ * 不拿 writer lease；worker 在已初始化的 memories 表上用短事务 + busy 重试写入，
+ * 以便 daemon 占用索引时仍能登记 approved durable memory。
  */
 export async function executeAttune(scriptContent: string): Promise<unknown> {
   return runInSandboxWorker('attune', scriptContent);

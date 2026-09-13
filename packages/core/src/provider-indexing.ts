@@ -31,6 +31,7 @@ export interface ProviderIndexItem {
 export interface ProviderIndexPlan {
   readonly items: ProviderIndexItem[];
   readonly pendingMarkers: ReadonlyMap<string, string>;
+  /** 仅 force 为 true。缺 version marker 只让该 Provider 的 unit 用空 cursor 重放。 */
   readonly fullRebuild: boolean;
   readonly inventoryIssues: readonly ProviderInventoryRootIssue[];
 }
@@ -133,16 +134,16 @@ export function createProviderIndexPlan(
     markerMissing.set(provider.name, missing);
     if (missing) pendingMarkers.set(provider.name, marker);
   }
-  const fullRebuild = force || providers.some(provider => (
-    markerMissing.get(provider.name) === true
-    && provenance.some(session => session.source === provider.name)
-  ));
+  const fullRebuild = force;
   for (const provider of providers) {
     const providerSessions = provenance
       .filter(session => session.source === provider.name)
       .map(({ sessionId, jsonlPath }) => ({ sessionId, jsonlPath }));
     const indexedSessions = (): readonly IndexedSession[] => providerSessions;
-    const fullReindex = fullRebuild;
+    const fullReindex = force || (
+      markerMissing.get(provider.name) === true
+      && providerSessions.length > 0
+    );
     const units = provider.discover({
       lastCursor: fullReindex ? () => null : (key) => storedProviderCursor(db, key),
       changedPaths: fullReindex ? undefined : changedPaths,
@@ -212,18 +213,23 @@ export function indexProviderPlan({
   return { committed, failedProviders };
 }
 
-/** 仅当 Provider 的所有 unit 全部成功提交且未整体停止时，才写入版本完成标记。 */
+/**
+ * 计划完整跑完才写 version marker。单个坏文件 skip 不挡标记；
+ * 中途 stop（数据库忙 / 连接不可用）或该 Provider 来源根不可用时不写，
+ * 以免把未完成的投影升级宣布为完成。
+ */
 export function writeProviderIndexMarkers(
   db: SqliteDb,
   plan: ProviderIndexPlan,
   result: ProviderIndexResult,
 ): void {
+  if (result.stopped !== undefined) return;
+  const blocked = new Set(plan.inventoryIssues.map(issue => issue.provider));
   const write = db.prepare(
     'INSERT OR REPLACE INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)',
   );
   for (const [provider, marker] of plan.pendingMarkers) {
-    if (!result.failedProviders.has(provider) && result.stopped === undefined) {
-      write.run(marker, Date.now());
-    }
+    if (blocked.has(provider)) continue;
+    write.run(marker, Date.now());
   }
 }

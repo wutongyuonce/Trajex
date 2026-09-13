@@ -24,6 +24,7 @@ import {
   extractText, extractContentType, extractMessageIsMeta, isSkillInstructions,
   filePath, truncJson, truncToolResult, toolResultPreview, readLines, discoverJsonlFiles, isDir,
 } from '../parsing.ts';
+import { cursorMatchesSnapshot, fileSnapshot, snapshotCursor } from './file-snapshot.ts';
 
 import type {
   Cursor,
@@ -170,9 +171,8 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
           && !changedWorkflowPaths.has(normalizedPath)
           && !relationshipChanged
         ) continue;
-        const mtime = statSync(workflowPath).mtimeMs;
         const cursor = ctx.lastCursor(workflowPath);
-        if (!relationshipChanged && cursor !== null && Number(cursor.split(':')[0]) >= mtime) continue;
+        if (!relationshipChanged && cursorMatchesSnapshot(cursor, fileSnapshot(workflowPath))) continue;
         workflowUnits.push({
           key: workflowPath,
           sessionId,
@@ -196,14 +196,6 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     }));
 
   return [...transcriptUnits, ...workflowUnits, ...tombstones];
-}
-
-/**
- * 发现 Claude 主会话、subagent transcript 与 workflow JSON。cursor 采用
- * `mtime:lines`，因此普通会话可按已处理行增量恢复。
- */
-export function discover(ctx: DiscoverContext): IndexUnit[] {
-  return discoverAt(join(homedir(), '.claude'), ctx);
 }
 
 function toolResultText(content: unknown): string {
@@ -249,9 +241,7 @@ function workflowParentToolUseId(
  * transcript 以恢复它对应的 Workflow tool call ID。
  */
 function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
-  const stats = statSync(unit.key);
-  const mtime = stats.mtimeMs;
-  const outCursor = `${mtime}:1`;
+  const outCursor = snapshotCursor(fileSnapshot(unit.key), 1);
   let workflow: any;
   try { workflow = JSON.parse(readFileSync(unit.key, 'utf8')); } catch { return outCursor; }
   if (!workflow?.runId) return outCursor;
@@ -506,14 +496,12 @@ export function createClaudeProvider({ rootDir = join(homedir(), '.claude') }: {
     name,
     descriptor: { id: name, name: 'Claude Code', vendor: 'Anthropic', defaultRoot: rootDir, color: '#d97757' },
     indexVersionMarker: CLAUDE_CANONICAL_TRANSCRIPT_MARKER,
-    watchTargets: (configuredRoot) => [
-      { kind: 'tree', path: join(configuredRoot, 'projects') },
-      { kind: 'file', path: join(configuredRoot, 'history.jsonl') },
+    watchTargets: () => [
+      { kind: 'tree', path: join(rootDir, 'projects') },
+      { kind: 'file', path: join(rootDir, 'history.jsonl') },
     ],
     discover: (ctx) => discoverAt(rootDir, ctx),
     parse,
     raw: rawClaude,
   };
 }
-
-export const claudeProvider = createClaudeProvider();

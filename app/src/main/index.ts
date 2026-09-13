@@ -465,8 +465,9 @@ const SESSION_METADATA_COLUMNS = [
 
 function querySessionMetadata(sessionId: string): SessionMetadata | null {
   if (!db) return null;
+  const sql = 'SELECT ' + SESSION_METADATA_COLUMNS + ' FROM sessions WHERE id = ?';
   return (
-    db.prepare(`SELECT ${SESSION_METADATA_COLUMNS} FROM sessions WHERE id = ?`).get(sessionId) as SessionMetadata | undefined
+    db.prepare(sql).get(sessionId) as SessionMetadata | undefined
   ) || null;
 }
 
@@ -476,7 +477,7 @@ ipcMain.handle('db:getSessions', (_, opts = {}) => {
   if (!Number.isSafeInteger(limit) || limit < 0) {
     throw new TypeError('limit must be a non-negative integer');
   }
-  let sql = `SELECT ${SESSION_METADATA_COLUMNS} FROM sessions`;
+  let sql = 'SELECT ' + SESSION_METADATA_COLUMNS + ' FROM sessions';
   const params: unknown[] = [];
   const sourceFilter = sourceWhereClause(opts);
   if (sourceFilter.sql) {
@@ -657,7 +658,8 @@ ipcMain.handle('db:getStats', (_, opts = {}) => {
   if (!db) return { sessions: 0, memories: 0, memoriesArchived: 0 };
   const sourceFilter = sourceWhereClause(opts);
   const where = sourceFilter.sql ? `WHERE ${sourceFilter.sql}` : '';
-  const sessions = db.prepare(`SELECT COUNT(*) as c FROM sessions ${where}`).get(...sourceFilter.params)?.c || 0;
+  const sql = 'SELECT COUNT(*) as c FROM sessions ' + where;
+  const sessions = db.prepare(sql).get(...sourceFilter.params)?.c || 0;
   const memories = db.prepare('SELECT COUNT(*) as c FROM memories WHERE deleted_at IS NULL').get()?.c || 0;
   const memoriesArchived = db.prepare('SELECT COUNT(*) as c FROM memories WHERE deleted_at IS NOT NULL').get()?.c || 0;
   return { sessions, memories, memoriesArchived };

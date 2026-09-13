@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { appendFileSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, normalize } from 'node:path';
 
 const require = createRequire(import.meta.url);
 import { buildIndex } from '../app/src/main/indexer.ts';
@@ -66,6 +66,16 @@ test('app indexer records build success without claiming daemon ownership', () =
   assert.equal(db.prepare("SELECT jsonl_path FROM index_state WHERE jsonl_path='__app_heartbeat__'").get(), undefined);
   assert.equal(db.prepare("SELECT jsonl_path FROM index_state WHERE jsonl_path='__app_last_successful_build__'").get().jsonl_path, '__app_last_successful_build__');
   assert.equal(db.prepare('SELECT project_path FROM sessions WHERE id=?').get(sessionId).project_path, '/tmp/trajex-app');
+  db.prepare('UPDATE sessions SET project_path=? WHERE id=?').run('/tmp/stale-affected', sessionId);
+  db.prepare('INSERT INTO sessions (id,project,project_path,source) VALUES (?,?,?,?)')
+    .run('session-app-unaffected', '-tmp-unaffected', '/tmp/stale-unaffected', 'claude');
+  db.prepare(`
+    INSERT INTO messages (uuid,session_id,type,timestamp,role,text,content_type,cwd,source)
+    VALUES (?,?,?,?,?,?,?,?,?)
+  `).run(
+    'msg-app-unaffected', 'session-app-unaffected', 'user', '2026-06-13T09:00:00Z',
+    'user', 'unrelated session', 'text', '/tmp/unaffected', 'claude',
+  );
   db.close();
 
   appendFileSync(jsonlPath, [
@@ -92,7 +102,46 @@ test('app indexer records build success without claiming daemon ownership', () =
   const db2 = new TestDatabase(dbPath);
   assert.equal(db2.prepare("SELECT uuid FROM messages_fts WHERE messages_fts MATCH 'companion'").get().uuid, 'msg-app-2');
   assert.equal(db2.prepare('SELECT message_count FROM sessions WHERE id=?').get(sessionId).message_count, 2);
+  assert.equal(
+    db2.prepare('SELECT project_path FROM sessions WHERE id=?').get(sessionId).project_path,
+    '/tmp/stale-affected',
+    'ordinary incremental refresh preserves an already-resolved project root',
+  );
+  assert.equal(
+    db2.prepare('SELECT project_path FROM sessions WHERE id=?').get('session-app-unaffected').project_path,
+    '/tmp/stale-unaffected',
+  );
   db2.close();
+
+  const unresolvedDb = new TestDatabase(dbPath);
+  unresolvedDb.prepare('UPDATE sessions SET project_path=NULL WHERE id=?').run('session-app-unaffected');
+  unresolvedDb.close();
+
+  buildIndex({
+    claudeDir,
+    dbPath,
+    DatabaseImpl: TestDatabase,
+    changedPaths: [],
+    retrySessionIds: ['session-app-unaffected'],
+  });
+
+  const retryDb = new TestDatabase(dbPath);
+  assert.equal(
+    retryDb.prepare('SELECT project_path FROM sessions WHERE id=?').get('session-app-unaffected').project_path,
+    normalize('/tmp/unaffected'),
+  );
+  retryDb.prepare('UPDATE sessions SET project_path=? WHERE id=?')
+    .run('/tmp/stale-unaffected', 'session-app-unaffected');
+  retryDb.close();
+
+  buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
+  const repairedDb = new TestDatabase(dbPath);
+  assert.equal(
+    repairedDb.prepare('SELECT project_path FROM sessions WHERE id=?').get('session-app-unaffected').project_path,
+    '/tmp/stale-unaffected',
+    'ordinary full-inventory refresh preserves an already-resolved project root',
+  );
+  repairedDb.close();
 });
 
 test('app indexer refreshes unchanged Claude usage when input token semantics change', () => {
@@ -451,7 +500,26 @@ test('app indexer loads Codex root sessions into the shared schema', () => {
   const toolResult = db.prepare('SELECT message_uuid, content FROM tool_results WHERE tool_use_id=?').get(toolId);
   assert.equal(toolResult.message_uuid, `codex:${codexId}:000005`);
   assert.equal(toolResult.content, '/tmp/trajex-app');
+  db.prepare('UPDATE sessions SET project_path=? WHERE id=?')
+    .run('/tmp/stable-codex-root', `codex:${codexId}`);
   db.close();
+
+  appendFileSync(jsonlPath, `${JSON.stringify({
+    timestamp: '2026-06-14T16:20:05.000Z',
+    type: 'event_msg',
+    payload: { type: 'user_message', message: 'codex replay keeps its stable project root', images: [], local_images: [], text_elements: [] },
+  })}\n`);
+  const nextMtime = new Date(Date.now() + 2000);
+  utimesSync(jsonlPath, nextMtime, nextMtime);
+  buildIndex({ claudeDir, codexDir, dbPath, DatabaseImpl: TestDatabase, changedPaths: [jsonlPath] });
+
+  const replayed = new TestDatabase(dbPath);
+  assert.equal(
+    replayed.prepare('SELECT project_path FROM sessions WHERE id=?').get(`codex:${codexId}`).project_path,
+    '/tmp/stable-codex-root',
+    'ordinary Codex full replay preserves the resolved project root across delete-session',
+  );
+  replayed.close();
 });
 
 test('app indexer accepts Codex changed paths relative to the sessions directory', () => {

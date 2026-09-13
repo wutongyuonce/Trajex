@@ -38,6 +38,28 @@ function insertSession(db, id, projectPath) {
   `).run(`message-${id}`, id, `text-${id}`, `/work/${id}`);
 }
 
+function insertPathSession(db, id, project, projectPath = '/stale/project') {
+  db.prepare('INSERT INTO sessions (id, project, project_path, source) VALUES (?, ?, ?, ?)')
+    .run(id, project, projectPath, 'claude');
+}
+
+function insertCwd(db, id, sequence, cwd) {
+  db.prepare(`
+    INSERT INTO messages (uuid, session_id, type, timestamp, role, text, content_type, cwd, source)
+    VALUES (?, ?, 'user', ?, 'user', ?, 'text', ?, 'claude')
+  `).run(
+    `cwd-${id}-${sequence}`,
+    id,
+    `2026-08-31T00:00:0${sequence}Z`,
+    `text-${id}-${sequence}`,
+    cwd,
+  );
+}
+
+function sessionProjectPath(db, id) {
+  return db.prepare('SELECT project_path FROM sessions WHERE id = ?').get(id).project_path;
+}
+
 function* sessionRecords(text) {
   yield {
     kind: 'message', uuid: 'persisted-message', session_id: 'persisted-session',
@@ -66,18 +88,30 @@ const PERSIST_UNIT = {
   project: '-work-persisted',
 };
 
-test('scoped project-path refresh touches affected sessions only', () => {
+test('ordinary scoped project-path refresh derives unresolved affected sessions only', () => {
   const db = freshDb();
-  insertSession(db, 'affected', '/stale/affected');
-  insertSession(db, 'unaffected', '/stale/unaffected');
-  insertSession(db, 'unresolved', null);
+  insertSession(db, 'affected', null);
+  insertSession(db, 'resolved', '/stable/resolved');
+  insertSession(db, 'unaffected', null);
 
-  refreshSessionProjectPaths(db, new Set(['affected']));
+  refreshSessionProjectPaths(db, new Set(['affected', 'resolved']));
 
-  const projectPath = id => db.prepare('SELECT project_path FROM sessions WHERE id = ?').get(id).project_path;
-  assert.equal(projectPath('affected'), normalize('/work/affected'));
-  assert.equal(projectPath('unresolved'), null);
-  assert.equal(projectPath('unaffected'), '/stale/unaffected');
+  assert.equal(sessionProjectPath(db, 'affected'), normalize('/work/affected'));
+  assert.equal(sessionProjectPath(db, 'resolved'), '/stable/resolved');
+  assert.equal(sessionProjectPath(db, 'unaffected'), null);
+  db.close();
+});
+
+test('explicit project-path repair recomputes an already resolved root', () => {
+  const db = freshDb();
+  insertPathSession(db, 'repair', '-Users-me-trajex', '/stale/project');
+  insertCwd(db, 'repair', 1, '/Users/me/trajex');
+  insertCwd(db, 'repair', 2, '/Users/me/trajex/app');
+  insertCwd(db, 'repair', 3, '/Users/me/trajex');
+
+  refreshSessionProjectPaths(db, new Set(['repair']), { recompute: true });
+
+  assert.equal(sessionProjectPath(db, 'repair'), normalize('/Users/me/trajex'));
   db.close();
 });
 

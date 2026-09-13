@@ -112,6 +112,7 @@ function deleteSession(db: SqliteDb, sessionId: string) {
  */
 export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<TranscriptRecord, Cursor>): Cursor {
   const st = statements(db);
+  const replayProjectPaths = new Map<string, string>();
 
   // Provider discovery can prove that an older identity is no longer present
   // even when the replacement unit emits no transcript records. Retract those
@@ -154,7 +155,7 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
           r.id,
           r.title ?? prev?.title ?? null,
           r.project ?? prev?.project ?? null,
-          prev?.project_path ?? null, // authoritative project_path is set by refreshSessionProjectPaths
+          prev?.project_path ?? replayProjectPaths.get(r.id) ?? null,
           minStr(prev?.started_at ?? null, r.started_at),
           maxStr(prev?.ended_at ?? null, r.ended_at),
           r.git_branch ?? prev?.git_branch ?? null,
@@ -165,9 +166,17 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
         );
         break;
       }
-      case 'delete-session':
+      case 'delete-session': {
+        const prev = st.getSession.get(r.sessionId);
+        if (typeof prev?.project_path === 'string' && prev.project_path !== '') {
+          // Full-replay providers delete and rebuild one projection atomically.
+          // Keep its stable project identity for the replacement session record;
+          // a delete-only tombstone still leaves no session row behind.
+          replayProjectPaths.set(r.sessionId, prev.project_path);
+        }
         deleteSession(db, r.sessionId);
         break;
+      }
       default:
         throw new Error(`persist: unhandled record kind ${(r as { kind: string }).kind}`);
     }

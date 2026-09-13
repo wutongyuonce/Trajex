@@ -39,16 +39,28 @@ export function ensureFtsReady(db: SqliteDb, { force = false }: { force?: boolea
   return true;
 }
 
-/** 刷新全部 session（null）或严格限定在本次受影响的 session 集合。 */
+/**
+ * 为尚未确定路径的 session 推导稳定项目根目录。
+ *
+ * 普通增量索引只处理 project_path 为空的受影响 session，避免后续子目录
+ * cwd 覆盖已经确定的项目根，也避免长会话每次增量都重扫全部 cwd。
+ * sessionIds 为 null 时是 force/repair 路径，会重新计算全部 session。
+ */
 export function refreshSessionProjectPaths(
   db: SqliteDb,
   sessionIds: ReadonlySet<string> | null = null,
+  { recompute = false }: { recompute?: boolean } = {},
 ): void {
   let sessions: SqliteRow[];
   if (sessionIds === null) {
     sessions = db.prepare('SELECT id, project FROM sessions').all();
   } else {
-    const sessionById = db.prepare('SELECT id, project FROM sessions WHERE id = ?');
+    const sessionById = db.prepare(
+      recompute
+        ? 'SELECT id, project FROM sessions WHERE id = ?'
+        : `SELECT id, project FROM sessions
+           WHERE id = ? AND (project_path IS NULL OR project_path = '')`,
+    );
     sessions = [...sessionIds]
       .map(sessionId => sessionById.get(sessionId))
       .filter((session): session is SqliteRow => session !== undefined);

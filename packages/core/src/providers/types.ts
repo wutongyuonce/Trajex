@@ -297,8 +297,9 @@ export interface DeleteSessionRecord {
  * （例如 transcript 的 ai-title、codex session_index.jsonl）补充；persist 使用 COALESCE upsert，
  * 确保不会覆盖已有的值。
  *
- * project_path 不在此设置——调度层的全局 pass
- * （refreshSessionProjectPaths）从持久化的消息 cwd 推导。
+ * project_path 不在此设置——调度层在 session 首次创建或路径仍未解析时，
+ * 通过 refreshSessionProjectPaths 从持久化的消息 cwd 推导。普通增量索引
+ * 保持已解析路径稳定；显式 force/repair 可重新计算。
  *
  * countMode 告知 persist 如何处理 message_count：
  * - 'delta'（Claude）：每次只 yield 新消息，persist 累加到已有行

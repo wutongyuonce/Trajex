@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- 普通增量索引只为 `project_path` 为空的受影响会话推导项目根目录，Codex/Pi 全量重放也会跨 `delete-session` 保留已解析路径；不再重扫长会话的全部 `cwd` 历史或用后续子目录覆盖项目根，force rebuild 仍会完整重新计算。
+
 ## [0.2.7]
 
 ### Added

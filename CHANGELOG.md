@@ -6,7 +6,7 @@
 
 - 普通增量索引只为 `project_path` 为空的受影响会话推导项目根目录，Codex/Pi 全量重放也会跨 `delete-session` 保留已解析路径；不再重扫长会话的全部 `cwd` 历史或用后续子目录覆盖项目根，force rebuild 仍会完整重新计算。
 
-### Core/CLI 审查修复 (`02a184a`)
+### Core/CLI 审查修复 (`7a10a6a`)
 
 - Provider version marker 按来源隔离：缺 marker 只让该 Provider 空 cursor 重放，不再触发全家 `fullRebuild` 清表；skip 不挡 marker，stop 或该来源根不可用才不写。
 - `search()` 只对 FTS 语法/运算符错误降级到安全分词；缺表、磁盘、授权失败会抛出。

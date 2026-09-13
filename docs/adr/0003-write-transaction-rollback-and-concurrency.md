@@ -55,9 +55,15 @@ remains before any malformed tail that the Provider leaves unconsumed.
 ### Bounded derived-data finalization
 
 - `indexProviderPlan()` invokes `onPersisted` after `persist()` but before the
-  unit transaction commits. Core uses that hook to refresh `project_path` only
-  for the unit session and any retracted session IDs, so facts, cursor, and the
-  affected derived path commit or roll back together.
+  unit transaction commits. Core uses that hook to derive `project_path` only
+  for unresolved unit sessions and any unresolved replacement IDs, so facts,
+  cursor, and the affected derived path commit or roll back together. An
+  already resolved path stays stable during ordinary incremental work.
+- Codex and Pi full replay still emit `delete-session` before rebuilding their
+  canonical projection. `persist()` carries a non-empty prior `project_path`
+  across that record-level replacement inside the same transaction. A
+  delete-only tombstone or `retractSessionIds` cleanup still removes the
+  session; only a matching replacement `session` record can restore the path.
 - Legacy rows whose `project_path` is still unresolved are scanned once under
   `__project_path_backfill_v1__`. The marker is written in the same finalize
   transaction, so rollback leaves the repair eligible for a clean retry.
@@ -65,9 +71,10 @@ remains before any malformed tail that the Provider leaves unconsumed.
   `messages_fts` and `memories_fts`. A complete FTS rebuild runs only before
   `__fts_triggers_ready__` exists or when a force/canonical rebuild explicitly
   requests repair.
-- Force rebuild remains the correctness escape hatch: it refreshes every
+- Force rebuild remains the correctness escape hatch: it recomputes every
   session path and rebuilds both FTS indexes. The optimization changes ordinary
-  work bounds, not indexed facts or query semantics.
+  work bounds and makes `project_path` a stable project-root approximation;
+  historical `messages.cwd` values remain unchanged.
 
 ### Writer ownership and concurrency
 

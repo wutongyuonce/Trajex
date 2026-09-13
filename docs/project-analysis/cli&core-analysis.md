@@ -146,7 +146,7 @@ Provider 差异必须留在 adapter，canonical transcript 的写入语义必须
 | 文件                 | 定位                         | 提供内容 / 作用                                               | 关键关系                                                     |
 | -------------------- | ---------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
 | db.ts                | **数据库生命周期管理**       | 提供 `openDb()`、`openReadDb()`、`openWriterLeaseDb()`、`rebuildMemoryFts()`。`openDb()` 创建并初始化主库；`openReadDb()` 不建库、不迁移；锁库连接不承载业务表。 | 被 `core.ts`、`indexer.ts`、`query.ts` 使用；依赖 `parsing.ts` 的路径工具、`tx.ts` 的连接配置和 `schema-migrations.ts`。 |
-| index-finalize.ts    | **共享派生数据收尾策略**     | 按受影响 session 刷新 `project_path`，执行一次性旧库补偿，并用 readiness marker 控制两张 FTS 的完整修复。 | 被 CLI/Core 与 App indexer 复用；依赖 `parsing.ts` 和 SQLite 结构接口。 |
+| index-finalize.ts    | **共享派生数据收尾策略**     | 普通构建只为受影响且路径为空的 session 推导稳定 `project_path`，执行一次性旧库补偿，并用 readiness marker 控制两张 FTS 的完整修复。 | 被 CLI/Core 与 App indexer 复用；依赖 `parsing.ts` 和 SQLite 结构接口。 |
 | schema.sql           | **DDL 定义**                 | 定义新数据库的表、初始列、索引、FTS5 虚拟表和触发器。          | 由 `db.ts` 的 `openDb()` 通过 `exec` 加载。                  |
 | schema-migrations.ts | **渐进式列迁移**             | 提供 `coreSchemaNeedsMigration()` 与 `migrateCoreSchemaColumns()`；检测/补充已有表的缺失列，不删除列、不修改类型、不搬迁数据。 | 由查询就绪门和 `db.ts` 的可写打开流程调用。                 |
 | sqlite-types.ts      | **SQLite 类型抽象**          | 定义 `SqliteDb`、`SqliteStatement`、`NodeSqliteDb` 等 TypeScript 类型，约束连接、语句和结果行可使用的 API。 | 被几乎所有数据库操作文件作为类型依赖引用；只参与开发/编译，不执行 SQL。 |
@@ -439,7 +439,7 @@ provider-indexing.ts / indexProviderPlan()
 
 * Provider 的 `parse(unit, cursor)` 读取原始 JSONL，生成 provider 无关的 `TranscriptRecord` 流。
 * `persist()` 消费该流，按 `kind` 做 upsert、字段合并或删除；它是事实写入 SQLite 的唯一共享入口。只有 generator 正常结束后才把新 cursor 写入 `index_state`，使其成为下一次增量发现的水位线。
-* Core 通过 `onPersisted` 在同一 unit 事务提交前刷新该 unit 的 `sessionId` 与 `retractSessionIds`。因此 `project_path` 不再等到最后扫描全库，而且任何路径推导失败都会和本 unit 的事实、cursor 一起回滚。
+* Core 通过 `onPersisted` 在同一 unit 事务提交前检查该 unit 的 `sessionId` 与 `retractSessionIds`，但普通路径只为 `project_path` 为空的 session 扫描 `messages.cwd`。因此已解析项目根不会被后续子目录覆盖，也不会在长会话每次增量时重扫全部历史；真正发生的路径推导仍与本 unit 的事实、cursor 一起回滚。
 
 ### 阶段 6：统一最终化并释放 writer
 
@@ -457,7 +457,7 @@ indexer.ts / buildIndex()
 
 finalize 只在所有 unit 已提交或被明确跳过后运行；它失败会使 build 失败，不能被当成普通坏文件吞掉。
 
-* `refreshSessionProjectPaths()` 聚合已写入的 `messages.cwd`，再由 `inferProjectPath()` 按出现频率和首次出现顺序选择可靠路径，必要时才回退 slug 反解。普通 CLI/Core build 在每个 unit 事务内只处理本次写入或撤回的 session；`__project_path_backfill_v1__` 负责把旧库中仍为空的路径集中补一次。force/canonical rebuild 仍刷新全部 session。
+* `refreshSessionProjectPaths()` 仅在路径未解析或显式 force/repair 时聚合 `messages.cwd`，再由 `inferProjectPath()` 按出现频率和首次出现顺序选择可靠路径，必要时才回退 slug 反解。普通 CLI/Core build 只检查本次写入或撤回的 session，普通 App full-inventory build 也不重算已解析路径；`__project_path_backfill_v1__` 负责把旧库中仍为空的路径集中补一次。force/canonical rebuild 仍重算全部 session。
 * `ensureFtsReady()` 以 `__fts_triggers_ready__` 记录完整 FTS 已建立。普通 build 此后只依赖 schema 中的 insert/update/delete trigger 增量维护 `messages_fts` 与 `memories_fts`；首次初始化或 force rebuild 才执行两张 FTS 的全量 rebuild。这样无变化查询不会再按数据库总量重复付费，但 force 仍可修复外部损坏的派生索引。
 * `healWorkflowParentLinks()` 处理 Workflow JSON 早于主 transcript `tool_result` 入库的竞态：只对 `parent_tool_use_id IS NULL` 的行，按同一 session 的唯一 `run_id` 找 `Workflow` tool call 并补链；找不到时保持 `NULL`。
 
@@ -653,7 +653,7 @@ index_state.mtime / lines_processed = 前两段兼容投影
 | ---------------------- | ------------------------------------------------------------ |
 | `key: string`          | unit 的稳定身份，也是 `index_state` 查询/写回 cursor 的 key。它必须在同一来源下稳定；路径、内部 ID 或二者组合都可以。 |
 | `sessionId: string`    | 这个 unit 归属的规范化 session ID。它由 Provider 在 `parse()` 中用于生成 `SessionRecord`、`MessageRecord` 等关联键。 |
-| `project?: string`     | 来源已经能识别出的项目 slug。可缺失；真正的 `sessions.project_path` 不由它直接决定，而是在所有消息写完后用 `cwd` 全局推断。 |
+| `project?: string`     | 来源已经能识别出的项目 slug。可缺失；真正的 `sessions.project_path` 不由它直接决定，而是在路径未解析或 force/repair 时用已持久化的 `messages.cwd` 推断。 |
 | `isSubagent?: boolean` | 表示此 unit 是子 Agent transcript，而非主线会话。它指导解析器关联 agent，而不是把它当作独立顶层会话。 |
 | `agentId?: string`     | 子 Agent 的规范 ID。`isSubagent` 是布尔语义，`agentId` 是可关联的具体身份；解析出的 `messages.agent_id` 与 `subagents.agent_id` 用它相连。 |
 | `meta?: unknown`       | Provider 私有负载，例如扫描时已取得的辅助路径、线程 metadata 或解析提示。编排层绝不读取或序列化解释它，只把原对象传给 `parse()`。 |
@@ -703,7 +703,7 @@ type TranscriptRecord =
 | `jsonl_path`              | 此 session 的主要原始 transcript 路径，用于证据定位/回源；它不是工具使用的文件路径。 |
 | `source`                  | Provider 名称，例如 `claude`、`codex`、`pi`，由 adapter 显式写入 `sessions.source`。 |
 
-`project_path` 不在该接口中。`index-finalize.ts` 的 `refreshSessionProjectPaths()` 会在 unit 写完后，从持久化的 `messages.cwd` 统计并调用 `inferProjectPath()` 推断它。Core 普通增量 build 在该 unit 的同一事务中只处理写入或撤回的 session；App 增量 build 处理本轮受影响和延期重试的 session；全量 build 才处理全部 session。这避免 Provider 在各自局部视角中做不一致的路径猜测，也避免增量更新退化为全库扫描。
+`project_path` 不在该接口中。`index-finalize.ts` 的 `refreshSessionProjectPaths()` 在 unit 写完后检查对应 session，只在路径仍为空时从持久化的 `messages.cwd` 统计并调用 `inferProjectPath()` 推断它。Core 普通增量 build 检查写入或撤回的 session；App 普通 build 检查本轮受影响和延期重试的 session；两者都保持已解析项目根稳定，只有 force/canonical rebuild 才重算全部 session。这避免 Provider 在各自局部视角中做不一致的路径猜测，也避免长会话的小增量重扫全部 cwd 历史。
 
 2、**`MessageRecord` -> `messages`，并由触发器同步 `messages_fts`**
 
@@ -840,7 +840,7 @@ Workflow 的父边最终指向 `tool_calls.id`，不是 `tool_results`。Provide
 { kind: 'delete-session', sessionId }
 ```
 
-同样不是表行。Pi 和 Codex 根 thread 都在全量重放前发出它，先移除旧投影，再写入当前完整 session。child/fork/guardian 在发现阶段直接忽略，因此不会进入 `parse`，也不会产生 `delete-session`。此外，discover 可在 `IndexUnit.retractSessionIds` 中表达已证明的文件删除或路径换 ID；这类 tombstone unit 的 `parse()` 不读取文件，只返回空 cursor，persist 会先撤回旧投影再提交 unit。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent 和全部摘要，但保留 `memories`；其他 session 或未关联 session 的记忆也不会受影响。
+同样不是表行。Pi 和 Codex 根 thread 都在全量重放前发出它，先移除旧投影，再写入当前完整 session。这种“删除后立即重建”会在同一 persist 事务中暂存旧 session 的非空 `project_path`，并由后续同 ID 的 `session` record 恢复，避免普通重放又重扫全部 cwd。child/fork/guardian 在发现阶段直接忽略，因此不会进入 `parse`，也不会产生 `delete-session`。此外，discover 可在 `IndexUnit.retractSessionIds` 中表达已证明的文件删除或路径换 ID；这类 tombstone unit 的 `parse()` 不读取文件，只返回空 cursor，persist 会先撤回旧投影再提交 unit。单纯删除没有后续 session record，所以不会恢复路径或 session 行。`persist` 会删除该 session 的 session、消息、工具、workflow、subagent 和全部摘要，但保留 `memories`；其他 session 或未关联 session 的记忆也不会受影响。
 
 ### 描述、监视、原文回源：`ProviderDescriptor`、`RawLookup`、`RawRecord`、`ProviderAdapter`
 
@@ -2701,7 +2701,7 @@ ON CONFLICT(uuid) DO UPDATE SET
 
 **2、`session`：先 merge，再 `INSERT OR REPLACE`**
 
-session 是一个主 transcript 聚合后的 record。写入前 persist 会查询旧行，并在 TypeScript 里形成完整替换行：
+session 是一个主 transcript 聚合后的 record。写入前 persist 会查询旧行，并在 TypeScript 里形成完整替换行。`replayProjectPaths` 在每次 `persist()` 开始时创建，只暂存本事务内 `delete-session` 刚删除的非空路径：
 
 ```ts
 const prev = st.getSession.get(r.id);
@@ -2713,7 +2713,7 @@ st.ses.run(
   r.id,
   r.title ?? prev?.title ?? null,
   r.project ?? prev?.project ?? null,
-  prev?.project_path ?? null,
+  prev?.project_path ?? replayProjectPaths.get(r.id) ?? null,
   minStr(prev?.started_at ?? null, r.started_at),
   maxStr(prev?.ended_at ?? null, r.ended_at),
   r.git_branch ?? prev?.git_branch ?? null,
@@ -2728,7 +2728,7 @@ st.ses.run(
 
 - `started_at` 取旧新两者更早值，`ended_at` 取更晚值；
 - title、project、branch、version 只有新值为 `null` 时才保留旧值；
-- `project_path` 始终保留旧值，它由 unit 事务内或全量 finalize 调用的 `refreshSessionProjectPaths()` 统一计算；
+- `project_path` 优先保留当前 session 行的旧值；Codex/Pi 在重建前已执行 `delete-session` 时，persist 会从本次事务暂存的 `replayProjectPaths` 恢复非空路径。只有路径仍为空时，普通 `refreshSessionProjectPaths()` 才会推导；force/repair 可重算；
 - Claude 的增量尾部解析传 `countMode: 'delta'`，新增 5 条会累加到旧计数；Codex full-reparse 传 `countMode: 'total'`，本次数会直接替换旧计数，避免 20 + 25 变成错误的 45。
 
 因此 `countMode` 是 adapter 交给 persist 的写入语义提示；除了这个增量差异，provider-specific 格式不应泄漏到 persist。
@@ -2782,7 +2782,7 @@ ON CONFLICT(agent_id) DO UPDATE SET
 **5、非“插入行”的 record**
 
 - `message-turn-duration`：执行 `UPDATE messages SET turn_duration_ms=? WHERE uuid=?`，因为 duration 晚于 message 才出现，不创建新 message。
-- `delete-session`：显式删除该 session 及其关联的 `tool_results`、`tool_calls`、`messages`、`subagents`、`workflow_agents`、`workflows`、`summaries` 和 `sessions` 行，但保留 `memories`。没有数据库级外键级联，删除顺序由 persist 维护；Pi 与 Codex 根 thread 都在全量重放前使用它。
+- `delete-session`：显式删除该 session 及其关联的 `tool_results`、`tool_calls`、`messages`、`subagents`、`workflow_agents`、`workflows`、`summaries` 和 `sessions` 行，但保留 `memories`。没有数据库级外键级联，删除顺序由 persist 维护；Pi 与 Codex 根 thread 都在全量重放前使用它。若同一记录流后续重建同 ID session，旧的非空 `project_path` 会在本事务内恢复；delete-only tombstone 没有重建 record，仍会完整删除 session。
 - generator 正常结束且 cursor 非 `null`：原样写入 `index_state.cursor`，同时把前两段数值写入 `mtime` / `lines_processed`；下次 `discover()` 优先取得原始 cursor，老库为空时再兼容拼回两段值。
 
 未被 `switch (r.kind)` 覆盖的 record 会抛错，避免新增 Provider record 后静默丢数据。

@@ -60,7 +60,7 @@
   },
   "devDependencies": {
     "@tanstack/vue-virtual": "^3.13.32",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/better-sqlite3": "^9.0.0",
     "@vitejs/plugin-vue": "^5.0.0",
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3",

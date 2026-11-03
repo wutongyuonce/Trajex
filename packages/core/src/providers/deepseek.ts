@@ -6,7 +6,8 @@ import { readFileSync, readdirSync, realpathSync, type Dirent } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
-import { decompress } from 'fzstd';
+import * as zlib from 'node:zlib';
+import { Decompress } from 'fzstd';
 
 import { projectSlugFromPath, trunc, truncJson, truncToolResult, toolResultPreview } from '../parsing.ts';
 import { cursorMatchesSnapshot, fileSnapshot, sameSnapshot, snapshotCursor } from './file-snapshot.ts';
@@ -18,6 +19,8 @@ import type {
 export const name = 'deepseek';
 export const DEEPSEEK_CANONICAL_TRANSCRIPT_MARKER = '__deepseek_canonical_transcript_v1__';
 const MAX_SUPPORTED_VERSION = 4;
+const MIN_SUPPORTED_VERSION = 2; // V0/V1 pack several assistant events into one physical row.
+const ZSTD_MAGIC = 0xfd2fb528;
 
 type JsonObject = Record<string, any>;
 type SessionFile = { path: string; version: number };
@@ -56,14 +59,109 @@ function selectedFiles(root: string, projects: readonly Dirent[]): SessionFile[]
   return files;
 }
 
-function readSession(path: string): { header: JsonObject; events: JsonObject[]; lines: number } {
+/** Identify complete frames before decoding so an interrupted append cannot hide earlier batches. */
+function zstdFrames(bytes: Buffer, maxFrames = Number.POSITIVE_INFINITY): { complete: Buffer[]; torn: Buffer | null } {
+  const complete: Buffer[] = [];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const start = offset;
+    if (bytes.length - offset < 4) return { complete, torn: bytes.subarray(start) };
+    if (bytes.readUInt32LE(offset) !== ZSTD_MAGIC) throw new Error(`Invalid DeepSeek Zstandard frame at byte ${offset}`);
+    offset += 4;
+    if (offset === bytes.length) return { complete, torn: bytes.subarray(start) };
+    const descriptor = bytes[offset++];
+    if (descriptor & 0x18) throw new Error(`Invalid DeepSeek Zstandard header at byte ${offset - 1}`);
+    const contentSizeFlag = descriptor >>> 6;
+    const singleSegment = Boolean(descriptor & 0x20);
+    const dictionaryFlag = descriptor & 0x03;
+    const headerBytes = Number(!singleSegment) + (dictionaryFlag === 3 ? 4 : dictionaryFlag)
+      + (contentSizeFlag === 0 ? Number(singleSegment) : 1 << contentSizeFlag);
+    if (bytes.length - offset < headerBytes) return { complete, torn: bytes.subarray(start) };
+    offset += headerBytes;
+    for (;;) {
+      if (bytes.length - offset < 3) return { complete, torn: bytes.subarray(start) };
+      const block = bytes.readUIntLE(offset, 3);
+      offset += 3;
+      const blockType = (block >>> 1) & 3;
+      if (blockType === 3) throw new Error(`Invalid DeepSeek Zstandard block at byte ${offset - 3}`);
+      const payloadBytes = blockType === 1 ? 1 : block >>> 3;
+      if (bytes.length - offset < payloadBytes) return { complete, torn: bytes.subarray(start) };
+      offset += payloadBytes;
+      if (block & 1) break;
+    }
+    if (descriptor & 0x04) {
+      if (bytes.length - offset < 4) return { complete, torn: bytes.subarray(start) };
+      offset += 4;
+    }
+    complete.push(bytes.subarray(start, offset));
+    if (complete.length === maxFrames) return { complete, torn: null };
+  }
+  return { complete, torn: null };
+}
+
+function decodeCompleteFrame(frame: Buffer): Buffer {
+  if (typeof zlib.zstdDecompressSync !== 'function') {
+    throw new Error('DeepSeek Zstandard logs require Node.js 22.15 or newer');
+  }
+  return zlib.zstdDecompressSync(frame);
+}
+
+function decodeZstd(bytes: Buffer): { text: string; torn: boolean } {
+  const { complete, torn } = zstdFrames(bytes);
+  const completeBytes = complete.reduce((length, frame) => length + frame.length, 0);
+  const decoded: Buffer[] = completeBytes ? [decodeCompleteFrame(bytes.subarray(0, completeBytes))] : [];
+  if (torn) {
+    // A partial final frame can already contain complete JSONL rows in decoded blocks.
+    const recovered: Buffer[] = [];
+    try { new Decompress(chunk => { if (chunk.length) recovered.push(Buffer.from(chunk)); }).push(torn); }
+    catch { /* Only the incomplete final frame is recoverable; prior frames stay authoritative. */ }
+    decoded.push(...recovered);
+  }
+  return { text: Buffer.concat(decoded).toString('utf8'), torn: torn !== null };
+}
+
+function validateHeader(path: string, header: JsonObject | undefined): JsonObject {
+  if (header?.type !== 'session' || typeof header.id !== 'string' || !Number.isSafeInteger(header.version)) {
+    throw new Error(`Invalid DeepSeek session header: ${path}`);
+  }
+  if (header.version < MIN_SUPPORTED_VERSION || header.version > MAX_SUPPORTED_VERSION) {
+    throw new Error(`Unsupported DeepSeek session format version ${header.version}: ${path}`);
+  }
+  const version = generationVersion(path.split(/[\\/]/).at(-1) ?? '');
+  if (version !== header.version) throw new Error(`DeepSeek session generation mismatch: ${path}`);
+  return header;
+}
+
+function readHeader(path: string): JsonObject {
   const before = fileSnapshot(path);
   const bytes = readFileSync(path);
-  const decoded = path.endsWith('.zstd') ? Buffer.from(decompress(bytes)).toString('utf8') : bytes.toString('utf8');
+  const text = path.endsWith('.zstd')
+    ? (() => {
+      const firstFrame = zstdFrames(bytes, 1).complete[0];
+      if (!firstFrame) throw new Error(`Incomplete DeepSeek session header: ${path}`);
+      return decodeCompleteFrame(firstFrame).toString('utf8');
+    })()
+    : bytes.toString('utf8');
+  if (!sameSnapshot(before, fileSnapshot(path))) throw new Error(`DeepSeek transcript changed while reading: ${path}`);
+  const newline = text.indexOf('\n');
+  if (newline < 0) throw new Error(`Incomplete DeepSeek session header: ${path}`);
+  const firstLine = text.slice(0, newline);
+  return validateHeader(path, JSON.parse(firstLine));
+}
+
+function readSession(path: string): { header: JsonObject; events: JsonObject[]; lines: number; snapshot: ReturnType<typeof fileSnapshot> } {
+  const before = fileSnapshot(path);
+  const bytes = readFileSync(path);
+  const compressed = path.endsWith('.zstd');
+  const result = compressed ? decodeZstd(bytes) : { text: bytes.toString('utf8'), torn: true };
+  const decoded = result.text;
   const after = fileSnapshot(path);
   if (!sameSnapshot(before, after)) throw new Error(`DeepSeek transcript changed while reading: ${path}`);
   const lines = decoded.split('\n');
-  if (!decoded.endsWith('\n')) lines.pop(); // Ignore a torn raw final line.
+  if (!decoded.endsWith('\n')) {
+    if (compressed && !result.torn) throw new Error(`DeepSeek complete Zstandard frame contains an incomplete JSONL row: ${path}`);
+    lines.pop(); // Ignore an unfinished raw line or an unfinished final frame.
+  }
   const rows: JsonObject[] = [];
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -72,15 +170,7 @@ function readSession(path: string): { header: JsonObject; events: JsonObject[]; 
     rows.push(row);
   }
   const [header, ...events] = rows;
-  if (header?.type !== 'session' || typeof header.id !== 'string' || !Number.isSafeInteger(header.version)) {
-    throw new Error(`Invalid DeepSeek session header: ${path}`);
-  }
-  if (header.version < 0 || header.version > MAX_SUPPORTED_VERSION) {
-    throw new Error(`Unsupported DeepSeek session format version ${header.version}: ${path}`);
-  }
-  const version = generationVersion(path.split(/[\\/]/).at(-1) ?? '');
-  if (version !== header.version) throw new Error(`DeepSeek session generation mismatch: ${path}`);
-  return { header, events, lines: rows.length };
+  return { header: validateHeader(path, header), events, lines: rows.length, snapshot: before };
 }
 
 function sessionId(header: JsonObject): string {
@@ -125,7 +215,7 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
     catch { continue; } // A generation may disappear while the directory is being scanned.
     const old = indexedByPath.get(path);
     let header: JsonObject;
-    try { ({ header } = readSession(path)); }
+    try { header = readHeader(path); }
     catch {
       // Let the indexer's per-unit error path report this file without aborting other sessions.
       units.push({ key: path, sessionId: old?.sessionId ?? `deepseek:unreadable:${createHash('sha256').update(path).digest('hex')}` });
@@ -146,7 +236,7 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
     if (replacement) {
       let identity = selectedIdentity.get(replacement);
       if (!identity) {
-        try { identity = sessionId(readSession(replacement).header); }
+        try { identity = sessionId(readHeader(replacement)); }
         catch { continue; } // Keep the old snapshot until the replacement generation is readable.
         selectedIdentity.set(replacement, identity);
       }
@@ -164,7 +254,7 @@ function contentText(content: unknown): string {
 }
 
 function toolResult(message: JsonObject): { callId: string | null; content: unknown; isError: boolean } {
-  // V0–V3 stored the result inside one user-role wrapper; V4 lifted it to a tool-role message.
+  // V2–V3 stored the result inside one user-role wrapper; V4 lifted it to a tool-role message.
   const wrapped = message.content?.[0]?.type === 'tool-result' ? message.content[0] : null;
   const callId = wrapped?.toolCallId ?? message.toolCallId ?? message.source?.callId;
   return {
@@ -197,13 +287,18 @@ function toolPath(name: string, argumentText: string): string | null {
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
   if ((unit.meta as JsonObject | undefined)?.tombstone) return '0:0';
   if ((unit.meta as JsonObject | undefined)?.subagent) return snapshotCursor(fileSnapshot(unit.key), 0);
-  const snapshot = fileSnapshot(unit.key);
-  const { header, events, lines } = readSession(unit.key);
+  const { header, events, lines, snapshot } = readSession(unit.key);
   const id = sessionId(header);
   if (id !== unit.sessionId) throw new Error(`DeepSeek session identity changed: ${unit.key}`);
   const replacedRanges = events.flatMap(event => event.surfaceOp?.op === 'replace'
     ? [{ start: event.surfaceOp.startSeq, end: event.surfaceOp.endSeq }]
     : []);
+  const inheritedThrough = header.isSeeded
+    ? events.filter(event => event.type === 'session/end-seed' && event.data?.inherited === true)
+      .at(-1)?.seq ?? -1
+    : -1;
+  const isVisible = (seq: number) => seq > inheritedThrough
+    && !replacedRanges.some(range => seq >= range.start && seq <= range.end);
   const toolCalls = new Map<string, JsonObject[]>();
   for (const event of events) {
     if (event.type !== 'tool/call' || typeof event.data?.callId !== 'string') continue;
@@ -218,6 +313,17 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       : calls.find(call => call.seq > seq);
   };
   const callKey = (callId: string, call?: JsonObject) => `${id}:call:${call?.seq ?? encodeURIComponent(callId)}`;
+  const claimedCalls = new Set<number>();
+  for (const event of events) {
+    if (event.type !== 'assistant/message' || !Number.isSafeInteger(event.seq)) continue;
+    const blocks = event.data?.message?.content ?? event.data?.content;
+    if (!Array.isArray(blocks)) continue;
+    for (const block of blocks) {
+      if (block?.type !== 'tool-call' || typeof block.id !== 'string') continue;
+      const call = callFor(block.id, event.seq, 'after');
+      if (call) claimedCalls.add(call.seq);
+    }
+  }
   const records: TranscriptRecord[] = [{ kind: 'delete-session', sessionId: id }];
   let previous: string | null = null;
   let title: string | null = null;
@@ -226,7 +332,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   const cwd = typeof header.cwd === 'string' ? header.cwd : null;
   const addMessage = (event: JsonObject, role: string, text: string | null, contentType: string, suffix: string, tokenUsage?: { input: number | null; output: number | null }, isMeta: 0 | 1 = 0) => {
     const uuid = `${id}:${event.seq}${suffix}`;
-    const visible = !replacedRanges.some(range => event.seq >= range.start && event.seq <= range.end);
+    const visible = isVisible(event.seq);
     const time = timestamp(event.time);
     records.push({
       kind: 'message', uuid, session_id: id, type: role, parent_uuid: previous,
@@ -240,17 +346,34 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     if (time && (!endedAt || time > endedAt)) endedAt = time;
     return uuid;
   };
+  const addToolCall = (uuid: string, callId: string, call: JsonObject | undefined, fallback: JsonObject) => {
+    const argumentsText = typeof call?.data?.arguments === 'string' ? call.data.arguments
+      : typeof fallback.arguments === 'string' ? fallback.arguments : '{}';
+    const toolName = typeof call?.data?.name === 'string' ? call.data.name
+      : typeof fallback.name === 'string' ? fallback.name : 'tool';
+    let input: unknown;
+    try { input = JSON.parse(argumentsText); } catch { input = { raw: argumentsText }; }
+    records.push({ kind: 'tool_call', id: callKey(callId, call), message_uuid: uuid, session_id: id, name: toolName, input_json: truncJson(input as any) ?? '{}', file_path: toolPath(toolName, argumentsText) });
+  };
   for (const event of events) {
     if (!Number.isSafeInteger(event.seq)) continue;
     const data = event.data;
     if (event.type === 'compaction/summary' && Array.isArray(data?.summary)) {
-      records.push({ kind: 'summary', id: `${id}:${event.seq}`, session_id: id, timestamp: timestamp(event.time), source: 'compaction', content: contentText(data.summary), visibility: 'visible', input_tokens: usage(data.usage).input, output_tokens: usage(data.usage).output });
+      const replacement = events.find(candidate => candidate.seq > event.seq && candidate.type === 'user/message' && candidate.surfaceOp);
+      records.push({ kind: 'summary', id: `${id}:${event.seq}`, session_id: id, timestamp: timestamp(event.time), source: 'compaction', content: contentText(data.summary), visibility: isVisible(replacement?.seq ?? event.seq) ? 'visible' : 'inactive', input_tokens: usage(data.usage).input, output_tokens: usage(data.usage).output });
+      continue;
+    }
+    if (event.type === 'tool/call' && typeof data?.callId === 'string') {
+      if (!claimedCalls.has(event.seq)) {
+        const uuid = addMessage(event, 'assistant', null, 'tool_use', ':0');
+        addToolCall(uuid, data.callId, event, data);
+      }
       continue;
     }
     if (!['user/message', 'assistant/message', 'tool/result'].includes(event.type)) continue;
     const message = data?.message ?? data;
     if (!Array.isArray(message?.content)) continue;
-    if (event.type === 'user/message' && message.source?.kind === 'user' && !title) title = contentText(message.content).trim() || null;
+    if (event.type === 'user/message' && message.source?.kind === 'user' && event.seq > inheritedThrough && !title) title = contentText(message.content).trim() || null;
     if (event.type === 'tool/result') {
       const result = toolResult(message);
       const fullText = contentText(result.content);
@@ -279,13 +402,13 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       } else if (block?.type === 'tool-call' && typeof block.id === 'string') {
         const uuid = addMessage(event, 'assistant', null, 'tool_use', suffix, last);
         const call = callFor(block.id, event.seq, 'after');
-        const argumentsText = typeof call?.data?.arguments === 'string' ? call.data.arguments : typeof block.arguments === 'string' ? block.arguments : '{}';
-        const toolName = typeof call?.data?.name === 'string' ? call.data.name : typeof block.name === 'string' ? block.name : 'tool';
-        let input: unknown;
-        try { input = JSON.parse(argumentsText); } catch { input = { raw: argumentsText }; }
-        records.push({ kind: 'tool_call', id: callKey(block.id, call), message_uuid: uuid, session_id: id, name: toolName, input_json: truncJson(input as any) ?? '{}', file_path: toolPath(toolName, argumentsText) });
+        addToolCall(uuid, block.id, call, block);
       }
     }
+  }
+  if (count === 0) {
+    yield records[0];
+    return snapshotCursor(snapshot, lines);
   }
   records.push({ kind: 'session', id, title, project: projectSlugFromPath(cwd), started_at: timestamp(header.createdAt), ended_at: endedAt, git_branch: null, version: String(header.version), message_count: count, countMode: 'total', jsonl_path: unit.key, source: name });
   yield* records;

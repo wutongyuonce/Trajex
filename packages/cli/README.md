@@ -10,3 +10,5 @@ trajex --query /tmp/query.mjs
 
 The CLI remains daemon-free: each command refreshes the local index when write
 ownership is available, then exits.
+
+DeepSeek Harness's default Zstandard logs require Node.js 22.15 or newer; uncompressed logs work on the package's baseline Node.js 22.13.

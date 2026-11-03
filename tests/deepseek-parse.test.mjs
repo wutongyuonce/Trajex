@@ -6,10 +6,15 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { constants, zstdCompressSync } from 'node:zlib';
 
 import { createDeepSeekProvider } from '../packages/core/src/providers/deepseek.ts';
 
-const COMPRESSED = 'KLUv/SCJRQMAokYWG3Br2hCBJpFBbAwMP1KS6nUv2PMLDjyrPu4QAshDOSdWvcCk3IP4crRdl3M44/E3aCaKlZqkQTZlIACcl4Df84Vsxqt+qUVCPmPaArfOsJlJqXr1+aqxdgQEAFZdgSqQ4urpVZootS/9ILsNBACCSBoacGtz9SKaaHV3TX2tE6XWXzVJvu2ApgQARLCA5kxf6xi9CkcHwRj1tUPzlfxTIK96thaFjOdlfA3oTd+kkK9lShRHjFFIJj4rirlBnz3pQw7CAEF/SdZ3oBdXn584ql8E7MoY/dVYNwEIAKpR7KF8QKRoKBDBlBBer4gSAco=';
+function zstdRows(entries) {
+  return zstdCompressSync(Buffer.from(entries.map(entry => JSON.stringify(entry)).join('\n') + '\n'), {
+    params: { [constants.ZSTD_c_checksumFlag]: 1 },
+  });
+}
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'trajex-deepseek-'));
@@ -63,7 +68,10 @@ test('DeepSeek selects the newest generation and reads concatenated zstd frames'
   try {
     rows(join(sessionDir, 'session.jsonl'), [{ type: 'session', version: 0, id: 'old', createdAt: 1780000000000 }]);
     const path = join(sessionDir, 'session.v4.jsonl.zstd');
-    writeFileSync(path, Buffer.from(COMPRESSED, 'base64'));
+    writeFileSync(path, Buffer.concat([
+      zstdRows([{ type: 'session', version: 4, id: 'compressed', createdAt: 1780000000000, cwd: '/work' }]),
+      zstdRows([{ type: 'user/message', seq: 0, time: 1780000000001, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'compressed needle' }] }, surfaceOp: 'append' }]),
+    ]));
     const provider = createDeepSeekProvider({ sessionDir: root });
     const [unit] = provider.discover(context());
     assert.equal(unit.key, path);
@@ -71,6 +79,51 @@ test('DeepSeek selects the newest generation and reads concatenated zstd frames'
     assert.equal(records.find(record => record.kind === 'session').title, 'compressed needle');
     assert.equal(records.find(record => record.kind === 'session').message_count, 1);
   } finally { close(); }
+});
+
+test('DeepSeek indexes complete Zstandard frames before a torn final frame', () => {
+  const { root, sessionDir, close } = fixture();
+  try {
+    const path = join(sessionDir, 'session.v4.jsonl.zstd');
+    const header = zstdRows([{ type: 'session', version: 4, id: 'torn', createdAt: 1780000000000, cwd: '/work' }]);
+    const first = zstdRows([{ type: 'user/message', seq: 0, time: 1780000000001, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'complete prefix' }] }, surfaceOp: 'append' }]);
+    const torn = zstdRows([{ type: 'assistant/message', seq: 1, time: 1780000000002, data: { message: { role: 'assistant', content: [{ type: 'text', text: 'unfinished append' }] } }, surfaceOp: 'append' }]);
+    writeFileSync(path, Buffer.concat([header, first, torn.subarray(0, Math.floor(torn.length / 2))]));
+    const provider = createDeepSeekProvider({ sessionDir: root });
+    const [unit] = provider.discover(context());
+    assert.equal(unit.sessionId.startsWith('deepseek:torn:'), true);
+    const messages = [...provider.parse(unit, null)].filter(record => record.kind === 'message');
+    assert.deepEqual(messages.map(record => record.text), ['complete prefix']);
+  } finally { close(); }
+});
+
+test('DeepSeek rejects a complete Zstandard frame with a bad checksum', () => {
+  const { root, sessionDir, close } = fixture();
+  try {
+    const path = join(sessionDir, 'session.v4.jsonl.zstd');
+    const header = zstdRows([{ type: 'session', version: 4, id: 'bad-checksum', createdAt: 1780000000000, cwd: '/work' }]);
+    const event = zstdRows([{ type: 'user/message', seq: 0, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'corrupt' }] }, surfaceOp: 'append' }]);
+    event[event.length - 1] ^= 0xff;
+    writeFileSync(path, Buffer.concat([header, event]));
+    const provider = createDeepSeekProvider({ sessionDir: root });
+    const [unit] = provider.discover(context());
+    assert.equal(unit.sessionId.startsWith('deepseek:bad-checksum:'), true);
+    assert.throws(() => [...provider.parse(unit, null)]);
+  } finally { close(); }
+});
+
+test('DeepSeek rejects packed v0/v1 generations instead of silently dropping assistant messages', () => {
+  for (const version of [0, 1]) {
+    const { root, sessionDir, close } = fixture();
+    try {
+      rows(join(sessionDir, version ? `session.v${version}.jsonl` : 'session.jsonl'), [
+        { type: 'session', version, id: `old-${version}`, createdAt: 1780000000000 },
+      ]);
+      const [unit] = createDeepSeekProvider({ sessionDir: root }).discover(context());
+      assert.match(unit.sessionId, /^deepseek:unreadable:/);
+      assert.throws(() => [...createDeepSeekProvider({ sessionDir: root }).parse(unit, null)], /Unsupported DeepSeek session format version/);
+    } finally { close(); }
+  }
 });
 
 test('DeepSeek retracts a deleted selected generation', () => {
@@ -123,6 +176,73 @@ test('DeepSeek v3 wrapped tool result links to its call', () => {
   } finally { close(); }
 });
 
+test('DeepSeek retains a tool call without an assistant tool-call block', () => {
+  const { root, sessionDir, close } = fixture();
+  try {
+    rows(join(sessionDir, 'session.v4.jsonl'), [
+      { type: 'session', version: 4, id: 'orphan-call', createdAt: 1780000000000, cwd: '/work' },
+      { type: 'tool/call', seq: 0, time: 1780000000001, data: { callId: 'plugin-call', name: 'read', arguments: '{"path":"a.txt"}' } },
+      { type: 'tool/result', seq: 1, time: 1780000000002, data: { message: { role: 'tool', toolCallId: 'plugin-call', content: [{ type: 'text', text: 'plugin output' }] } }, surfaceOp: 'append' },
+    ]);
+    const provider = createDeepSeekProvider({ sessionDir: root });
+    const [unit] = provider.discover(context());
+    const records = [...provider.parse(unit, null)];
+    assert.equal(records.find(record => record.kind === 'tool_result').tool_use_id, records.find(record => record.kind === 'tool_call').id);
+    assert.equal(records.find(record => record.kind === 'tool_call').file_path, 'a.txt');
+  } finally { close(); }
+});
+
+test('DeepSeek seeded sessions keep inherited evidence inactive and count only new messages', () => {
+  const { root, sessionDir, close } = fixture();
+  try {
+    rows(join(sessionDir, 'session.v4.jsonl'), [
+      { type: 'session', version: 4, id: 'seeded', createdAt: 1780000000000, cwd: '/work', isSeeded: true, parentSession: 'parent' },
+      { type: 'user/message', seq: 0, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'parent question' }] }, surfaceOp: 'append' },
+      { type: 'assistant/message', seq: 1, data: { message: { role: 'assistant', content: [{ type: 'text', text: 'parent answer' }] } }, surfaceOp: 'append' },
+      { type: 'session/end-seed', seq: 2, data: { inherited: true } },
+      { type: 'user/message', seq: 3, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'fork question' }] }, surfaceOp: 'append' },
+    ]);
+    const provider = createDeepSeekProvider({ sessionDir: root });
+    const [unit] = provider.discover(context());
+    const records = [...provider.parse(unit, null)];
+    assert.deepEqual(records.filter(record => record.kind === 'message').map(record => record.visibility), ['inactive', 'inactive', 'visible']);
+    assert.equal(records.find(record => record.kind === 'session').message_count, 1);
+    assert.equal(records.find(record => record.kind === 'session').title, 'fork question');
+  } finally { close(); }
+});
+
+test('DeepSeek repeated compaction makes superseded summaries inactive', () => {
+  const { root, sessionDir, close } = fixture();
+  try {
+    rows(join(sessionDir, 'session.v4.jsonl'), [
+      { type: 'session', version: 4, id: 'compacted', createdAt: 1780000000000, cwd: '/work' },
+      { type: 'user/message', seq: 0, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'original' }] }, surfaceOp: 'append' },
+      { type: 'compaction/summary', seq: 1, data: { summary: [{ type: 'text', text: 'first summary' }] } },
+      { type: 'user/message', seq: 2, data: { role: 'user', source: { kind: 'plugin' }, content: [{ type: 'text', text: 'first summary' }] }, surfaceOp: { op: 'replace', startSeq: 0, endSeq: 0 } },
+      { type: 'compaction/summary', seq: 3, data: { summary: [{ type: 'text', text: 'second summary' }] } },
+      { type: 'user/message', seq: 4, data: { role: 'user', source: { kind: 'plugin' }, content: [{ type: 'text', text: 'second summary' }] }, surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 } },
+    ]);
+    const provider = createDeepSeekProvider({ sessionDir: root });
+    const [unit] = provider.discover(context());
+    const summaries = [...provider.parse(unit, null)].filter(record => record.kind === 'summary');
+    assert.deepEqual(summaries.map(record => record.visibility), ['inactive', 'visible']);
+  } finally { close(); }
+});
+
+test('DeepSeek ignores assistant attempts and accepts a no-cwd project directory', () => {
+  const { root, sessionDir, close } = fixture();
+  try {
+    rows(join(sessionDir, 'session.v4.jsonl'), [
+      { type: 'session', version: 4, id: 'no-cwd', createdAt: 1780000000000 },
+      { type: 'assistant/attempt', seq: 0, data: { message: { role: 'assistant', content: [{ type: 'text', text: 'duplicate' }] } } },
+      { type: 'assistant/message', seq: 1, data: { message: { role: 'assistant', content: [{ type: 'text', text: 'canonical' }] } }, surfaceOp: 'append' },
+    ]);
+    const provider = createDeepSeekProvider({ sessionDir: root });
+    const [unit] = provider.discover(context());
+    assert.deepEqual([...provider.parse(unit, null)].filter(record => record.kind === 'message').map(record => record.text), ['canonical']);
+  } finally { close(); }
+});
+
 test('DeepSeek isolates an unreadable generation from other sessions', () => {
   const { root, sessionDir, close } = fixture();
   try {
@@ -151,5 +271,31 @@ test('DeepSeek child session is not indexed as a top-level conversation', () => 
     const [unit] = provider.discover(context());
     assert.deepEqual([...provider.parse(unit, null)], []);
     assert.equal(unit.meta.subagent, true);
+  } finally { close(); }
+});
+
+test('DeepSeek header-only sessions do not create empty conversations', () => {
+  const { root, sessionDir, close } = fixture();
+  try {
+    rows(join(sessionDir, 'session.v4.jsonl'), [
+      { type: 'session', version: 4, id: 'empty', createdAt: 1780000000000, cwd: '/work' },
+    ]);
+    const provider = createDeepSeekProvider({ sessionDir: root });
+    const [unit] = provider.discover(context());
+    assert.deepEqual([...provider.parse(unit, null)].map(record => record.kind), ['delete-session']);
+  } finally { close(); }
+});
+
+test('DeepSeek seeded sessions without new messages do not leave orphan evidence', () => {
+  const { root, sessionDir, close } = fixture();
+  try {
+    rows(join(sessionDir, 'session.v4.jsonl'), [
+      { type: 'session', version: 4, id: 'seed-only', createdAt: 1780000000000, cwd: '/work', isSeeded: true },
+      { type: 'user/message', seq: 0, data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'inherited' }] }, surfaceOp: 'append' },
+      { type: 'session/end-seed', seq: 1, data: { inherited: true } },
+    ]);
+    const provider = createDeepSeekProvider({ sessionDir: root });
+    const [unit] = provider.discover(context());
+    assert.deepEqual([...provider.parse(unit, null)].map(record => record.kind), ['delete-session']);
   } finally { close(); }
 });

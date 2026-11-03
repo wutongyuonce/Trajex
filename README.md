@@ -60,7 +60,7 @@ Codex 只索引根 thread 为普通 Trajex session。带有 `parent_thread_id`�
 
 每个 Pi 官方 v3 session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，Trajex 会根据 durable leaf 和 compaction（包括 retained tail）计算当前上下文：当前记录为 `visible`，已被取代但保留的分支证据为 `inactive`，来源明确隐藏的 transport context 为 `hidden`。工具调用使用每次消息 occurrence 的 canonical ID，结果只关联同一 `parentId` 分支内最近的原始 `toolCallId`，避免分叉复用 ID 时串线。详情页默认只展示 visible 记录，其他分支可显式展开。
 
-DeepSeek Harness 使用[官方 session persistence 格式](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/session/session-persistence-jsonl/README.md)：每个 session 只索引最新的 `session[.vN].jsonl[.zstd]` generation，支持默认 Zstandard 压缩与未压缩日志。adapter 对变更文件全量重放，读取 `user/message`、`assistant/message`、`tool/call`、`tool/result` 和 `compaction/summary`；`assistant/attempt` 及 stream 片段只作为原始证据，不重复索引为回答。`surfaceOp` 替换范围内的旧消息保留为 inactive。DeepSeek Harness 的 subagent child session 不作为独立主会话。
+DeepSeek Harness 使用[官方 session persistence 格式](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/session/session-persistence-jsonl/README.md)：每个 session 只索引最新的 `session[.vN].jsonl[.zstd]` generation，支持 v2–v4、默认 Zstandard 压缩与未压缩日志。适配器对变更文件全量重放，读取 `user/message`、`assistant/message`、`tool/call`、`tool/result` 和 `compaction/summary`；`assistant/attempt` 及 stream 片段只作为原始证据，不重复索引为回答。未完成的最后一个 Zstandard frame 不会遮住已完整写入的记录。`surfaceOp` 替换范围内的旧消息及 seeded fork 继承的历史保留为 inactive。DeepSeek Harness 的 subagent child session 不作为独立主会话；v0/v1 的 packed assistant 行尚不支持，适配器会明确报错。
 
 为了支持 app 实时刷新，Trajex 会按 provider 声明的 typed targets 监听目录和精确文件：目录交给 `@parcel/watcher`，精确文件用有上限的 stat 轮询；macOS 还会轮询最近活跃的最多 64 个 transcript。App 每 5 分钟再做一次完整清点。Claude 的目标包括 `~/.claude/projects` 与 `history.jsonl`，Codex 包括 `~/.codex/sessions`、`archived_sessions` 与 `session_index.jsonl`，Pi 默认是 `~/.pi/agent/sessions`，DeepSeek Harness 默认是 `~/.dsh/sessions`。App Settings 中 Claude 与 Codex 配置的是各自的 provider root（默认 `~/.claude` / `~/.codex`），Pi 与 DeepSeek Harness 配置最终 session directory。DeepSeek Harness 的默认根目录也可通过 `DSH_HOME` 选择。如果某个已有快照的来源根暂时不可用，daemon 会保留旧快照并重试；目录恢复后会立即重新清点。
 
@@ -68,7 +68,7 @@ DeepSeek Harness 使用[官方 session persistence 格式](https://github.com/de
 
 桌面 App 和 CLI 可以独立安装：安装 App 不需要先安装 CLI，安装 CLI 也不需要单独安装 Core。两者各自携带运行所需的 Core，并在同时使用时共享同一个本地索引数据库。
 
-* CLI 使用 Node 22 内置的 `node:sqlite` 与 FTS5，并依赖纯 JS 的 `fzstd` 读取 DeepSeek Harness 默认压缩格式。
+* CLI 使用 Node 22 内置的 `node:sqlite` 与 FTS5；读取 DeepSeek Harness 默认压缩格式时需要 Node.js 22.15 或更新版本的 `node:zlib` Zstandard 解码器校验完整 frame，`fzstd` 用于恢复未完成尾帧中的完整记录。
 
 * App 有运行时 npm dependencies：`better-sqlite3` 作为 Electron 侧的 SQLite 驱动，`@parcel/watcher` 提供跨平台递归目录事件。两者都包含需要在打包时保留真实磁盘路径的原生模块。
 

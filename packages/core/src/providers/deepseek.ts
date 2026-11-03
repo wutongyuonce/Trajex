@@ -108,8 +108,8 @@ function decodeCompleteFrame(frame: Buffer): Buffer {
 
 function decodeZstd(bytes: Buffer): { text: string; torn: boolean } {
   const { complete, torn } = zstdFrames(bytes);
-  const completeBytes = complete.reduce((length, frame) => length + frame.length, 0);
-  const decoded: Buffer[] = completeBytes ? [decodeCompleteFrame(bytes.subarray(0, completeBytes))] : [];
+  // Node 22's zstdDecompressSync stops after the first frame; DSH appends independent frames.
+  const decoded: Buffer[] = complete.map(decodeCompleteFrame);
   if (torn) {
     // A partial final frame can already contain complete JSONL rows in decoded blocks.
     const recovered: Buffer[] = [];

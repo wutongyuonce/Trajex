@@ -21,8 +21,6 @@ function onKeydown(e) {
 onMounted(() => window.addEventListener('keydown', onKeydown));
 onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
-const homePath = (typeof process !== 'undefined' && process.env?.HOME) || '~';
-
 const visibleSessions = computed(() => {
   const q = state.query.trim().toLowerCase();
   return state.sessions
@@ -111,13 +109,11 @@ function trajexStyle(session) {
         <span class="diamond"></span>
         <span>No data source connected</span>
       </div>
-      <div class="empty-title">Trajex reads your Claude Code session history.</div>
+      <div class="empty-title">No coding agent sessions found yet.</div>
       <div class="empty-body">
-        We didn't find <code>~/.claude</code> on this machine. If you've already used
-        Claude Code, point Trajex at where its data lives in
-        <button class="inline-link" @click="router.push('/settings')">Settings</button>. If you haven't,
-        <strong>install Claude Code first</strong> — Trajex has nothing to read until
-        sessions exist.
+        Trajex reads Claude Code, Codex, Pi, and DeepSeek Harness sessions.
+        Choose the source folders in
+        <button class="inline-link" @click="router.push('/settings')">Settings</button>.
       </div>
       <div class="empty-actions">
         <button class="toolbar-action primary" @click="router.push('/settings')">
@@ -126,17 +122,6 @@ function trajexStyle(session) {
           </svg>
           Choose folder…
         </button>
-      </div>
-      <div class="empty-divider"></div>
-      <div class="empty-help">
-        <div class="help-row">
-          <span class="label">expected</span>
-          <code>~/.claude</code>
-        </div>
-        <div class="help-row">
-          <span class="label">searched</span>
-          <code>{{ homePath }}</code>
-        </div>
       </div>
     </div>
 

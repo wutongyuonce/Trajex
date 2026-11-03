@@ -1,6 +1,6 @@
 # Trajex CLI
 
-The local Trajex runtime used by coding agents. It indexes Claude Code, Codex, and official Pi v3 transcripts into `~/.trajex/trajex.sqlite` and exposes the stable `build`, `search`, `query`, and `attune` process interface.
+The local Trajex runtime used by coding agents. It indexes Claude Code, Codex, official Pi v3, and DeepSeek Harness transcripts into `~/.trajex/trajex.sqlite` and exposes the stable `build`, `search`, `query`, and `attune` process interface.
 
 ```bash
 npm install --global @trajex-apps/cli

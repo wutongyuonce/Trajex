@@ -1,7 +1,7 @@
 # Trajex
 
 Trajex is explicit memory infrastructure for coding agents: it indexes local
-Claude Code, Codex and Pi sessions into a queryable SQLite evidence layer, and a
+Claude Code, Codex, Pi and DeepSeek Harness sessions into a queryable SQLite evidence layer, and a
 CodeAct runtime lets an agent write a small query, run it, and answer from real
 session history. This glossary pins the terms that are specific to Trajex; it is
 not a spec.
@@ -48,6 +48,13 @@ projects the source-declared active context into `visibility`: current context
 is visible, superseded branch evidence is inactive, and source-suppressed
 transport context is hidden.
 _Avoid_: Pi project, Pi directory
+
+**DeepSeek Harness session**:
+One append-only interaction history owned by the DeepSeek Harness, independent
+of which model provider answered its turns. A session may have several durable
+format generations representing the same history; it is one session, not one
+session per generation.
+_Avoid_: DeepSeek model conversation, generation as session
 
 **Visibility**:
 The canonical evidence state of a message or summary: `visible` belongs to the

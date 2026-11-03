@@ -13,15 +13,15 @@ allowed-tools:
 
 # trajex
 
-Search and query Claude Code, Codex, and Pi session history from their configured local transcript roots.
-Defaults are `~/.claude/`, `~/.codex/`, and Pi's `~/.pi/agent/sessions`.
+Search and query Claude Code, Codex, Pi, and DeepSeek Harness session history from their configured local transcript roots.
+Defaults are `~/.claude/`, `~/.codex/`, Pi's `~/.pi/agent/sessions`, and DeepSeek Harness's `~/.dsh/sessions`.
 Pi may additionally use a session directory selected in App Settings; the
 configured value is already the final session directory, not an agent root.
-Trajex does not use provider environment-variable or CLI path overrides.
+DeepSeek Harness uses `DSH_HOME` for its default home directory.
 Trajex indexes sessions, messages, tool calls, tool results, summaries, subagents, workflows, workflow agents, parent chains, and raw JSONL lines into SQLite + FTS5.
 
-Trajex has three transcript sources. Treat all as ordinary sessions by default:
-Claude rows use `source='claude'`; Codex and Pi rows use `source='codex'` and `source='pi'`, with provider-prefixed IDs.
+Trajex has four transcript sources. Treat all as ordinary sessions by default:
+Claude rows use `source='claude'`; Codex, Pi, and DeepSeek Harness rows use `source='codex'`, `source='pi'`, and `source='deepseek'`, with provider-prefixed IDs.
 Use `source` only when provenance matters or the user asks to scope to one provider.
 Codex can project child agents into `subagents`.
 Pi support covers official v3 session files recursively. Pi branches are projected
@@ -168,7 +168,7 @@ Opts: `{ limit, sessionId, project, after, before, cwd, source, includeMeta, inc
 Results are already ordered by FTS5 rank; lower rank sorts earlier.
 Prefer returned order over manually interpreting numeric rank unless you are deliberately using FTS5 semantics.
 
-`source` can be `'claude'`, `'codex'`, `'pi'`, or omitted. Omitted means search all indexed sources.
+`source` can be `'claude'`, `'codex'`, `'pi'`, `'deepseek'`, or omitted. Omitted means search all indexed sources.
 
 ### `context(uuid)`
 

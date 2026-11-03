@@ -27,6 +27,7 @@ content into canonical records and a cursor.
 | Claude | `mtime:lines:size:ctime:inode`; skip accepted lines, stream the new tail, aggregate the session at the end | Consume and skip newline-terminated malformed records, then continue. Leave an unterminated malformed tail unconsumed because it may still be growing. Legacy `mtime:lines` cursors remain readable. If the cursor is past EOF, restart from line 1 |
 | Codex | `mtime:lines:size:ctime:inode`; replay the whole stable rollout, collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Consume and skip newline-terminated malformed records, then continue. Leave an unterminated malformed tail unconsumed. If the snapshot changes while reading, abort the unit |
 | Pi | `mtime:lines:size:ctime:inode`; replay the whole stable v3 tree, resolve durable leaf/compaction and project `visible` / `inactive` / `hidden` | Consume and skip newline-terminated malformed JSONL, then continue. Structurally invalid parsed entries abort the unit. Leave an unterminated malformed tail unconsumed. If the snapshot changes while reading, abort the unit |
+| DeepSeek Harness | `mtime:lines:size:ctime:inode`; replay the newest v2–v4 generation, including concatenated Zstandard frames; project `surfaceOp` replacements and seeded history as inactive | Accept complete JSONL records from a torn final frame; reject malformed complete records or complete frames. V0/V1 packed rows and future versions fail explicitly. Abort if the source snapshot changes while reading |
 
 Codex guardian/auto-review threads are filtered from the canonical transcript
 projection. An ordinary incremental build does not proactively delete a
@@ -53,7 +54,7 @@ cursor. Legacy two-part full-replay cursors are replayed once and upgraded.
 `IndexUnit.key` identifies the unit whose parse progress is stored in
 `index_state`. A session record's `jsonl_path` identifies its primary source
 transcript for provenance and raw lookup. These fields have different semantic
-roles even though every current built-in Provider (Claude, Codex, and Pi)
+roles even though every current built-in Provider (Claude, Codex, Pi, and DeepSeek Harness)
 deliberately emits the same concrete path for both. The shared indexing code may
 rely on that equality while those are the only supported Providers.
 

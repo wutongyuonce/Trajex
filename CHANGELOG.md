@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增 DeepSeek Harness v2–v4 会话来源：索引最新 generation 的原始或 Zstandard JSONL 日志，关联工具调用与结果，保留 compaction 和 seeded fork 的可见性，并容忍未完成的压缩尾帧；CLI 与桌面端共享同一适配器。
+
 ### Changed
 
 - 普通增量索引只为 `project_path` 为空的受影响会话推导项目根目录，Codex/Pi 全量重放也会跨 `delete-session` 保留已解析路径；不再重扫长会话的全部 `cwd` 历史或用后续子目录覆盖项目根，force rebuild 仍会完整重新计算。

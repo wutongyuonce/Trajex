@@ -17,7 +17,7 @@
 
 </div>
 
-Parses JSONL history from different providers — Codex, Claude Code, Pi — into one canonical record set persisted in SQLite, with millisecond-scale history retrieval via the FTS5 full-text index.
+Parses session history from Codex, Claude Code, Pi, and DeepSeek Harness into one canonical record set persisted in SQLite, with millisecond-scale history retrieval via the FTS5 full-text index.
 
 * Built on the **CodeAct agent design paradigm**, with a programmable JS Query API that lets agents make **“writing executable code”** their core mode of action
 * Ships with an Electron + Vue desktop app that turns the same index into a readable session timeline for humans to browse
@@ -34,7 +34,7 @@ Trajex has two sides sharing the same SQLite index:
 
 **App side** — An Electron desktop app for humans to browse sessions, manage memories, and view usage statistics.
 
-Both read the same `~/.trajex/trajex.sqlite` database. The indexer consumes Claude Code transcripts from `~/.claude/projects`, Codex transcripts from `~/.codex/sessions`, and Pi sessions from `~/.pi/agent/sessions`.
+Both read the same `~/.trajex/trajex.sqlite` database. The indexer consumes Claude Code transcripts from `~/.claude/projects`, Codex transcripts from `~/.codex/sessions`, Pi sessions from `~/.pi/agent/sessions`, and DeepSeek Harness sessions from `~/.dsh/sessions`.
 
 ## Multi-Provider Support
 
@@ -49,23 +49,26 @@ Tool results use a three-tier projection: `messages.text` keeps at most a 1,000-
 | Claude | `e9d4f0a1-…` (as-is) | Native format |
 | Codex | `codex:6f3c2a9e-…` | Avoid primary-key collisions with Claude's UUIDs |
 | Pi | `pi:<raw-id>:<cwd-hash>` | Tree-shaped sessions, scoped per project/branch |
+| DeepSeek Harness | `deepseek:<raw-id>:<cwd-hash>` | Distinguish same-named sessions across projects |
 
 > * Claude / Codex: their ids are globally unique at the session level;
 > * Pi: the default id is also globally unique (uuidv7), but Pi supports explicitly passing project-local ids such as `--session-id` (uniqueness is not enforced), and the same session file may appear under multiple project directories. So relying on the raw id alone can collide across projects; folding the cwd hash into the primary key is a defensive fallback (and keeps identity stable when files move).
 
 Only Codex root threads become regular Trajex sessions. Codex child/fork/subagent threads, including guardian/auto-review threads, are ignored when parent-thread metadata or `thread_source: "subagent"` identifies them; they are not attached to `subagents`. Codex does not emit Claude-style workflow metadata, so workflow-related tables may be empty when only Codex history is present. Like Pi, Codex fully replays changed files: it first deletes the session's old derived projection, then rebuilds it entirely from the current JSONL.
 
-The three built-in providers intentionally have different parse boundaries: Claude resumes from a cursor containing mtime, line count, size, ctime, and inode, while Codex fully replays changed files to deduplicate `event_msg` and `response_item`, and Pi fully replays them to recompute tree branches, the durable leaf, and compaction. All three commit only the valid prefix when a JSONL line is malformed, leaving the cursor before the bad line so a repaired source can be indexed on the next run. Deletion cleanup is emitted only when the provider can read the configured root and prove that an indexed file disappeared from the current inventory. If that root is temporarily missing or unreadable, the previous snapshot is preserved. Cleanup removes regenerable transcript projections only; `memories` are never deleted.
+The existing Claude, Codex, and Pi providers intentionally have different parse boundaries: Claude resumes from a cursor containing mtime, line count, size, ctime, and inode, while Codex fully replays changed files to deduplicate `event_msg` and `response_item`, and Pi fully replays them to recompute tree branches, the durable leaf, and compaction. All three commit only the valid prefix when a JSONL line is malformed, leaving the cursor before the bad line so a repaired source can be indexed on the next run. Deletion cleanup is emitted only when the provider can read the configured root and prove that an indexed file disappeared from the current inventory. If that root is temporarily missing or unreadable, the previous snapshot is preserved. Cleanup removes regenerable transcript projections only; `memories` are never deleted.
 
 Each official Pi v3 session JSONL file becomes a Trajex session. Pi entries form a tree, so Trajex resolves the durable leaf and compaction forms, including retained tails: current context is `visible`, superseded branch evidence is `inactive`, and source-suppressed transport context is `hidden`. The detail view shows visible records by default and lets readers explicitly expand inactive evidence.
 
-To support live app refresh, each provider declares typed directory-tree and exact-file targets. Trajex observes trees with `@parcel/watcher` and polls exact files with stat signatures; on macOS it also polls up to 64 recently active transcripts. A full inventory reconcile runs every five minutes as the final fallback. Claude targets `~/.claude/projects` and `history.jsonl`; Codex targets `~/.codex/sessions`, `archived_sessions`, and `session_index.jsonl`; Pi defaults to `~/.pi/agent/sessions`. In App Settings, Claude and Codex take the provider root (default `~/.claude` / `~/.codex`), while Pi takes the final session directory. Trajex does not read environment variables or CLI arguments. If a previously indexed source root is unavailable, the daemon preserves the last snapshot and retries; when the directory returns, it immediately performs a fresh inventory.
+DeepSeek Harness follows its [official session persistence format](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/session/session-persistence-jsonl/README.md). Trajex indexes only the newest `session[.vN].jsonl[.zstd]` generation per session, supporting v2–v4, default Zstandard, and uncompressed logs. The adapter fully replays changed files and projects `user/message`, `assistant/message`, `tool/call`, `tool/result`, and `compaction/summary`. It does not duplicate `assistant/attempt` or stream fragments as answers. An incomplete final Zstandard frame does not hide complete prior records. `surfaceOp` replacements and inherited history in seeded forks are inactive. Subagent child sessions are not shown as separate top-level conversations. V0/V1 packed assistant rows are not yet supported and produce an explicit error.
+
+To support live app refresh, each provider declares typed directory-tree and exact-file targets. Trajex observes trees with `@parcel/watcher` and polls exact files with stat signatures; on macOS it also polls up to 64 recently active transcripts. A full inventory reconcile runs every five minutes as the final fallback. Claude targets `~/.claude/projects` and `history.jsonl`; Codex targets `~/.codex/sessions`, `archived_sessions`, and `session_index.jsonl`; Pi defaults to `~/.pi/agent/sessions`, and DeepSeek Harness defaults to `~/.dsh/sessions`. In App Settings, Claude and Codex take the provider root (default `~/.claude` / `~/.codex`), while Pi and DeepSeek Harness take the final session directory. `DSH_HOME` can also select the default DeepSeek Harness home. If a previously indexed source root is unavailable, the daemon preserves the last snapshot and retries; when the directory returns, it immediately performs a fresh inventory.
 
 ## App and CLI Relationship
 
 The desktop app and CLI install independently: installing the app does not require the CLI, and installing the CLI does not require a separate Core installation. Each carries the Core it needs at runtime, and both share the same local index database when used simultaneously.
 
-* The CLI has no runtime npm dependencies and uses Node 22's built-in `node:sqlite` with FTS5.
+* The CLI uses Node 22's built-in `node:sqlite` with FTS5. DeepSeek Harness's default compression requires Node.js 22.15 or newer for checksum-validating `node:zlib` Zstandard decoding; `fzstd` recovers complete records from an incomplete final frame.
 
 * The App has runtime npm dependencies: `better-sqlite3` is its Electron-side SQLite binding, while `@parcel/watcher` supplies cross-platform recursive directory events. Both contain native modules that must remain available at real filesystem paths in packaged builds.
 
@@ -195,7 +198,7 @@ npm ci
 npm run dev
 ```
 
-`electron-vite` starts the renderer dev server and opens Electron. On first run, Trajex creates `~/.trajex/trajex.sqlite`, indexes available Claude Code, Codex, and Pi transcripts, then watches them for changes. Default sources can be changed to other directories in **Settings**. On Windows, Trajex also checks common WSL distributions for Claude Code directories.
+`electron-vite` starts the renderer dev server and opens Electron. On first run, Trajex creates `~/.trajex/trajex.sqlite`, indexes available Claude Code, Codex, Pi, and DeepSeek Harness transcripts, then watches them for changes. Default sources can be changed to other directories in **Settings**. On Windows, Trajex also checks common WSL distributions for Claude Code directories.
 
 ## Debugging the App
 
@@ -286,7 +289,7 @@ npm i -g @trajex-apps/cli   # update globally locally
 
 | Layer | Source | Capture Content |
 |-------|--------|----------------|
-| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi recursive official v3 `*.jsonl` | Title, project, timestamps, git branch, source |
+| **Sessions** | Claude `<project>/<sessionId>.jsonl`; Codex `sessions/YYYY/MM/DD/*.jsonl`; Pi recursive official v3 `*.jsonl`; DeepSeek Harness `sessions/<project>/<session>/session[.vN].jsonl[.zstd]` | Title, project, timestamps, git branch, source |
 | **Messages** | user + assistant turns | Full text, model, token usage, parent chain |
 | **Tool calls** | every tool invocation | Tool name, input, file paths |
 | **Subagents** | Claude `subagents/agent-<id>.jsonl` | Agent type, description, full conversation |
@@ -305,7 +308,8 @@ packages/core/                # @trajex/core npm workspace (TypeScript + ESM)
 │   │   ├── types.ts          # Provider + TranscriptRecord contract
 │   │   ├── claude.ts         # Claude Code adapter (line-incremental)
 │   │   ├── codex.ts          # Codex adapter (full reparse)
-│   │   └── pi.ts             # Pi adapter (v3 context + visibility projection)
+│   │   ├── pi.ts             # Pi adapter (v3 context + visibility projection)
+│   │   └── deepseek.ts       # DeepSeek Harness adapter (versioned JSONL + Zstandard)
 │   ├── session-detail.ts     # Provider-independent transcript projection
 │   ├── persist.ts            # Binding-agnostic record writer (upsert/merge)
 │   ├── tx.ts                 # Write transaction + connection config

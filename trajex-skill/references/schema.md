@@ -14,11 +14,12 @@ exist.
 
 ## Source Model
 
-Trajex stores Claude Code, Codex, and Pi transcripts in the same schema.
+Trajex stores Claude Code, Codex, Pi, and DeepSeek Harness transcripts in the same schema.
 
 - Claude rows use `source='claude'`.
 - Codex rows use `source='codex'`; root session and message IDs are prefixed with `codex:`.
 - Pi rows use `source='pi'` and IDs derived from normalized `cwd` plus the v3 header `id`; official v3 session files are discovered recursively.
+- DeepSeek Harness rows use `source='deepseek'` and IDs derived from the session header `id` and normalized `cwd`; the newest v2–v4 generation is indexed.
 - Omit `source` filters unless provider provenance matters.
 - Codex child agents are represented through `subagents`; provider workflow rows may be absent when the source has no compatible metadata.
 
@@ -60,7 +61,7 @@ One row per root session.
 | `version` | Provider CLI/app version |
 | `message_count` | Indexed user + assistant messages |
 | `jsonl_path` | Source JSONL path |
-| `source` | `claude`, `codex`, or `pi` |
+| `source` | `claude`, `codex`, `pi`, or `deepseek` |
 
 ### `messages`
 
@@ -83,7 +84,7 @@ Core evidence table.
 | `cwd` | Working directory at message time |
 | `skill` | Skill that generated the response, if known |
 | `turn_duration_ms` | Wall-clock duration for the turn |
-| `source` | `claude`, `codex`, or `pi` |
+| `source` | `claude`, `codex`, `pi`, or `deepseek` |
 
 `content_type='tool_use'` is only a marker. Tool-call details live in
 `tool_calls`. `content_type='tool_result'` marks provider-emitted tool-result

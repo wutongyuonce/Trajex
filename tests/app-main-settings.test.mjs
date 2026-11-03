@@ -267,6 +267,7 @@ test('main process watches every root declared by the built-in provider registry
       { kind: 'tree', path: join(codexDir, 'archived_sessions') },
       { kind: 'file', path: join(codexDir, 'session_index.jsonl') },
       { kind: 'tree', path: join(home, '.pi', 'agent', 'sessions') },
+      { kind: 'tree', path: join(home, '.dsh', 'sessions') },
     ]);
     assert.equal(serviceOptions[0].watchTargets.some(target => target.path === codexDir), false);
   } finally {

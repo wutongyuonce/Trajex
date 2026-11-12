@@ -19,12 +19,8 @@
 
 将来自不同 provider —— Codex、Claude Code、Pi 的 JSONL 历史解析为同一套 canonical record 并持久化至 SQLite，通过 FTS5 全文索引实现毫秒级历史检索。
 
-* 采用 **CodeAct 智能体设计范式**，提供可编程 JS Query API，让 Agent 将 **“编写可执行代码”** 作为核心行动方式
+* 采用 **CodeMode 智能体设计范式**，提供可编程 JS Query API，让 Agent 将 **“编写可执行代码”** 作为核心行动方式
 * 配套 Electron + Vue 桌面端，将同一份索引转化为可读的会话时间线，用户可通过 App 直观浏览
-
-## Acknowledgements
-
-Trajex 源自 [tommy0103/obelisk](https://github.com/tommy0103/obelisk)，基于上游 `07f975d`（2026-07-22）快照发展而来。未来 Trajex 会在不破坏现有功能与兼容性的前提下，同步 [obelisk](https://github.com/tommy0103/obelisk) 的后续改动。
 
 ## 同一个索引的两面
 
@@ -337,6 +333,10 @@ docs/adr/                     # Architecture decision records（0001–0006）
 - `packages/core/dist/` 由 `npm run build:core` 生成。它是编译后的内部 `@trajex/core` workspace：JavaScript、type declarations 和 `schema.sql`。
 - `packages/cli/dist/` 由 `npm run build:cli` 生成。它是可发布的 `@trajex-apps/cli` payload：薄命令 shell、可读的 compiled Core，以及 `schema.sql`。
 - `packages/cli/dist/` 是生成产物，不应该手动编辑。Electron app 会直接 import `packages/core/src/`，以便 electron-vite 可以 bundle Core。
+
+## Acknowledgements
+
+Trajex 源自 [tommy0103/obelisk](https://github.com/tommy0103/obelisk)，基于上游 `07f975d`（2026-07-22）快照发展而来。未来 Trajex 会在不破坏现有功能与兼容性的前提下，同步 [obelisk](https://github.com/tommy0103/obelisk) 的后续改动。
 
 ## 许可证与版权
 

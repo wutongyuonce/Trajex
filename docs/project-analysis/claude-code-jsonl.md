@@ -41,7 +41,7 @@ subagents/workflows/<run-id>/<agent-id>.jsonl
 
 | 字段 | 类型 | 观察到的含义 |
 | --- | --- | --- |
-| `type` | string | 条目类别，例如 `user`、`assistant`、`system`、`ai-title`、`attachment`。 |
+| `type` | string | 条目类别，例如 `user`、`assistant`、`system`、`custom-title`、`ai-title`、`attachment`。 |
 | `uuid` | string | 条目的稳定 ID；消息、摘要和原文回源主要依赖它。 |
 | `parentUuid` | string \| null | 原始事件的父条目 ID；可形成对话/事件链。 |
 | `timestamp` | ISO 8601 string | 条目时间；并非每种条目都有。 |
@@ -154,12 +154,13 @@ Trajex 的 `input_tokens` 是 `input_tokens + cache_creation_input_tokens + cach
 | --- | --- | --- |
 | `user` compact summary | 顶层或 `message.isCompactSummary === true` | 产生 `summary`，不产生普通 `message`。没有 UUID 时会构造稳定回退 ID。 |
 | `system` turn duration | `subtype === "turn_duration"`、有 `parentUuid` 与非零 `durationMs` | 产生 `message-turn-duration`，更新目标消息的 `turn_duration_ms`。 |
-| `ai-title` | 有 `aiTitle` | 更新本次主会话聚合的标题；不产生独立 record。 |
+| `custom-title` | 有 `customTitle` | 更新本次主会话聚合的自定义标题（高于 `ai-title`）；跨 cursor 已跳过行扫描，不产生独立 record。 |
+| `ai-title` | 有 `aiTitle` | 更新本次主会话聚合的 AI 标题；跨 cursor 已跳过行扫描，不产生独立 record。 |
 | `attachment` | 任意 attachment 载荷 | 当前不产生 record。 |
 | 其他 `system` 子类型 | 如 compact、hook、informational 等 | 当前不产生 record。 |
 | 其他顶层类型 | 如 queue、file-history、mode、permission 等 | 当前不产生 record。 |
 
-`ai-title`、主会话开始/结束时间、`gitBranch`、`version` 与消息数在主 JSONL 解析结束时聚合为一条 `session` record。子代理 JSONL 不拥有独立 `session` record。
+`custom-title`（优先）与 `ai-title`、主会话开始/结束时间、`gitBranch`、`version` 与消息数在主 JSONL 解析结束时聚合为一条 `session` record。子代理 JSONL 不拥有独立 `session` record。
 
 ## 5. 普通子代理
 

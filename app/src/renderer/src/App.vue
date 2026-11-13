@@ -206,9 +206,11 @@ function handleGlobalKeydown(event) {
 onMounted(() => {
   applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
   window.addEventListener('keydown', handleGlobalKeydown);
+  document.addEventListener('pointerdown', handleDocumentPointerDown);
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
+  document.removeEventListener('pointerdown', handleDocumentPointerDown);
   clearTimeout(searchTimer);
 });
 
@@ -226,11 +228,17 @@ loadSourceDots();
 
 // --- Source filter ---
 const showSourceFilter = ref(false);
+const sourceFilterWrapRef = ref(null);
 const sourceFilterActive = computed(() => state.sourceFilter !== 'all' && state.sourceFilter !== undefined);
 const sourceFilterLabel = computed(() => {
   if (!state.sourceFilter || state.sourceFilter === 'all') return 'All sources';
   return sourceLabel(state.sourceFilter, state.sources);
 });
+function handleDocumentPointerDown(event) {
+  if (showSourceFilter.value && !sourceFilterWrapRef.value?.contains(event.target)) {
+    showSourceFilter.value = false;
+  }
+}
 function toggleSourceFilter() { showSourceFilter.value = !showSourceFilter.value; }
 function setSourceFilter(id) {
   state.sourceFilter = id;
@@ -415,7 +423,12 @@ function setSourceFilter(id) {
                   {{ currentRouteType === 'sessions' ? 'Sessions' : 'Memory' }}
                 </button>
                 <span class="crumb-sep">/</span>
-                <span class="crumb terminal">{{ formatProjectLabel(state.projectFilter) }}</span>
+                <span
+                  class="crumb terminal project-crumb"
+                  :title="formatProjectLabel(state.projectFilter)"
+                >
+                  {{ formatProjectLabel(state.projectFilter) }}
+                </span>
               </template>
               <template v-else>
                 <span class="crumb terminal">
@@ -459,7 +472,11 @@ function setSourceFilter(id) {
           <div class="toolbar-spacer"></div>
 
           <!-- Source filter (session list only, multi-source) -->
-          <div v-if="showToolbar && route.name === 'SessionList' && sourceDots.length > 1" class="source-filter-wrap">
+          <div
+            v-if="showToolbar && route.name === 'SessionList' && sourceDots.length > 1"
+            ref="sourceFilterWrapRef"
+            class="source-filter-wrap"
+          >
             <button class="filter-btn" :class="{ active: sourceFilterActive }" @click="toggleSourceFilter">
               <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                 <path d="M2 3h8M3.5 6h5M5 9h2"/>

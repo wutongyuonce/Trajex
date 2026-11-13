@@ -44,7 +44,7 @@ subagents/workflows/<run-id>/<agent-id>.jsonl
 | `type` | string | 条目类别，例如 `user`、`assistant`、`system`、`custom-title`、`ai-title`、`attachment`。 |
 | `uuid` | string | 条目的稳定 ID；消息、摘要和原文回源主要依赖它。 |
 | `parentUuid` | string \| null | 原始事件的父条目 ID；可形成对话/事件链。 |
-| `timestamp` | ISO 8601 string | 条目时间；并非每种条目都有。 |
+| `timestamp` | ISO 8601 string | 条目时间；并非每种条目都有。带时区的值入库时统一为 `YYYY-MM-DDTHH:mm:ss.sssZ`，无时区值原样保留。 |
 | `sessionId` | string | 来源写入的会话 ID；Trajex 仅保留消息事实，不以它决定归属。 |
 | `agentId` | string | 子代理的原始 ID；对子代理文件，Trajex 优先使用文件名中的 agent ID。 |
 | `cwd` | string | 消息产生时的工作目录，是 Trajex 推断 `sessions.project_path` 的证据。 |

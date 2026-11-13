@@ -23,7 +23,7 @@ Codex 把一个线程（thread）保存为一个 **rollout JSONL 文件**：一�
 
 ## 2. JSONL 的公共形状
 
-每个 rollout 对象是**两级类型**：顶层 `type` 决定行类别，`payload` 承载数据；`event_msg` / `response_item` 还各自有 `payload.type` 细分类别。顶层 `timestamp` 是 ISO 8601 字符串。
+每个 rollout 对象是**两级类型**：顶层 `type` 决定行类别，`payload` 承载数据；`event_msg` / `response_item` 还各自有 `payload.type` 细分类别。顶层 `timestamp` 是 ISO 8601 字符串。Trajex 入库时把带时区（`Z` 或 `±hh:mm`）的值统一为 `YYYY-MM-DDTHH:mm:ss.sssZ`，无时区或无法解析的值原样保留；`session_meta.payload.timestamp` 与 `session_index.jsonl` 的 `updated_at` 同样处理。
 
 对本机 166 个 rollout 文件的 43932 行统计，顶层 `type` 分布：
 

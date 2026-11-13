@@ -29,7 +29,7 @@ import {
   codexIsGuardianThread, codexUsage,
   codexEventText, codexMessagePayloadText, codexVisibleMessageKey,
   codexToolInput, codexToolOutput,
-  extractMessageIsMeta, isSkillInstructions,
+  extractMessageIsMeta, isSkillInstructions, normalizeTranscriptTimestamp,
 } from '../parsing.ts';
 import { cursorMatchesSnapshot, fileSnapshot, sameSnapshot, snapshotCursor } from './file-snapshot.ts';
 
@@ -45,7 +45,8 @@ import type {
 } from './types.ts';
 
 export const name = 'codex';
-export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v1__';
+// v1.1：一次性重放旧投影，把消息时间戳与 session 边界规范为 UTC 毫秒形态。
+export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v1.1__';
 const CODEX_TRANSCRIPT_DIRS = ['sessions', 'archived_sessions'] as const;
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
@@ -80,7 +81,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
         if (item?.id && item?.thread_name) {
           sessionIndex.set(codexRawId(item.id) as string, {
             title: item.thread_name,
-            updatedAt: item.updated_at || null,
+            updatedAt: normalizeTranscriptTimestamp(item.updated_at),
           });
         }
       } catch { /* malformed session-index entry */ }
@@ -201,7 +202,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   const out: TranscriptRecord[] = [{ kind: 'delete-session', sessionId }];
   const msgByUuid = new Map<string, MessageRecord>();
   const indexedMeta = unit.meta as { indexedTitle?: string; indexedUpdatedAt?: string | null } | undefined;
-  const initialTimestamp = (meta.timestamp || metaRecord.obj.timestamp || null) as string | null;
+  const initialTimestamp = normalizeTranscriptTimestamp(meta.timestamp || metaRecord.obj.timestamp);
   const indexedUpdatedAt = indexedMeta?.indexedUpdatedAt ?? null;
   const sm = {
     started_at: initialTimestamp,
@@ -261,12 +262,12 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   }
 
   for (const { lineNum: currentLine, obj } of records) {
-    const ts = obj.timestamp || null;
+    const ts = normalizeTranscriptTimestamp(obj.timestamp);
     if (obj.type === 'session_meta') {
       if (obj.payload?.cwd) currentCwd = normalizeObservedCwd(obj.payload.cwd) || currentCwd;
       if (obj.payload?.git?.branch) sm.git_branch = obj.payload.git.branch;
       if (obj.payload?.cli_version) sm.version = obj.payload.cli_version;
-      updateBounds(obj.payload?.timestamp || ts);
+      updateBounds(normalizeTranscriptTimestamp(obj.payload?.timestamp) || ts);
       continue;
     }
     if (obj.type === 'turn_context') {

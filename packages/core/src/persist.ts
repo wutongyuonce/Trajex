@@ -26,10 +26,19 @@
 
 import type { Cursor, TranscriptRecord, IndexUnit } from './providers/types.ts';
 import type { SqliteDb } from './sqlite-types.ts';
+import { normalizeTranscriptTimestamp } from './parsing.ts';
 
 // session 合并时时间字段取 MIN/MAX：started_at 取更早、ended_at 取更晚（单边为 null 时取对方）。
 const minStr = (a: string | null, b: string | null) => (a == null ? b : b == null ? a : a < b ? a : b);
 const maxStr = (a: string | null, b: string | null) => (a == null ? b : b == null ? a : a > b ? a : b);
+// 新值已是规范 UTC 毫秒形态时，先把旧值规范化再比较；否则重放得到的 UTC 边界会
+// 输给旧的带偏移/无毫秒字符串，留下半迁移的 session。
+const CANONICAL_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const priorTimestampForMerge = (prior: string | null | undefined, incoming: string | null) => (
+  incoming !== null && CANONICAL_TIMESTAMP.test(incoming)
+    ? normalizeTranscriptTimestamp(prior)
+    : prior ?? null
+);
 
 /**
  * 为一次 persist 预编译 SQL。语句名与 TranscriptRecord.kind 对应，使 write()
@@ -157,8 +166,8 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
           r.title ?? prev?.title ?? null,
           r.project ?? prev?.project ?? null,
           prev?.project_path ?? replayProjectPaths.get(r.id) ?? null,
-          minStr(prev?.started_at ?? null, r.started_at),
-          maxStr(prev?.ended_at ?? null, r.ended_at),
+          minStr(priorTimestampForMerge(prev?.started_at, r.started_at), r.started_at),
+          maxStr(priorTimestampForMerge(prev?.ended_at, r.ended_at), r.ended_at),
           r.git_branch ?? prev?.git_branch ?? null,
           r.version ?? prev?.version ?? null,
           message_count,

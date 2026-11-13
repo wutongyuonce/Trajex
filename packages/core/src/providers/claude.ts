@@ -23,6 +23,7 @@ import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
 import {
   extractText, extractContentType, extractMessageIsMeta, isSkillInstructions,
   filePath, truncJson, truncToolResult, toolResultPreview, readLines, discoverJsonlFiles, isDir,
+  normalizeTranscriptTimestamp,
 } from '../parsing.ts';
 import { cursorMatchesSnapshot, fileSnapshot, snapshotCursor } from './file-snapshot.ts';
 
@@ -57,7 +58,8 @@ function cursorSignatureDiffers(cursor: string, filePath: string): boolean {
 }
 
 export const name = 'claude';
-export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v1__';
+// v1.1：一次性重放旧投影，补齐 custom-title 标题并把时间戳规范为 UTC 毫秒形态。
+export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v1.1__';
 
 interface ClaudeWorkflowUnitMeta {
   readonly kind: 'workflow';
@@ -259,7 +261,7 @@ function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
     task_id: workflow.taskId || null,
     script: workflow.script || null,
     result_json: workflow.result ? JSON.stringify(workflow.result) : null,
-    timestamp: workflow.timestamp || null,
+    timestamp: normalizeTranscriptTimestamp(workflow.timestamp),
     agent_count: agents.length,
     duration_ms: workflow.durationMs || null,
     total_tokens: workflow.totalTokens || null,
@@ -330,7 +332,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     }
     processedLineCount = lineNum;
     const sid = unit.sessionId;
-    const ts = obj.timestamp || null;
+    const ts = normalizeTranscriptTimestamp(obj.timestamp);
     const msg = obj.message || {};
     const usage = msg.usage || {};
 

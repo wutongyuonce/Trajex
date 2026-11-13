@@ -146,6 +146,20 @@ function normalizeObservedCwd(cwd: unknown): string | null {
   return normalize(cwd);
 }
 
+// 规范时间戳是 YYYY-MM-DDTHH:mm:ss.sssZ：只有这种形态的文本序等于时间序，查询层的
+// 索引邻域、时间范围过滤和 session 边界都按文本比较。只有带时区的 ISO 字符串有
+// 无歧义的 UTC 含义（Date.parse 把无时区当本地时间，SQLite 当 UTC），因此无时区或
+// 无法解析的值原样保留，不做静默平移。
+const ISO_ZONED_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/;
+
+function normalizeTranscriptTimestamp(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value !== 'string') return null;
+  if (!ISO_ZONED_TIMESTAMP_RE.test(value)) return value;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? value : new Date(ms).toISOString();
+}
+
 /** 绝对路径 → slug 的逆变换，供需要把项目路径写回日志标记的场合使用。 */
 function projectSlugFromPath(projectPath: string | null): string | null {
   const normalized = normalizeObservedCwd(projectPath);
@@ -457,7 +471,7 @@ function codexToolOutput(payload: JsonRecord): string | null {
 export {
   CLAUDE_DIR, CODEX_DIR, PROJECTS_DIR, CODEX_SESSIONS_DIR, TEXT_LIMIT, TOOL_RESULT_PREVIEW_CHARS,
   trunc, truncToolResult, toolResultPreview, truncJson, extractText, extractContentType, extractMessageIsMeta, isSkillInstructions, filePath, isDir, readLines,
-  legacyProjectPathFromSlug, normalizeObservedCwd, projectSlugFromPath, inferProjectPath,
+  legacyProjectPathFromSlug, normalizeObservedCwd, normalizeTranscriptTimestamp, projectSlugFromPath, inferProjectPath,
   discoverJsonlFiles, discoverCodexJsonlFiles,
   codexDbId, codexRawId, codexLineUuid, codexCallId, codexParentThreadId, codexIsChildThread, codexIsGuardianThread,
   parseCodexJsonInput,

@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Claude 与 Codex 的消息时间戳、workflow 时间与 session 边界入库时统一为 `YYYY-MM-DDTHH:mm:ss.sssZ`（仅转换带时区的 ISO 值，无时区值原样保留），session 合并按同一表示比较；两者 canonical marker 升至 `v1.1`，现有索引会在下次 build 时一次性重放（同时补齐已同步的 Claude `custom-title` 标题）。
 - 桌面会话列表不再固定截断为最近 1000 条：目录、项目统计和会话计数统一跨全部来源读取完整清单，直接打开的旧会话也会按精确 ID 解析元数据。
 - 桌面会话时间线虚拟列表现在按实际物理补偿滚动位置计算挂载窗口、在完整 DOM patch 后统一测量行高并清理已卸载节点引用，且通过字符串 cursor 传递 live patch 请求，避免远距离滚动保留旧前缀或交替读写布局导致卡顿与位置跳变。
 - 桌面索引器现在直接转发 Provider 显式声明的 `file` 级监听目标与压缩 transcript（`.jsonl.zstd` / `.jsonl.zst`），异步转发目录及重命名缺失路径以支持删除对账，且不将已固定轮询的精确文件重复提升进 hot overlay。

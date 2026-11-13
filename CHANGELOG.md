@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- 桌面端不再把无法解析的 `settings.json` 当作空设置后直接覆盖：保存前先将其移至 `settings.json.corrupt-<时间戳>`（rename 失败时复制），并在设置页提示保留位置；两者都失败时拒绝保存并显示原因。
 - CLI 在索引不可写（如只读沙箱）时先用一次空写事务探测，在发现来源前就以指明索引路径的错误结束，不再把每个 transcript 报为索引失败；单元级只读错误会先复探 writer 再归因，并保留原始错误。
 - Claude 与 Codex 的消息时间戳、workflow 时间与 session 边界入库时统一为 `YYYY-MM-DDTHH:mm:ss.sssZ`（仅转换带时区的 ISO 值，无时区值原样保留），session 合并按同一表示比较；两者 canonical marker 升至 `v1.1`，现有索引会在下次 build 时一次性重放（同时补齐已同步的 Claude `custom-title` 标题）。
 - 桌面会话列表不再固定截断为最近 1000 条：目录、项目统计和会话计数统一跨全部来源读取完整清单，直接打开的旧会话也会按精确 ID 解析元数据。

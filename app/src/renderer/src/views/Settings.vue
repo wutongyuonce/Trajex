@@ -13,6 +13,8 @@ const autoRefresh = ref(true);
 const memoryCount = ref(0);
 const rebuilding = ref(false);
 const rebuildError = ref('');
+const settingsRecovery = ref('');
+const saveError = ref('');
 const version = ref('');
 
 onMounted(async () => {
@@ -26,6 +28,7 @@ async function loadSettings() {
   dbPath.value = s.dbPath || '';
   autoRefresh.value = s.autoRefresh !== false;
   memoryCount.value = s.memoryCount || 0;
+  settingsRecovery.value = s.settingsRecovery || '';
   version.value = s.version || '';
 }
 
@@ -44,8 +47,15 @@ async function toggleAutoRefresh() {
 }
 
 async function saveSetting(key, value) {
-  if (window.trajex?.setSetting) {
-    await window.trajex.setSetting(key, value);
+  if (!window.trajex?.setSetting) return;
+  try {
+    // 保存才会挪开被拒绝的设置文件，提示随保存结果返回（auto-refresh 保存后不重载设置）。
+    const result = await window.trajex.setSetting(key, value);
+    settingsRecovery.value = result?.settingsRecovery || '';
+    saveError.value = '';
+  } catch (error) {
+    // 无法先保留设置文件时保存被拒绝；必须说明，否则看起来像已写入。
+    saveError.value = error instanceof Error ? error.message : String(error);
   }
 }
 
@@ -92,6 +102,16 @@ function fmtRelative(iso) {
         <div class="settings-section-head">
           <h2>Data Sources</h2>
           <p>Where Trajex reads your agent session history.</p>
+        </div>
+
+        <div v-if="saveError" class="status-row error settings-notice">
+          <span class="status-dot error"></span>
+          <span>{{ saveError }}</span>
+        </div>
+
+        <div v-if="settingsRecovery" class="status-row warn settings-notice">
+          <span class="status-dot warn"></span>
+          <span>{{ settingsRecovery }}</span>
         </div>
 
         <div
@@ -302,6 +322,7 @@ function fmtRelative(iso) {
 .status-row.ok { border-color: rgba(52,211,153,0.20); background: rgba(52,211,153,0.04); }
 .status-row.warn { border-color: rgba(251,191,36,0.20); background: rgba(251,191,36,0.04); }
 .status-row.error { border-color: rgba(248,113,113,0.20); background: rgba(248,113,113,0.04); }
+.settings-notice { margin-bottom: 10px; word-break: break-all; }
 
 .status-dot {
   width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;

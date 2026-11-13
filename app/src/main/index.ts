@@ -13,6 +13,7 @@ import { createIndexerService } from './indexer-service.ts';
 import { createWorkerBuildIndex } from './indexer-worker-client.ts';
 import { previewLocalMarkdownLink, resolveExistingLocalMarkdownFile } from './local-markdown-link.mjs';
 import { createDeferredQuit } from './quit-teardown.ts';
+import { preserveRejectedSettings, readSettingsFile, type SettingsReadResult } from './settings-preservation.ts';
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
 import {
   coreSchemaNeedsMigration,
@@ -778,11 +779,12 @@ ipcMain.handle('db:getUsageStats', (_, opts = {}) => {
 
 const SETTINGS_PATH = path.join(TRAJEX_DIR, 'settings.json');
 
-function loadPersistedSettings() {
-  try {
-    if (fs.existsSync(SETTINGS_PATH)) return JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf-8'));
-  } catch {}
-  return {};
+// 被拒绝的设置文件被挪开后的提示；保存成功后设置已可用，只作展示，不阻塞索引。
+let latestSettingsRecovery: string | null = null;
+
+function loadPersistedSettings(result: SettingsReadResult = readSettingsFile(SETTINGS_PATH)) {
+  if (!result.ok) console.warn(result.error);
+  return result.settings as Record<string, any>;
 }
 
 function savePersistedSettings(settings) {
@@ -838,13 +840,22 @@ ipcMain.handle('settings:get', () => {
     lastIndexed,
     status: connected ? 'ok' : 'error',
     statusText: connected ? 'Connected' : 'No source folders found',
+    settingsRecovery: latestSettingsRecovery,
   };
 });
 
 ipcMain.handle('settings:set', async (_, key, value) => {
-  const persisted = loadPersistedSettings();
+  // 读取、备份与写入全部同步完成，并发保存不会交错。无法保留被拒绝的文件时抛错且不写入，
+  // 否则覆盖就是静默丢失。
+  const currentRead = readSettingsFile(SETTINGS_PATH);
+  const persisted = loadPersistedSettings(currentRead);
+  const backupPath = preserveRejectedSettings(SETTINGS_PATH, currentRead);
   const providerRootChanged = setPersistedSetting(persisted, key, value);
   savePersistedSettings(persisted);
+  if (backupPath !== null) {
+    latestSettingsRecovery = `Previous settings could not be read. They were preserved at ${backupPath}`;
+    console.warn(latestSettingsRecovery);
+  }
 
   if (key === 'autoRefresh') {
     await stopIndexerServiceAndWait();
@@ -866,7 +877,7 @@ ipcMain.handle('settings:set', async (_, key, value) => {
     }
     notifyIndexUpdated();
   }
-  return true;
+  return { settingsRecovery: latestSettingsRecovery };
 });
 
 ipcMain.handle('settings:browseFolder', async (event) => {

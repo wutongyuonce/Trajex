@@ -21,6 +21,7 @@
 
 ### Changed
 
+- Trajex skill 的 `allowed-tools` 收窄为不执行脚本的 `trajex --search` / `--build` / `--version`，`--query` / `--attune` 与 `Write` 不再被宿主自动放行；文档更正为：查询脚本在 `node:vm` 中以 CLI 进程权限运行，并非隔离沙箱。
 - 桌面会话列表与 Activity 改为按需分页读取：目录搜索、来源/项目筛选和排序下推到 SQLite，列表虚拟化渲染，侧边栏计数与会话总数改用聚合统计；新增目录排序与项目起始时间索引，大历史下不再一次性加载全部会话元数据。
 - `tool_results` 新增按 `is_error = 1 OR content LIKE 'Exit code %'` 过滤的稀疏部分索引 `idx_tr_failure_session`，使 `failures()` 只扫描失败结果行而非全量工具结果。
 - `search()` 时间邻域上下文现在对规范 ISO 时间戳命中通过 `idx_messages_ts` 两侧有界候选查询再计算距离排序，避免对长会话做全量 `JULIANDAY()` 扫描，并明确定义空时间戳与重复时间戳邻域顺序。

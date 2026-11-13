@@ -7,8 +7,9 @@ description: >
   Memory: when the user says "记住这个", "remember this", "写入记忆", "save this conclusion", or when you determine a retrieval result contains a conclusion worth persisting.
 allowed-tools:
   - Read
-  - Bash(trajex:*)
-  - Write
+  - Bash(trajex --search *)
+  - Bash(trajex --build)
+  - Bash(trajex --version)
 ---
 
 # trajex
@@ -51,8 +52,10 @@ Custom query:
 
 The query file runs inside `(async () => { ... })()`.
 Use `return` to emit JSON.
-Query scripts are read-only: `remember()` and `forget()` are not available, and
-`sql()` only accepts read-only SELECT/WITH queries.
+The helper API is read-only: `remember()` and `forget()` are not available, and
+`sql()` only accepts read-only SELECT/WITH queries. The script itself, however,
+runs with the privileges of the CLI process — `node:vm` scoping is a convenience,
+not an isolated sandbox. Only run scripts you wrote or reviewed.
 
 ## Sandbox Write Access
 
@@ -387,5 +390,5 @@ See `references/query-patterns.md` for longer recipes.
 
 - First run builds the index. Later runs update incrementally.
 - DB location: `~/.trajex/trajex.sqlite`; old `~/.claude/trajex.sqlite` is copied forward if needed.
-- Query scripts run in a sandboxed VM with no filesystem or network access from inside the script.
+- Query scripts run in a `node:vm` context inside a worker. This scopes the helper globals but is not a security boundary: treat `--query` and `--attune` scripts as code executed with the CLI's privileges.
 - Ordinary indexed text and tool inputs are capped at 10k chars. Tool-result messages keep a 1k head-tail preview, while `tool_results.content` keeps up to 10k head-tail chars. Use `raw(uuid, { offset, limit })` for specific JSONL windows.

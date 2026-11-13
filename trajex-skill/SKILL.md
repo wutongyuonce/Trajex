@@ -232,6 +232,7 @@ filters or return fields.
 - `workflowTree(runId)` -- workflow row plus parsed `result` and `agents`; may include bulky `script` and `result_json`, so project compact fields.
 - `fileHistory(filePath, opts?)` -- Read/Edit/Write tool calls for a file, oldest first; includes many `Read` rows.
 - `failures(opts?)` -- failed tool results with tool/session context, newest first.
+- `messages(optsOrUuid)` -- bounded reads: one message (`uuid`), a finite window around an anchor (`around`, `relation: 'timeline' | 'parents'`), or a cursor-paged session interval (`sessionId`). Prefer it over `thread()`/`trace()` for long sessions; windows are capped at 500 rows.
 - `trace(uuid)` -- parent chain from root to message.
 - `thread(sessionId, opts?)` -- session messages ordered by timestamp, omitting meta and inactive messages by default. Pass `{ includeMeta: true, includeInactive: true }` when investigating injected context or superseded Pi branches.
 - `raw(uuid, opts?)` -- windowed access to the original JSONL line; `offset` and

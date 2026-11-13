@@ -42,6 +42,25 @@ interface QueryOptions extends Record<string, any> {
   memoryLimit?: number;    // overview 专用：记忆列表条数
 }
 
+/** messages() 的有界读取选项：三种定位方式互斥，窗口与分页各自有上限。 */
+interface MessageQueryOptions {
+  uuid?: string;
+  around?: string;
+  sessionId?: string;
+  relation?: 'timeline' | 'parents';
+  beforeCount?: number;
+  afterCount?: number;
+  after?: string;
+  before?: string;
+  limit?: number;
+  cursor?: { timestamp: string | null; uuid: string };
+  agentId?: string | null;
+  contentTypes?: string[];
+  includeMeta?: boolean;
+  includeInactive?: boolean;
+  includeSession?: boolean;
+}
+
 /**
  * buildWhere() 的白名单列名映射：过滤条件编译为 SQL 时，列名一律取这里的表别名
  * （如 s.id / sa.session_id），绝不使用用户输入——注入防护的关键。
@@ -118,6 +137,31 @@ function buildWhere(opts: QueryOptions, aliases: ColumnAliases) {
 }
 
 const BASH_EXIT_PAT = 'Exit code %';
+
+type QueryVisibility = 'visible' | 'inactive' | 'hidden';
+
+function normalizedVisibility(value: unknown): QueryVisibility {
+  if (value === null || value === undefined || value === 'visible') return 'visible';
+  if (value === 'inactive') return 'inactive';
+  return 'hidden';
+}
+
+function withVisibility(row: DbRow): DbRow {
+  return { ...row, visibility: normalizedVisibility(row.visibility) };
+}
+
+function isQueryableMessage(row: DbRow | undefined, includeInactive = false): row is DbRow {
+  if (row === undefined) return false;
+  const visibility = normalizedVisibility(row.visibility);
+  return visibility === 'visible' || (includeInactive && visibility === 'inactive');
+}
+
+function visibilitySql(alias: string, includeInactive = false): string {
+  const column = `${alias}.visibility`;
+  return includeInactive
+    ? `COALESCE(${column},'visible') IN ('visible','inactive')`
+    : `COALESCE(${column},'visible')='visible'`;
+}
 
 const READ_ONLY_SQL_MESSAGE = 'sql() only supports read-only SELECT/WITH queries';
 const MULTI_STATEMENT_SQL_MESSAGE =
@@ -376,6 +420,131 @@ function createQueryApi(
         context: ctx,
       };
     });
+  };
+
+  /**
+   * 有界消息读取：单条（uuid）、锚点邻域（around，时间线或父链）、或会话区间分页
+   * （sessionId + cursor）。所有窗口与页最多 500 条，从不加载整个会话。
+   */
+  const messages = (input: MessageQueryOptions | string) => {
+    const opts = typeof input === 'string' ? { uuid: input } : input;
+    if (!opts || typeof opts !== 'object' || Array.isArray(opts)) {
+      throw new TypeError('messages() requires uuid, around, or sessionId');
+    }
+    const allowed = new Set(['uuid', 'around', 'sessionId', 'relation', 'beforeCount', 'afterCount',
+      'after', 'before', 'limit', 'cursor', 'agentId', 'contentTypes', 'includeMeta', 'includeInactive', 'includeSession']);
+    for (const key of Object.keys(opts)) {
+      if (!allowed.has(key)) throw new TypeError(`messages() does not support option ${key}`);
+    }
+    const locators = ['uuid', 'around', 'sessionId'].filter(key => key in opts);
+    if (locators.length !== 1) throw new TypeError('messages() requires exactly one of uuid, around, or sessionId');
+    const mode = locators[0];
+    const locator = opts[mode as 'uuid' | 'around' | 'sessionId'];
+    if (typeof locator !== 'string' || !locator.trim()) throw new TypeError(`messages() ${mode} must be a non-empty string`);
+    for (const key of ['includeMeta', 'includeInactive', 'includeSession'] as const) {
+      if (opts[key] !== undefined && typeof opts[key] !== 'boolean') throw new TypeError(`messages() ${key} must be boolean`);
+    }
+    const rangeKeys = ['after', 'before', 'limit', 'cursor', 'agentId'];
+    const windowKeys = ['relation', 'beforeCount', 'afterCount'];
+    for (const key of [...(mode !== 'sessionId' ? rangeKeys : []), ...(mode !== 'around' ? windowKeys : [])]) {
+      if (key in opts) throw new TypeError(`messages() ${key} is not supported with ${mode}`);
+    }
+    const boundedCount = (value: number | undefined, fallback: number, key: string) => {
+      const count = value === undefined ? fallback : value;
+      if (!Number.isSafeInteger(count) || count < 0 || count > 500) throw new RangeError(`messages() ${key} must be an integer from 0 to 500`);
+      return count;
+    };
+    const relation = opts.relation === undefined ? 'timeline' : opts.relation;
+    if (relation !== 'timeline' && relation !== 'parents') throw new TypeError('messages() relation must be timeline or parents');
+    const beforeCount = mode === 'around' ? boundedCount(opts.beforeCount, 3, 'beforeCount') : 0;
+    const afterCount = mode === 'around' ? boundedCount(opts.afterCount, relation === 'parents' ? 0 : 3, 'afterCount') : 0;
+    if (relation === 'parents' && afterCount !== 0) throw new RangeError('messages() parents relation requires afterCount: 0');
+    if (beforeCount + afterCount + 1 > 500) throw new RangeError('messages() window must contain at most 500 messages including the anchor');
+    const limit = mode === 'sessionId' ? boundedCount(opts.limit, 20, 'limit') : 0;
+    if (opts.contentTypes !== undefined && (!Array.isArray(opts.contentTypes) || !opts.contentTypes.length
+      || opts.contentTypes.some(value => typeof value !== 'string' || !value.trim()))) {
+      throw new TypeError('messages() contentTypes must be a non-empty array of strings');
+    }
+    for (const key of ['after', 'before'] as const) {
+      if (opts[key] !== undefined && (typeof opts[key] !== 'string' || !opts[key].trim())) throw new TypeError(`messages() ${key} must be a non-empty timestamp string`);
+    }
+    if (opts.agentId !== undefined && opts.agentId !== null && typeof opts.agentId !== 'string') throw new TypeError('messages() agentId must be a string or null');
+    const cursor = opts.cursor;
+    if (cursor !== undefined && (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)
+      || typeof cursor.uuid !== 'string' || !cursor.uuid.trim() || (cursor.timestamp !== null && typeof cursor.timestamp !== 'string'))) {
+      throw new TypeError('messages() cursor requires timestamp (string or null) and uuid');
+    }
+    const predicate = `${visibilitySql('m', opts.includeInactive === true)}${opts.includeMeta === true ? '' : ' AND COALESCE(m.is_meta,0)=0'}${opts.contentTypes ? ` AND m.content_type IN (${opts.contentTypes.map(() => '?').join(',')})` : ''}`;
+    const filterParams = opts.contentTypes ?? [];
+    const sessionFor = (id: unknown) => opts.includeSession === true
+      ? db.prepare('SELECT * FROM sessions WHERE id=?').get(id) ?? null : null;
+    if (mode === 'sessionId') {
+      const clauses = ['m.session_id=?', predicate];
+      const params: any[] = [locator, ...filterParams];
+      if (opts.agentId !== undefined) { clauses.push('m.agent_id IS ?'); params.push(opts.agentId); }
+      if (opts.after !== undefined) { clauses.push('m.timestamp > ?'); params.push(opts.after); }
+      if (opts.before !== undefined) { clauses.push('m.timestamp < ?'); params.push(opts.before); }
+      if (cursor) {
+        clauses.push("(COALESCE(m.timestamp,'') > ? OR (COALESCE(m.timestamp,'')=? AND m.uuid > ?))");
+        params.push(cursor.timestamp ?? '', cursor.timestamp ?? '', cursor.uuid);
+      }
+      const rows = db.prepare(`SELECT m.* FROM messages m WHERE ${clauses.join(' AND ')} ORDER BY COALESCE(m.timestamp,''),m.uuid LIMIT ?`).all(...params, limit + 1);
+      const hasMore = rows.length > limit;
+      const selected = rows.slice(0, limit).map(withVisibility);
+      const last = selected[selected.length - 1];
+      return { anchor: null, messages: selected, session: sessionFor(locator), hasMore,
+        nextCursor: hasMore && last ? { timestamp: last.timestamp as string | null, uuid: last.uuid as string } : null };
+    }
+    // 显式锚点只按可见性选取，不受邻域的 content/meta 过滤影响。
+    const row = db.prepare(`SELECT * FROM messages WHERE uuid=? AND ${visibilitySql('messages', opts.includeInactive === true)}`).get(locator);
+    if (!isQueryableMessage(row, opts.includeInactive === true)) return null;
+    const anchor = withVisibility(row);
+    let preceding: DbRow[] = [];
+    let following: DbRow[] = [];
+    let hasMore = false;
+    if (mode === 'around' && relation === 'parents' && beforeCount > 0) {
+      // 只遍历结构直到收集 N+1 个合格祖先，最后再 join 正文；hidden/inactive 中间节点可穿越但不输出。
+      const ancestors = db.prepare(`WITH RECURSIVE path(uuid,parent_uuid,depth,n,eligible,visited,cycle) AS (
+        SELECT uuid,parent_uuid,0,0,0,json_array(uuid),0 FROM messages WHERE uuid=?
+        UNION ALL
+        SELECT m.uuid,m.parent_uuid,p.depth+1,p.n+CASE WHEN ${predicate} THEN 1 ELSE 0 END,
+          CASE WHEN ${predicate} THEN 1 ELSE 0 END,json_insert(p.visited,'$[#]',m.uuid),
+          EXISTS(SELECT 1 FROM json_each(p.visited) WHERE value=m.uuid)
+        FROM path p JOIN messages m ON m.uuid=p.parent_uuid
+        WHERE p.n < ? AND p.depth < 10000 AND p.cycle=0
+      ) SELECT m.*,p.depth AS __depth,p.cycle AS __cycle,p.n AS __n,
+        EXISTS(SELECT 1 FROM messages parent WHERE parent.uuid=p.parent_uuid) AS __continues
+        FROM path p LEFT JOIN messages m ON m.uuid=p.uuid AND p.eligible=1 AND p.cycle=0
+        WHERE p.depth>0 AND (p.eligible=1 OR p.cycle=1 OR p.depth=10000) ORDER BY p.depth`)
+        .all(locator, ...filterParams, ...filterParams, beforeCount + 1);
+      if (ancestors.some((value: DbRow) => value.__cycle === 1)) throw new Error('messages() found a cyclic parent path');
+      if (ancestors.some((value: DbRow) => value.__depth === 10000 && value.__continues === 1 && Number(value.__n) < beforeCount + 1)) {
+        throw new Error('messages() parent traversal exceeded 10000 records');
+      }
+      const eligible = ancestors.filter((value: DbRow) => value.uuid !== null);
+      hasMore = eligible.length > beforeCount;
+      preceding = eligible.slice(0, beforeCount).reverse().map((value: DbRow) => {
+        const { __depth, __cycle, __n, __continues, ...message } = value;
+        void __depth; void __cycle; void __n; void __continues;
+        return withVisibility(message);
+      });
+    } else if (mode === 'around' && relation === 'timeline') {
+      const neighbors = (count: number, direction: 'before' | 'after') => {
+        if (count === 0) return [];
+        const comparison = direction === 'before' ? '<' : '>';
+        const order = direction === 'before' ? 'DESC' : 'ASC';
+        const rows = db.prepare(`SELECT m.* FROM messages m WHERE m.session_id=? AND m.agent_id IS ? AND ${predicate}
+          AND (COALESCE(m.timestamp,'') ${comparison} ? OR (COALESCE(m.timestamp,'')=? AND m.uuid ${comparison} ?))
+          ORDER BY COALESCE(m.timestamp,'') ${order},m.uuid ${order} LIMIT ?`)
+          .all(row.session_id, row.agent_id, ...filterParams, row.timestamp ?? '', row.timestamp ?? '', row.uuid, count + 1);
+        hasMore = hasMore || rows.length > count;
+        const selected = rows.slice(0, count).map(withVisibility);
+        return direction === 'before' ? selected.reverse() : selected;
+      };
+      preceding = neighbors(beforeCount, 'before');
+      following = neighbors(afterCount, 'after');
+    }
+    return { anchor, messages: [...preceding, anchor, ...following], session: sessionFor(row.session_id), hasMore, nextCursor: null };
   };
 
   /** 按 message UUID 回溯父消息链，并补齐所属 session/agent/workflow。 */
@@ -786,7 +955,7 @@ function createQueryApi(
     `).all(...params);
   };
 
-  return { sql: q, search, context, trace, thread, subagents, workflows, workflowTree, fileHistory, failures, sessions, recent, summaries, raw, memories, overview };
+  return { sql: q, search, messages, context, trace, thread, subagents, workflows, workflowTree, fileHistory, failures, sessions, recent, summaries, raw, memories, overview };
 }
 
 /**
@@ -859,3 +1028,4 @@ function createAttuneApi(db: SqliteDb, runMutation: <T>(work: () => T) => T = wo
 }
 
 export { createQueryApi, createAttuneApi };
+export type { MessageQueryOptions };

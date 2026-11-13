@@ -21,7 +21,7 @@ boundary). `--attune` scripts expose only memory mutation helpers.
 These globals are available only in `trajex --query` scripts:
 
 ```js
-sql, search, context, trace, thread, raw,
+sql, search, messages, context, trace, thread, raw,
 overview, sessions, recent, summaries, memories,
 subagents, workflows, workflowTree, fileHistory, failures
 ```
@@ -92,6 +92,43 @@ so ordinary text never crashes the query.
 `fallback: 'or'` is opt-in and does not alter a non-empty primary result. Use it
 for semantic-history recall, not exact scopes or sentinels where zero hits carry
 meaning. The retry retains all structural, visibility, and meta filters.
+
+#### `messages(optsOrUuid)`
+
+Bounded message retrieval. Choose exactly one locator:
+
+```js
+messages(uuid) // exact lookup; equivalent to { uuid }
+messages({ around: uuid, beforeCount: 3, afterCount: 3 }) // temporal neighbors
+messages({ around: uuid, relation: 'parents', beforeCount: 3 }) // ancestor tail
+messages({ sessionId, after, before, limit: 20, cursor }) // session page
+```
+
+Returns `{ anchor, messages, session, hasMore, nextCursor } | null`. `anchor` is
+the uuid/around row (null for session pages); `messages` includes the anchor;
+`session` is attached only with `includeSession: true`; `nextCursor`
+(`{ timestamp, uuid }`) continues a non-final session page with the same filters.
+
+| Option | Description |
+| --- | --- |
+| `relation` | Around only: `timeline` (default) or `parents` |
+| `beforeCount`, `afterCount` | Around only; default 3/3 for timeline, 3/0 for parents |
+| `after`, `before` | Session only; exclusive timestamp bounds |
+| `limit` | Session only; default 20, integer 0–500 |
+| `cursor` | Session only; from `nextCursor` |
+| `agentId` | Session only; agent id, or null for main-agent rows; omitted includes all |
+| `contentTypes` | Non-empty array of content types; omitted includes all |
+| `includeMeta`, `includeInactive`, `includeSession` | Booleans, default false |
+
+Hidden rows never appear. An explicit anchor is selected by visibility only;
+`contentTypes`/`includeMeta` filter neighbors and pages. Timeline windows stay in
+the anchor's session and agent and sort by `COALESCE(timestamp,'')`, then UUID —
+a deterministic temporal order, not branch ancestry. Parents mode follows
+`parent_uuid`, counts only eligible ancestors, may traverse hidden/inactive
+bridges without exposing them, stops at missing parents, and requires
+`afterCount: 0`. Windows are capped at 500 rows; parent cycles and scans past
+10,000 records throw instead of returning partial evidence. Unknown or
+wrong-mode options are rejected.
 
 #### `context(uuid)`
 

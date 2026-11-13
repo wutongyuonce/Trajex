@@ -10,6 +10,7 @@ import { reactive, shallowReactive, markRaw } from 'vue';
 export const state = reactive({
   memories: [],
   sessions: [],
+  catalogueVersion: 0,
   sessionTitleOverrides: shallowReactive(new Map()),
   projects: [],
   sources: [],

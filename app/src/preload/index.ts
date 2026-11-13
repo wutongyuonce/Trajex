@@ -6,6 +6,8 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   SessionPatch,
   SessionPatchCursor,
+  SessionCatalogueOptions,
+  ActivitySessionsOptions,
   SessionsQueryOptions,
   SourceQueryOptions,
   UsageStatsOptions,
@@ -15,6 +17,8 @@ import type {
 contextBridge.exposeInMainWorld('trajex', {
   platform: process.platform,
   getSessions: (opts?: SessionsQueryOptions) => ipcRenderer.invoke('db:getSessions', opts),
+  getSessionCatalogue: (opts?: SessionCatalogueOptions) => ipcRenderer.invoke('db:getSessionCatalogue', opts),
+  getActivitySessions: (opts: ActivitySessionsOptions) => ipcRenderer.invoke('db:getActivitySessions', opts),
   getSessionMessages: (id: string) => ipcRenderer.invoke('db:getSessionMessages', id),
   getSessionToolCalls: (id: string) => ipcRenderer.invoke('db:getSessionToolCalls', id),
   getSessionToolResults: (id: string) => ipcRenderer.invoke('db:getSessionToolResults', id),

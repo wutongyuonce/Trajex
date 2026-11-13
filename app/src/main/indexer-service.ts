@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import os from 'node:os';
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
   createAdaptiveWatcher,
@@ -11,6 +12,11 @@ import {
 } from '../../../packages/adaptive-watcher/src/index.ts';
 
 const DEFAULT_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
+const TRANSCRIPT_SUFFIXES = ['.jsonl.zstd', '.jsonl.zst', '.jsonl', '.json'] as const;
+
+function isTreeTranscriptCandidate(targetPath: string): boolean {
+  return TRANSCRIPT_SUFFIXES.some((suffix) => targetPath.endsWith(suffix));
+}
 const DEFAULT_DEBOUNCE_MS = 250;
 const DEFAULT_STABILITY_MS = 500;
 const DEFAULT_MAX_WAIT_MS = 1500;
@@ -91,6 +97,11 @@ function createIndexerService({
   const watch = watchProjects || ((onChange) => {
     const targets = watchTargets ?? [{ kind: 'tree' as const, path: projectsDir }];
     if (!targets.length) return null;
+    const exactFiles = new Set(
+      targets
+        .filter((target) => target.kind === 'file')
+        .map((target) => path.normalize(target.path)),
+    );
     return createAdaptiveWatcher({
       targets,
       subscribe,
@@ -99,14 +110,21 @@ function createIndexerService({
       retryDelayMs: watchRetryMs,
       hotPolling,
       pollIntervalMs: watchPollMs,
-      shouldPromote: (targetPath) => targetPath.endsWith('.jsonl') || targetPath.endsWith('.json'),
+      shouldPromote: (targetPath) =>
+        !exactFiles.has(path.normalize(targetPath)) && isTreeTranscriptCandidate(targetPath),
       onInvalidate: (invalidation) => {
         if (invalidation.type === 'rescan') {
           onChange();
           return;
         }
         for (const changedPath of invalidation.paths) {
-          if (changedPath.endsWith('.jsonl') || changedPath.endsWith('.json')) onChange(changedPath);
+          if (exactFiles.has(path.normalize(changedPath)) || isTreeTranscriptCandidate(changedPath)) {
+            onChange(changedPath);
+            continue;
+          }
+          void stat(changedPath)
+            .then((st) => { if (st.isDirectory()) onChange(changedPath); })
+            .catch(() => onChange(changedPath));
         }
       },
     });

@@ -16,7 +16,11 @@ import {
   setQuery,
   setProjectSearch,
   toggleSort,
-  toggleIncludeMessageBodies
+  toggleIncludeMessageBodies,
+  MINIMIZE_SVG,
+  RESTORE_SVG,
+  MAXIMIZE_SVG,
+  CLOSE_SVG
 } from './store.js';
 import { formatProjectLabel } from './utils.js';
 import { buildSidebarProjects } from './sidebar-projects.mjs';
@@ -27,6 +31,7 @@ import trajexIcon from './assets/trajex-icon.svg';
 const router = useRouter();
 const route = useRoute();
 let searchTimer = null;
+let stopWindowState = null;
 const THEME_KEY = 'trajex:theme';
 const theme = ref('dark');
 
@@ -43,6 +48,9 @@ function toggleTheme() {
 const routeSession = computed(() => {
   return getSessionSummary(route.params.id);
 });
+
+// --- Platform ---
+const platform = window.trajex?.platform ?? null;
 
 // --- Sidebar data ---
 
@@ -92,6 +100,10 @@ const showSearchMsgsToggle = computed(() => {
 });
 
 // --- Window title ---
+
+const maximized = ref(false);
+function windowControl(action) { window.trajex?.windowControl?.(action); }
+function onTitlebarDbClick() { if (platform === 'linux') windowControl('toggle-maximize'); }
 
 const windowTitle = computed(() => {
   const appName = 'Trajex';
@@ -207,10 +219,13 @@ onMounted(() => {
   applyTheme(localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark');
   window.addEventListener('keydown', handleGlobalKeydown);
   document.addEventListener('pointerdown', handleDocumentPointerDown);
+  stopWindowState = window.trajex?.onWindowState?.((s) => { maximized.value = !!s?.maximized; }) ?? null;
 });
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
   document.removeEventListener('pointerdown', handleDocumentPointerDown);
+  stopWindowState?.();
+  stopWindowState = null;
   clearTimeout(searchTimer);
 });
 
@@ -248,11 +263,22 @@ function setSourceFilter(id) {
 
 <template>
   <div class="app">
-    <div class="titlebar">
+    <div class="titlebar" :class="{ mac: platform === 'darwin', 'has-controls': platform === 'linux' }" @dblclick="onTitlebarDbClick">
       <div class="titlebar-text" id="titlebar-text">
         <span class="app-name">{{ windowTitle.appName }}</span>
         <span class="sep">—</span>
         <span class="scope">{{ windowTitle.scopeText }}</span>
+      </div>
+      <div v-if="platform === 'linux'" class='titlebar-controls' @dblclick.stop>
+        <button type="button" class="titlebar-btn" aria-label="Minimize" @click="windowControl('minimize')">
+          <span class="titlebar-icon" v-html="MINIMIZE_SVG"></span>
+        </button>
+        <button type="button" class="titlebar-btn" aria-label="Maximize or restore" @click="windowControl('toggle-maximize')">
+          <span class="titlebar-icon" v-html="maximized ? RESTORE_SVG : MAXIMIZE_SVG"></span>
+        </button>
+        <button type="button" class="titlebar-btn titlebar-btn-close" aria-label="Close" @click="windowControl('close')">
+          <span class="titlebar-icon" v-html="CLOSE_SVG"></span>
+        </button>
       </div>
     </div>
 

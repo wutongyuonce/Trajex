@@ -7,9 +7,11 @@ import type {
   SessionPatch,
   SessionPatchCursor,
   UsageStatsOptions,
+  WindowControlAction,
 } from '../shared/ipc-types.ts';
 
 contextBridge.exposeInMainWorld('trajex', {
+  platform: process.platform,
   getSessions: (opts?: unknown) => ipcRenderer.invoke('db:getSessions', opts),
   getSessionMessages: (id: string) => ipcRenderer.invoke('db:getSessionMessages', id),
   getSessionToolCalls: (id: string) => ipcRenderer.invoke('db:getSessionToolCalls', id),
@@ -35,6 +37,11 @@ contextBridge.exposeInMainWorld('trajex', {
   getProjects: () => ipcRenderer.invoke('db:getProjects'),
   getStats: () => ipcRenderer.invoke('db:getStats'),
   getUsageStats: (opts?: UsageStatsOptions) => ipcRenderer.invoke('db:getUsageStats', opts),
+  onWindowState: (callback: (payload: unknown) => void) => {
+    const listener = (_: IpcRendererEvent, payload: unknown) => callback(payload);
+    ipcRenderer.on('trajex:window-state', listener);
+    return () => ipcRenderer.removeListener('trajex:window-state', listener);
+  },
   onIndexUpdated: (callback: (payload: unknown) => void) => {
     const listener = (_: IpcRendererEvent, payload: unknown) => callback(payload);
     ipcRenderer.on('trajex:index-updated', listener);
@@ -45,6 +52,7 @@ contextBridge.exposeInMainWorld('trajex', {
     ipcRenderer.on('trajex:session-updated', listener);
     return () => ipcRenderer.removeListener('trajex:session-updated', listener);
   },
+  windowControl: (action: WindowControlAction) => ipcRenderer.invoke('win:control', action),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   browseFolder: () => ipcRenderer.invoke('settings:browseFolder'),
   setSetting: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),

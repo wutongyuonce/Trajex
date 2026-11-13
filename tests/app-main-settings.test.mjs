@@ -155,6 +155,7 @@ async function loadMainForWindowFlags(flags) {
       };
       windows.push(this);
     }
+    on() {}
     loadFile(filePath) { this.loadedFile = filePath; }
     loadURL(url) { this.loadedURL = url; return Promise.resolve(); }
     close() {}
@@ -228,6 +229,7 @@ test('main process watches every root declared by the built-in provider registry
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -300,6 +302,7 @@ test('rapid auto-refresh changes converge to the latest setting', async () => {
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -384,6 +387,7 @@ test('main process forwards committed IDs without reopening after a deferred bui
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() { notifications += 1; } };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -463,6 +467,7 @@ test('session IPC hides Codex rows by default and supports explicit source opt-i
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -594,6 +599,7 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -709,6 +715,7 @@ test('main process migrates an existing app database before source-filtered IPC 
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -775,6 +782,7 @@ test('main process keeps schema and memory mutations behind the writer lease', a
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -850,6 +858,7 @@ test('closing the last macOS window releases background resources until activati
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
       windows.push(this);
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -964,6 +973,7 @@ test('settings rebuild accepts skipped files without overriding newer auto-refre
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -1100,6 +1110,7 @@ test('settings rebuild keeps the existing database after deferred and failed bui
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -1209,6 +1220,7 @@ test('settings rebuild cancels an in-flight background build instead of waiting 
     constructor() {
       this.webContents = { on() {}, setZoomLevel() {}, setWindowOpenHandler() {}, openDevTools() {}, send() {} };
     }
+    on() {}
     loadFile() {}
     loadURL() {}
     close() {}
@@ -1272,6 +1284,99 @@ test('settings rebuild cancels an in-flight background build instead of waiting 
   } finally {
     restore();
     process.env.HOME = originalHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('the win:control IPC applies only whitelisted window actions to the sender window', async () => {
+  const originalHome = process.env.HOME;
+  const originalProfile = process.env.USERPROFILE;
+  const home = join(tmpdir(), `trajex-window-control-${Date.now()}`);
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+
+  const ipcHandlers = new Map();
+  const windowCalls = [];
+  const windows = [];
+  let maximized = false;
+
+  class FakeDatabase {
+    pragma() {}
+    exec() {}
+    close() {}
+    prepare() {
+      return { get: () => null, all: () => [], run: () => ({}) };
+    }
+  }
+
+  class FakeBrowserWindow {
+    constructor() {
+      this.webContents = {
+        on() {}, setWindowOpenHandler() {}, getURL() { return ''; }, setZoomLevel() {}, openDevTools() {}, send() {},
+      };
+      windows.push(this);
+    }
+    on() {}
+    loadFile() {}
+    loadURL() {}
+    close() { windowCalls.push('close'); }
+    minimize() { windowCalls.push('minimize'); }
+    maximize() { windowCalls.push('maximize'); maximized = true; }
+    unmaximize() { windowCalls.push('unmaximize'); maximized = false; }
+    isMaximized() { return maximized; }
+    static getAllWindows() { return windows; }
+    static fromWebContents() { return windows[0] ?? null; }
+  }
+
+  const restore = registerMocks([
+    [ELECTRON_URL, {
+      namedExports: electronNamespace({
+        BrowserWindow: FakeBrowserWindow,
+        ipcMain: {
+          handle(channel, handler) {
+            ipcHandlers.set(channel, handler);
+          },
+        },
+      }),
+    }],
+    [DATABASE_URL, { defaultExport: FakeDatabase }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
+    [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
+    [INDEXER_SERVICE_URL, { namedExports: defaultIndexerService() }],
+    [INDEXER_WORKER_URL, { namedExports: defaultIndexerWorkerClient() }],
+  ]);
+
+  try {
+    await importMain();
+
+    const handler = ipcHandlers.get('win:control');
+    assert.equal(typeof handler, 'function', 'the main process registers one win:control handler');
+
+    // The window always comes from the sender; a renderer-supplied argument is ignored.
+    assert.equal(handler({ sender: {} }, 'minimize', 'window-from-the-renderer'), null);
+    assert.deepEqual(windowCalls, ['minimize']);
+
+    assert.equal(handler({ sender: {} }, 'toggle-maximize'), null);
+    assert.deepEqual(windowCalls, ['minimize', 'maximize'], 'an unmaximized window maximizes');
+    assert.equal(handler({ sender: {} }, 'toggle-maximize'), null);
+    assert.deepEqual(windowCalls, ['minimize', 'maximize', 'unmaximize'], 'a maximized window restores');
+
+    assert.equal(handler({ sender: {} }, 'close'), null);
+    assert.deepEqual(windowCalls, ['minimize', 'maximize', 'unmaximize', 'close'], 'close stays win.close()');
+
+    assert.throws(
+      () => handler({ sender: {} }, 'explode'),
+      /win:control accepts 'minimize', 'toggle-maximize', or 'close'/,
+    );
+    assert.deepEqual(windowCalls, ['minimize', 'maximize', 'unmaximize', 'close'], 'an unknown action changes nothing');
+  } finally {
+    restore();
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalProfile;
     rmSync(home, { recursive: true, force: true });
   }
 });

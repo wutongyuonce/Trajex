@@ -28,6 +28,7 @@ import type {
   SessionPatchSnapshot,
   SessionMetadata,
   SourceQueryOptions,
+  WindowControlAction,
 } from '../shared/ipc-types.ts';
 import type {
   SessionDetailAssemblyInput,
@@ -307,14 +308,19 @@ function stopBackgroundResources({ stopWorker = false } = {}) {
 function createWindow() {
   const isDev = process.argv.includes('--dev') || !!process.env.ELECTRON_RENDERER_URL;
   const shouldOpenDevTools = process.argv.includes('--devtools');
+  const isLinux = process.platform === 'linux';
 
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
     minHeight: 500,
-    titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 14, y: 10 },
+    ...(isLinux ? {
+      frame: false,
+    } : {
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 14, y: 10 },
+    }),
     backgroundColor: '#0a0b14',
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
@@ -323,6 +329,10 @@ function createWindow() {
       devTools: isDev || shouldOpenDevTools,
     },
   });
+
+  const pushWindowState = () => win.webContents.send('trajex:window-state', { maximized: win.isMaximized() });
+  win.on('maximize', pushWindowState);
+  win.on('unmaximize', pushWindowState);
 
   // Prevent Electron's built-in zoom so Cmd+=/- reaches the renderer
   win.webContents.on('before-input-event', (event, input) => {
@@ -816,6 +826,17 @@ ipcMain.handle('settings:browseFolder', async (event) => {
 
 ipcMain.handle('settings:revealPath', (_, p) => {
   if (fs.existsSync(p)) shell.showItemInFolder(p);
+});
+
+ipcMain.handle('win:control', (event, action: WindowControlAction) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return null;
+  switch (action) {
+    case 'minimize': win.minimize(); return null;
+    case 'toggle-maximize': win.isMaximized() ? win.unmaximize() : win.maximize(); return null;
+    case 'close': win.close(); return null;
+    default: throw new Error(`win:control accepts 'minimize', 'toggle-maximize', or 'close'; received "${String(action)}"`);
+  }
 });
 
 ipcMain.handle('settings:rebuildIndex', async () => {

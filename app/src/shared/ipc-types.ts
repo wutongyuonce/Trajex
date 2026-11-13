@@ -46,3 +46,5 @@ export interface AppliedSessionPatch {
   snapshot: Record<SessionPatchTable, SessionPatchRow[]>;
   cursor: SessionPatchCursor;
 }
+
+export type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close';

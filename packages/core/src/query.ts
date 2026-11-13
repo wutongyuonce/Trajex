@@ -505,9 +505,22 @@ function createQueryApi(
   const sessions = (optsOrN?: QueryOptions | number | string) => {
     const opts = normalizeOpts(optsOrN, 'sessionId');
     const limit = normalizeLimit(opts.limit, 50);
-    const { where, params } = buildWhere(opts, { sessionId: 's.id', project: 's.project', timestamp: 's.started_at', branch: 's.git_branch', source: 's.source' });
+    const { sessionId, sessions: sessionIds, ...filters } = opts;
+    const { where, params } = buildWhere(filters, { sessionId: 's.id', project: 's.project', timestamp: 's.started_at', branch: 's.git_branch', source: 's.source' });
+    // Provider 前缀 ID（pi:<uuid>:<scope>、codex:<uuid>）里的原生 uuid 仅是片段。精确 ID 优先；
+    // 非精确引用在同一过滤范围内按 instr() 字面匹配（% 与 _ 不是通配符），每个引用取最新 10 条。
+    const refs = [...(sessionId ? [sessionId] : []), ...(Array.isArray(sessionIds) ? sessionIds : [])];
+    if (Array.isArray(sessionIds) && sessionIds.length === 0) return [];
+    const resolvedWhere = refs.length ? `${where} AND s.id IN (
+      WITH refs(id) AS (VALUES ${refs.map(() => '(?)').join(',')})
+      SELECT id FROM refs UNION ALL
+      SELECT hit.id FROM refs JOIN sessions hit ON hit.id IN (
+        SELECT s.id FROM sessions s WHERE ${where} AND instr(s.id, refs.id) > 0
+        ORDER BY s.ended_at DESC LIMIT 10)
+      WHERE refs.id <> '' AND NOT EXISTS (SELECT 1 FROM sessions WHERE id = refs.id))` : where;
+    if (refs.length) params.push(...refs, ...params);
     params.push(limit);
-    return db.prepare(`SELECT * FROM sessions s WHERE ${where} ORDER BY ended_at DESC LIMIT ?`).all(...params);
+    return db.prepare(`SELECT * FROM sessions s WHERE ${resolvedWhere} ORDER BY ended_at DESC LIMIT ?`).all(...params);
   };
 
   /** sessions({ limit: n }) 的便捷包装。 */

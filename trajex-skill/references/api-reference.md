@@ -208,10 +208,15 @@ Session rows ordered by `ended_at` descending. Passing a number is treated as
 | `opts.limit` | `number` | Max rows, default 50 |
 | `opts.branch` | `string` | Exact git branch |
 | `opts.source` | `string` | `"claude"`, `"codex"`, `"pi"`, or omitted/all |
-| `opts.sessionId` | `string` | Exact session ID |
-| `opts.sessions` | `string[]` | Restrict to session IDs |
+| `opts.sessionId` | `string` | Canonical session ID; a non-exact ref resolves as a literal fragment, capped at the 10 newest matches |
+| `opts.sessions` | `string[]` | Same resolution per entry; union of matches |
 
 Returns `Array<session_row>`.
+Only `sessions()` resolves fragments; every other helper matches `sessionId`
+exactly. Fragments match literally (`%` and `_` are not wildcards) within the
+requested project/source/time/branch filters. A raw native id such as the uuid
+inside `pi:<uuid>:<scope>` normally resolves to exactly one session; several
+rows mean the id is not unique, so narrow with `project` or `source`.
 
 #### `recent(n?)`
 

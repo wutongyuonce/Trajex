@@ -4,6 +4,7 @@
 
 ### Added
 
+- `sessions()` 的 `sessionId` / `sessions` 现在可用原生 Provider ID 片段定位会话（如 `pi:<uuid>:<scope>` 中的 uuid）：精确 ID 优先，片段按字面匹配、在过滤范围内取最新 10 条；其他 helper 仍要求精确 canonical ID。
 - `search()` 新增可选 `fallback: 'or'` 选项：仅当主 FTS 查询零命中时使用安全 token OR 重试，并完整保留结构、可见性与 meta 过滤条件。
 
 ### Fixed

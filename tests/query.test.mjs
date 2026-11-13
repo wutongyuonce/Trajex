@@ -494,6 +494,33 @@ test('remember rejects missing memory files', () => {
   db.close();
 });
 
+test('sessions() resolves native provider ids as literal, scoped, capped fragments', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(SCHEMA);
+  const insert = db.prepare('INSERT INTO sessions (id, project, source, ended_at) VALUES (?, ?, ?, ?)');
+  insert.run('pi:0199a1b2-native:aaaa', 'alpha', 'pi', '2026-06-01T00:00:00.000Z');
+  insert.run('pi:0199a1b2-native:bbbb', 'beta', 'pi', '2026-06-02T00:00:00.000Z');
+  insert.run('codex:5f3c-uuid', 'alpha', 'codex', '2026-06-03T00:00:00.000Z');
+  insert.run('claude-plain', 'alpha', 'claude', '2026-06-04T00:00:00.000Z');
+  insert.run('100%_literal', 'alpha', 'claude', '2026-06-05T00:00:00.000Z');
+  for (let i = 0; i < 12; i++) insert.run(`pi:many-${i}:scope`, 'gamma', 'pi', `2026-07-${String(i + 1).padStart(2, '0')}T00:00:00.000Z`);
+  const api = createQueryApi(db);
+  const ids = opts => api.sessions(opts).map(row => row.id);
+
+  assert.deepEqual(ids({ sessionId: 'claude-plain' }), ['claude-plain'], 'exact ids keep exact precedence');
+  assert.deepEqual(ids({ sessionId: '0199a1b2-native' }), ['pi:0199a1b2-native:bbbb', 'pi:0199a1b2-native:aaaa']);
+  assert.deepEqual(ids({ sessionId: '0199a1b2-native', project: 'alpha' }), ['pi:0199a1b2-native:aaaa'], 'filters apply before the fragment cap');
+  assert.deepEqual(ids({ sessionId: '5f3c-uuid' }), ['codex:5f3c-uuid']);
+  assert.deepEqual(ids({ sessions: ['5f3c-uuid', 'claude-plain'] }), ['claude-plain', 'codex:5f3c-uuid'], 'sessionId refs union');
+  assert.equal(ids({ sessionId: 'many-' }).length, 10, 'fragment expansion is capped at the 10 newest matches');
+  assert.equal(ids({ sessionId: 'many-' })[0], 'pi:many-11:scope');
+  assert.deepEqual(ids({ sessionId: '0%_l' }), ['100%_literal'], '% and _ are literal');
+  assert.deepEqual(ids({ sessionId: '%' }), ['100%_literal']);
+  assert.deepEqual(ids({ sessionId: 'missing' }), []);
+  assert.deepEqual(ids({ sessions: [''] }), [], 'an empty entry matches nothing');
+  db.close();
+});
+
 test('empty session scopes never broaden list helpers to all rows', () => {
   const db = memoryDb();
   const api = createQueryApi(db);

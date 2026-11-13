@@ -224,7 +224,7 @@ SQLite query. An explicit `sessions: []` filter matches no sessions. Many also a
 filters or return fields.
 
 - `overview(opts?)` -- compact orientation map. Returns current cwd/project if knowable, global project/source counts, and current-project recent sessions plus memory records. It is a map, not evidence.
-- `sessions(opts?)` -- session rows, newest first. `project` is a SQL `LIKE` pattern.
+- `sessions(opts?)` -- session rows, newest first. `project` is a SQL `LIKE` pattern. `sessionId` also resolves a native provider id fragment (e.g. the uuid inside `pi:<uuid>:<scope>`); other helpers need the canonical `id`.
 - `recent(n?)` -- shorthand for recent sessions.
 - `summaries(opts?)` -- summary rows, newest first: `{ id, session_id, timestamp, source, content, session_title, project }`; here `source` is the summary kind, not the transcript provider.
 - `subagents(opts?)` -- subagent metadata plus `messageCount`.

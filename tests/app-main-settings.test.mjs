@@ -215,6 +215,8 @@ test('main process watches every root declared by the built-in provider registry
   mkdirSync(join(home, '.trajex'), { recursive: true });
   writeFileSync(join(home, '.trajex', 'trajex.sqlite'), '');
   process.env.HOME = home;
+  const originalDshHome = process.env.DSH_HOME;
+  delete process.env.DSH_HOME;
 
   const serviceOptions = [];
 
@@ -272,11 +274,14 @@ test('main process watches every root declared by the built-in provider registry
       { kind: 'tree', path: join(codexDir, 'archived_sessions') },
       { kind: 'file', path: join(codexDir, 'session_index.jsonl') },
       { kind: 'tree', path: join(home, '.pi', 'agent', 'sessions') },
+      { kind: 'tree', path: join(home, '.dsh', 'sessions') },
     ]);
     assert.equal(serviceOptions[0].watchTargets.some(target => target.path === codexDir), false);
   } finally {
     restore();
     process.env.HOME = originalHome;
+    if (originalDshHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = originalDshHome;
     rmSync(home, { recursive: true, force: true });
   }
 });

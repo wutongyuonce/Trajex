@@ -27,6 +27,7 @@ content into canonical records and a cursor.
 | Claude | `mtime:lines:size:ctime:inode`; skip accepted lines, stream the new tail, aggregate the session at the end | Consume and skip newline-terminated malformed records, then continue. Leave an unterminated malformed tail unconsumed because it may still be growing. Legacy `mtime:lines` cursors remain readable. If the cursor is past EOF, restart from line 1 |
 | Codex | `mtime:lines:size:ctime:inode`; replay the whole stable rollout, collect visible `event_msg` keys, then deduplicate `response_item`; session count is `total` | Consume and skip newline-terminated malformed records, then continue. Leave an unterminated malformed tail unconsumed. If the snapshot changes while reading, abort the unit |
 | Pi | `mtime:lines:size:ctime:inode`; replay the whole stable v3 tree, resolve durable leaf/compaction and project `visible` / `inactive` / `hidden` | Consume and skip newline-terminated malformed JSONL, then continue. Structurally invalid parsed entries abort the unit. Leave an unterminated malformed tail unconsumed. If the snapshot changes while reading, abort the unit |
+| DeepSeek Harness | `maxMtime:lines:dsh-tree-v1:<sha256 of member snapshots>`; replay every member of the root session tree (ADR-0013); session count is `total` | Consume and skip newline-terminated malformed records, then continue. Leave an unterminated raw tail or a torn final Zstandard frame unread. A complete frame that fails its checksum aborts the unit. If any member snapshot changes while reading, abort the unit |
 
 Codex guardian/auto-review threads are filtered from the canonical transcript
 projection. An ordinary incremental build does not proactively delete a
@@ -36,7 +37,7 @@ files, so those stale guardian rows disappear because the parser skips them.
 The force rebuild behavior is the cleanup boundary; a marker-triggered,
 automatic guardian cleanup migration is not part of the current design.
 
-Claude, Codex, and Pi distinguish a complete malformed record from a possibly torn
+Claude, Codex, Pi, and DeepSeek Harness distinguish a complete malformed record from a possibly torn
 tail: only the unterminated tail remains a retry boundary. Unparsable physical
 JSONL does not hide later Pi tree entries; a parsed entry with a broken v3
 shape still fails the unit atomically so a partial tree is not committed. A
@@ -44,7 +45,7 @@ provider may buffer a complete unit when global context is required, but the
 adapter still emits the same provider-neutral `TranscriptRecord` stream.
 
 All file-backed transcript cursors compare `mtime`, `size`, `ctime`, and inode.
-Codex and Pi additionally compare the snapshot before and after their full read,
+Codex, Pi, and DeepSeek Harness additionally compare the snapshot before and after their full read,
 so a rewrite cannot commit records from one file version with another version's
 cursor. Legacy two-part full-replay cursors are replayed once and upgraded.
 
@@ -53,8 +54,9 @@ cursor. Legacy two-part full-replay cursors are replayed once and upgraded.
 `IndexUnit.key` identifies the unit whose parse progress is stored in
 `index_state`. A session record's `jsonl_path` identifies its primary source
 transcript for provenance and raw lookup. These fields have different semantic
-roles even though every current built-in Provider (Claude, Codex, and Pi)
-deliberately emits the same concrete path for both. The shared indexing code may
+roles even though every current built-in Provider (Claude, Codex, Pi, and
+DeepSeek Harness) deliberately emits the same concrete path for both; for a
+DeepSeek Harness tree that path is the root session's artifact. The shared indexing code may
 rely on that equality while those are the only supported Providers.
 
 The cursor is stored in the `index_state` row keyed by `IndexUnit.key`:

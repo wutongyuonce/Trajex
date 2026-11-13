@@ -62,7 +62,7 @@ Full-text search across all indexed message text using FTS5.
 | `opts.after` | `string` | ISO lower bound on message timestamp |
 | `opts.before` | `string` | ISO upper bound on message timestamp |
 | `opts.cwd` | `string` | SQL `LIKE` filter over `messages.cwd` |
-| `opts.source` | `string` | `"claude"`, `"codex"`, `"pi"`, or omitted/all |
+| `opts.source` | `string` | `"claude"`, `"codex"`, `"pi"`, `"deepseek"`, or omitted/all |
 | `opts.includeMeta` | `boolean` | Include `is_meta=1` rows, default false |
 | `opts.includeInactive` | `boolean` | Include `visibility='inactive'` rows, default false |
 | `opts.fallback` | `'or'` | On zero hits only, retry safe tokens joined by OR |
@@ -233,7 +233,7 @@ Returns:
     projects,
     sessions,
     memories,
-    sources: [{ source: 'claude' | 'codex' | 'pi', session_count, last_session_at }]
+    sources: [{ source: 'claude' | 'codex' | 'pi' | 'deepseek', session_count, last_session_at }]
   }
 }
 ```
@@ -252,7 +252,7 @@ Session rows ordered by `ended_at` descending. Passing a number is treated as
 | `opts.before` | `string` | ISO upper bound on `started_at` |
 | `opts.limit` | `number` | Max rows, default 50 |
 | `opts.branch` | `string` | Exact git branch |
-| `opts.source` | `string` | `"claude"`, `"codex"`, `"pi"`, or omitted/all |
+| `opts.source` | `string` | `"claude"`, `"codex"`, `"pi"`, `"deepseek"`, or omitted/all |
 | `opts.sessionId` | `string` | Canonical session ID; a non-exact ref resolves as a literal fragment, capped at the 10 newest matches |
 | `opts.sessions` | `string[]` | Same resolution per entry; union of matches |
 
@@ -260,7 +260,7 @@ Returns `Array<session_row>`.
 Only `sessions()` resolves fragments; every other helper matches `sessionId`
 exactly. Fragments match literally (`%` and `_` are not wildcards) within the
 requested project/source/time/branch filters. A raw native id such as the uuid
-inside `pi:<uuid>:<scope>` normally resolves to exactly one session; several
+inside `pi:<uuid>:<scope>` or `deepseek:<id>:<scope>` normally resolves to exactly one session; several
 rows mean the id is not unique, so narrow with `project` or `source`.
 
 #### `recent(n?)`

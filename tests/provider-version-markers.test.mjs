@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { CLAUDE_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/claude.ts';
 import { CODEX_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/codex.ts';
+import { DEEPSEEK_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/deepseek.ts';
 import { PI_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/pi.ts';
 
 test('transcript provider projection markers are explicit', () => {
@@ -14,9 +15,11 @@ test('transcript provider projection markers are explicit', () => {
     CLAUDE_CANONICAL_TRANSCRIPT_MARKER,
     CODEX_CANONICAL_TRANSCRIPT_MARKER,
     PI_CANONICAL_TRANSCRIPT_MARKER,
+    DEEPSEEK_CANONICAL_TRANSCRIPT_MARKER,
   ], [
     '__claude_canonical_transcript_v1.1__',
     '__codex_canonical_transcript_v1.1__',
     '__pi_canonical_transcript_v1__',
+    '__deepseek_canonical_transcript_v1__',
   ]);
 });

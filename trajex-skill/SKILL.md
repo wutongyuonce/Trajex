@@ -1,7 +1,7 @@
 ---
 name: trajex
 description: >
-  Search and query past Claude Code, Codex, and Pi session history.
+  Search and query past Claude Code, Codex, Pi, and DeepSeek Harness session history.
   Reactive: when the user asks "how did I fix X", "what did we do last time", "find the session where", "resume session", "上次怎么修的", "之前的session", "历史记录".
   Proactive: when the user references past work you lack context for, when you're about to modify a file with complex edit history, when the user says "继续之前的" or "continue where we left off", or when understanding prior decisions would improve your current response.
   Memory: when the user says "记住这个", "remember this", "写入记忆", "save this conclusion", or when you determine a retrieval result contains a conclusion worth persisting.
@@ -14,19 +14,22 @@ allowed-tools:
 
 # trajex
 
-Search and query Claude Code, Codex, and Pi session history from their configured local transcript roots.
-Defaults are `~/.claude/`, `~/.codex/`, and Pi's `~/.pi/agent/sessions`.
-Pi may additionally use a session directory selected in App Settings; the
+Search and query Claude Code, Codex, Pi, and DeepSeek Harness session history from their configured local transcript roots.
+Defaults are `~/.claude/`, `~/.codex/`, Pi's `~/.pi/agent/sessions`, and DeepSeek Harness's
+`$DSH_HOME/sessions` (else `~/.dsh/sessions`).
+Pi and DeepSeek Harness may additionally use a session directory selected in App Settings; the
 configured value is already the final session directory, not an agent root.
-Trajex does not use provider environment-variable or CLI path overrides.
 Trajex indexes sessions, messages, tool calls, tool results, summaries, subagents, workflows, workflow agents, parent chains, and raw JSONL lines into SQLite + FTS5.
 
-Trajex has three transcript sources. Treat all as ordinary sessions by default:
-Claude rows use `source='claude'`; Codex and Pi rows use `source='codex'` and `source='pi'`, with provider-prefixed IDs.
+Trajex has four transcript sources. Treat all as ordinary sessions by default:
+Claude rows use `source='claude'`; Codex, Pi and DeepSeek Harness rows use `source='codex'`, `source='pi'` and
+`source='deepseek'`, with provider-prefixed IDs.
 Use `source` only when provenance matters or the user asks to scope to one provider.
 Codex can project child agents into `subagents`.
 Pi support covers official v3 session files recursively. Pi branches are projected
 through `message.visibility`; there is no canonical sidechain field.
+A DeepSeek Harness session is a root session tree: child (subagent/fork) sessions appear as
+`subagents` rows and messages with `agent_id`, and compacted history is `inactive`.
 
 Trajex is a CodeAct memory layer: write a small JS query, run it locally, read the JSON, then answer.
 Do not turn history into a flat document or browse entire sessions by default.
@@ -185,7 +188,7 @@ unchanged. Exact-scope and sentinel queries should leave it unset.
 Results are already ordered by FTS5 rank; lower rank sorts earlier.
 Prefer returned order over manually interpreting numeric rank unless you are deliberately using FTS5 semantics.
 
-`source` can be `'claude'`, `'codex'`, `'pi'`, or omitted. Omitted means search all indexed sources.
+`source` can be `'claude'`, `'codex'`, `'pi'`, `'deepseek'`, or omitted. Omitted means search all indexed sources.
 
 ### `context(uuid)`
 

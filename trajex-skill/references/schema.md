@@ -14,11 +14,12 @@ exist.
 
 ## Source Model
 
-Trajex stores Claude Code, Codex, and Pi transcripts in the same schema.
+Trajex stores Claude Code, Codex, Pi, and DeepSeek Harness transcripts in the same schema.
 
 - Claude rows use `source='claude'`.
 - Codex rows use `source='codex'`; root session and message IDs are prefixed with `codex:`.
 - Pi rows use `source='pi'` and IDs derived from normalized `cwd` plus the v3 header `id`; official v3 session files are discovered recursively.
+- DeepSeek Harness rows use `source='deepseek'` and IDs `deepseek:<id>:<cwd hash>`. One session is a root session tree; child sessions are `subagents` rows whose `agent_id` is the child's ID, and `sessions.jsonl_path` is the root's artifact (`session[.vN].jsonl[.zstd]`).
 - Omit `source` filters unless provider provenance matters.
 - Codex child agents are represented through `subagents`; provider workflow rows may be absent when the source has no compatible metadata.
 
@@ -60,7 +61,7 @@ One row per root session.
 | `version` | Provider CLI/app version |
 | `message_count` | Indexed user + assistant messages |
 | `jsonl_path` | Source JSONL path |
-| `source` | `claude`, `codex`, or `pi` |
+| `source` | `claude`, `codex`, `pi`, or `deepseek` |
 
 ### `messages`
 
@@ -83,7 +84,7 @@ Core evidence table.
 | `cwd` | Working directory at message time |
 | `skill` | Skill that generated the response, if known |
 | `turn_duration_ms` | Wall-clock duration for the turn |
-| `source` | `claude`, `codex`, or `pi` |
+| `source` | `claude`, `codex`, `pi`, or `deepseek` |
 
 `content_type='tool_use'` is only a marker. Tool-call details live in
 `tool_calls`. `content_type='tool_result'` marks provider-emitted tool-result
@@ -211,6 +212,7 @@ Indexer progress and sentinel state.
 | `cursor` | Provider cursor preserved verbatim. Old rows with `NULL` here fall back to `mtime:lines`; current shared persistence still requires the first two cursor segments to be numeric. |
 
 Codex and Pi write `mtime:lines:size:ctime:inode`; their legacy two-part cursors are replayed once before the stronger snapshot is stored.
+DeepSeek Harness writes `maxMtime:lines:dsh-tree-v1:<hash>` for a whole session tree and always fully replays it.
 
 Sentinel keys include `__last_build__`, `__app_heartbeat__`,
 `__app_last_successful_build__`, `__indexer_owner_app__`, and

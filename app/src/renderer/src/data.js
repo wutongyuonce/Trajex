@@ -49,9 +49,9 @@ function commitStoredSessionMetadata(sessionId, metadata) {
 export async function fetchInitialData() {
   const [rawMemories, rawSessions, stats, projects] = await Promise.all([
     window.trajex.getMemories(),
-    window.trajex.getSessions({ source: 'all', limit: 1000 }),
-    window.trajex.getStats(),
-    window.trajex.getProjects()
+    window.trajex.getSessions({ source: 'all', limit: null }),
+    window.trajex.getStats({ source: 'all' }),
+    window.trajex.getProjects({ source: 'all' })
   ]);
   return { rawMemories, rawSessions, stats, projects };
 }
@@ -92,6 +92,11 @@ export function commitInitialData({ rawMemories, rawSessions, stats, projects })
  * Returns the assembled session object (also updates state.sessions entry).
  */
 export async function loadSessionDetail(sessionId) {
+  // A direct route can open before the catalogue loads or while its refresh is
+  // deferred. Resolve metadata by exact ID instead of requiring list membership.
+  const metadata = sessionMetadata(state.sessions.find(candidate => candidate.id === sessionId)
+    ?? (await window.trajex.getSessions({ source: 'all', sessionId, limit: 1 }))[0]);
+  if (!metadata) return null;
   const [messages, toolCalls, toolResults, subagents, workflows, summaries] = await Promise.all([
     window.trajex.getSessionMessages(sessionId),
     window.trajex.getSessionToolCalls(sessionId),
@@ -106,7 +111,6 @@ export async function loadSessionDetail(sessionId) {
     workflows: detail.workflows,
     summaries: detail.summaries,
   };
-  const metadata = sessionMetadata(state.sessions.find(candidate => candidate.id === sessionId));
   rememberSessionMessageSnapshot(sessionId, {
     snapshot,
     cursor: createSessionPatchCursor(snapshot),

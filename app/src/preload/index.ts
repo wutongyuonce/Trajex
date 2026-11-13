@@ -6,13 +6,15 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type {
   SessionPatch,
   SessionPatchCursor,
+  SessionsQueryOptions,
+  SourceQueryOptions,
   UsageStatsOptions,
   WindowControlAction,
 } from '../shared/ipc-types.ts';
 
 contextBridge.exposeInMainWorld('trajex', {
   platform: process.platform,
-  getSessions: (opts?: unknown) => ipcRenderer.invoke('db:getSessions', opts),
+  getSessions: (opts?: SessionsQueryOptions) => ipcRenderer.invoke('db:getSessions', opts),
   getSessionMessages: (id: string) => ipcRenderer.invoke('db:getSessionMessages', id),
   getSessionToolCalls: (id: string) => ipcRenderer.invoke('db:getSessionToolCalls', id),
   getSessionToolResults: (id: string) => ipcRenderer.invoke('db:getSessionToolResults', id),
@@ -34,8 +36,8 @@ contextBridge.exposeInMainWorld('trajex', {
   openWebMarkdownLink: (href: string) => ipcRenderer.invoke('web-link:open', href),
   archiveMemory: (id: string, reason?: string) => ipcRenderer.invoke('db:archiveMemory', id, reason),
   restoreMemory: (id: string) => ipcRenderer.invoke('db:restoreMemory', id),
-  getProjects: () => ipcRenderer.invoke('db:getProjects'),
-  getStats: () => ipcRenderer.invoke('db:getStats'),
+  getProjects: (opts?: SourceQueryOptions) => ipcRenderer.invoke('db:getProjects', opts),
+  getStats: (opts?: SourceQueryOptions) => ipcRenderer.invoke('db:getStats', opts),
   getUsageStats: (opts?: UsageStatsOptions) => ipcRenderer.invoke('db:getUsageStats', opts),
   onWindowState: (callback: (payload: unknown) => void) => {
     const listener = (_: IpcRendererEvent, payload: unknown) => callback(payload);

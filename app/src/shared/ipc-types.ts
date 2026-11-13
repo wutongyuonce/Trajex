@@ -6,6 +6,13 @@ export interface SourceQueryOptions {
   source?: string;
 }
 
+export interface SessionsQueryOptions extends SourceQueryOptions {
+  project?: string;
+  sessionId?: string;
+  /** null requests the complete metadata catalogue; omitted defaults to 200. */
+  limit?: number | null;
+}
+
 export type UsageStatsOptions = SourceQueryOptions;
 
 export type SessionPatchTable =

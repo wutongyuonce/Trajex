@@ -674,6 +674,78 @@ test('usage IPC aggregates normalized tokens across all indexed providers', asyn
   }
 });
 
+test('session catalogue includes older sessions beyond 1000 across providers and resolves exact IDs', async () => {
+  const originalHome = process.env.HOME;
+  const originalProfile = process.env.USERPROFILE;
+  const home = join(tmpdir(), `trajex-main-catalogue-${Date.now()}`);
+  mkdirSync(join(home, '.trajex'), { recursive: true });
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  const setup = new DatabaseSync(join(home, '.trajex', 'trajex.sqlite'));
+  setup.exec(readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8'));
+  const insert = setup.prepare('INSERT INTO sessions (id, title, project, source, started_at) VALUES (?, ?, ?, ?, ?)');
+  setup.exec('BEGIN');
+  for (let i = 0; i < 1105; i++) {
+    insert.run(`catalogue-${i}`, `Session ${i}`, i < 5 ? 'older-only' : 'active',
+      i % 2 ? 'codex' : 'claude', new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString());
+  }
+  setup.exec('COMMIT');
+  setup.close();
+  const ipcHandlers = new Map();
+  const appHandlers = new Map();
+  class FakeBrowserWindow {
+    constructor() {
+      this.webContents = { on() {}, setWindowOpenHandler() {}, getURL() { return ''; }, setZoomLevel() {}, openDevTools() {}, send() {} };
+    }
+    loadFile() {}
+    on() {}
+    loadURL() {}
+    close() {}
+    static getAllWindows() { return []; }
+    static fromWebContents() { return null; }
+  }
+  const restore = registerMocks([
+    [ELECTRON_URL, { namedExports: electronNamespace({
+      app: { whenReady: () => Promise.resolve(), on(event, handler) { appHandlers.set(event, handler); }, quit() {}, getVersion: () => '0.2.0' },
+      BrowserWindow: FakeBrowserWindow,
+      ipcMain: { handle(channel, handler) { ipcHandlers.set(channel, handler); } },
+    }) }],
+    [DATABASE_URL, { defaultExport: SqliteCompatDatabase }],
+    [PARCEL_WATCHER_URL, { defaultExport: noopParcelWatcher() }],
+    [INDEXER_URL, { namedExports: { writeHeartbeat() {} } }],
+    [INDEXER_SERVICE_URL, { namedExports: defaultIndexerService() }],
+    [INDEXER_WORKER_URL, { namedExports: defaultIndexerWorkerClient() }],
+  ]);
+  try {
+    await importMain();
+    const sessions = opts => ipcHandlers.get('db:getSessions')(null, opts);
+    const catalogue = sessions({ source: 'all', limit: null });
+    assert.equal(catalogue.length, 1105);
+    assert.equal(catalogue[0].id, 'catalogue-1104');
+    assert.equal(catalogue.at(-1).id, 'catalogue-0');
+    assert.equal(sessions({ source: 'all' }).length, 200, 'default bounded callers remain bounded');
+    assert.equal(sessions({ source: 'all', limit: 0 }).length, 0);
+    assert.equal(sessions({ source: 'codex', limit: null }).length, 552);
+    assert.equal(sessions({ source: 'all', project: 'older-only', limit: null }).length, 5);
+    assert.deepEqual(sessions({ source: 'all', sessionId: 'catalogue-1', limit: 1 }).map(s => s.id), ['catalogue-1']);
+    assert.equal(sessions({ source: 'claude', sessionId: 'catalogue-1' }).length, 0);
+    assert.equal(sessions({ source: 'all', sessionId: 'missing' }).length, 0);
+    assert.equal(ipcHandlers.get('db:getStats')(null, { source: 'all' }).sessions, 1105);
+    const projects = ipcHandlers.get('db:getProjects')(null, { source: 'all' });
+    assert.equal(projects.find(p => p.project === 'older-only').session_count, 5);
+    assert.equal(projects.reduce((sum, p) => sum + p.session_count, 0), 1105);
+  } finally {
+    restore();
+    await appHandlers.get('window-all-closed')?.();
+    await new Promise(resolve => setImmediate(resolve));
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalProfile;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('main process migrates an existing app database before source-filtered IPC queries', async () => {
   const originalHome = process.env.HOME;
   const home = join(tmpdir(), `trajex-main-db-migration-${Date.now()}`);

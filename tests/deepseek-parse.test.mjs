@@ -236,13 +236,87 @@ test('an unchanged tree is skipped and a child change replays the whole root uni
   const { provider, units } = discover(dir);
   const { cursor } = drain(provider.parse(units[0], null));
   const cursors = new Map([[units[0].key, cursor]]);
-  const ctx = { lastCursor: key => cursors.get(key) ?? null, indexedSessions: () => [] };
+  const indexedRoot = [{ sessionId: units[0].sessionId, jsonlPath: units[0].key, source: 'deepseek' }];
+  const ctx = { lastCursor: key => cursors.get(key) ?? null, indexedSessions: () => indexedRoot };
   assert.deepEqual(provider.discover(ctx), []);
+  assert.equal(provider.discover({ ...ctx, indexedSessions: () => [] }).length, 1,
+    'a tree whose root is not projected under its own path is replayed');
   appendFileSync(join(dir, '--dsh-v3--/v3-seeded-child/session.v3.jsonl'),
     JSON.stringify({ type: 'user/message', seq: 99, time: 2000, data: { id: 'late', content: [{ type: 'text', text: 'late child' }], source: { kind: 'user' } } }) + '\n');
   const replay = provider.discover(ctx);
   assert.deepEqual(replay.map(unit => unit.key), [units[0].key]);
   assert.ok(byKind(drain(provider.parse(replay[0], cursor)).values, 'message').some(message => message.text === 'late child'));
+});
+
+/** Index every tree once and return a discovery context that reflects the stored state. */
+function indexedState(provider, units) {
+  const cursors = new Map();
+  const sessions = [];
+  for (const unit of units) {
+    cursors.set(unit.key, drain(provider.parse(unit, null)).cursor);
+    sessions.push({ sessionId: unit.sessionId, jsonlPath: unit.key, source: 'deepseek' });
+  }
+  return { lastCursor: key => cursors.get(key) ?? null, indexedSessions: () => sessions };
+}
+
+test('a watcher batch scoped to a deleted child still replays the parent tree', () => {
+  const dir = makeTempDir('trajex-dsh-');
+  writeSession(dir, 'parent', 'session.v4.jsonl', header('parent'), [user(0, 'p1', 'parent')]);
+  writeSession(dir, 'kid', 'session.v4.jsonl', header('kid', { parentSession: 'parent', origin: 'subagent' }), [user(0, 'k1', 'child')]);
+  const { provider, units } = discover(dir);
+  const ctx = indexedState(provider, units);
+  rmSync(join(dir, '--work--', 'kid'), { recursive: true, force: true });
+  const replay = provider.discover({ ...ctx, changedPaths: [join(dir, '--work--', 'kid')] });
+  assert.deepEqual(replay.map(unit => unit.sessionId), [deepseekSessionId('parent', CWD)]);
+  assert.equal(replay[0].meta.members.length, 1, 'the deleted child is no longer a member');
+});
+
+test('a watcher batch scoped to a deleted root republishes its orphaned child', () => {
+  const dir = makeTempDir('trajex-dsh-');
+  writeSession(dir, 'parent', 'session.v4.jsonl', header('parent'), [user(0, 'p1', 'parent')]);
+  writeSession(dir, 'kid', 'session.v4.jsonl', header('kid', { parentSession: 'parent', origin: 'subagent' }), [user(0, 'k1', 'child')]);
+  const { provider, units } = discover(dir);
+  const ctx = indexedState(provider, units);
+  rmSync(join(dir, '--work--', 'parent'), { recursive: true, force: true });
+  const replay = provider.discover({ ...ctx, changedPaths: [join(dir, '--work--', 'parent')] });
+  assert.deepEqual(replay.map(unit => [unit.sessionId, unit.meta.kind]).sort(), [
+    [deepseekSessionId('kid', CWD), 'deepseek-tree'],
+    [deepseekSessionId('parent', CWD), 'deepseek-tombstone'],
+  ].sort());
+});
+
+test('a member that becomes unreadable freezes its tree instead of dropping its snapshot', () => {
+  const dir = makeTempDir('trajex-dsh-');
+  const parentPath = writeSession(dir, 'parent', 'session.v4.jsonl', header('parent'), [user(0, 'p1', 'parent')]);
+  writeSession(dir, 'kid', 'session.v4.jsonl', header('kid', { parentSession: 'parent', origin: 'subagent' }), [user(0, 'k1', 'child')]);
+  writeSession(dir, 'grandkid', 'session.v4.jsonl', header('grandkid', { parentSession: 'kid', origin: 'subagent' }), [user(0, 'g1', 'nested')]);
+  const { provider, units } = discover(dir);
+  const ctx = indexedState(provider, units);
+  // The child migrates to a generation this adapter cannot read; the parent keeps changing.
+  rmSync(join(dir, '--work--', 'kid', 'session.v4.jsonl'));
+  writeSession(dir, 'kid', 'session.v5.jsonl', { ...header('kid', { parentSession: 'parent', origin: 'subagent' }), version: 5 }, []);
+  appendFileSync(parentPath, JSON.stringify(user(9, 'p2', 'later')) + '\n');
+  assert.deepEqual(provider.discover(ctx), [], 'neither the frozen tree nor the orphaned grandchild is published');
+});
+
+test('a seeded root without a durable end-seed marker keeps every event inactive', () => {
+  const dir = makeTempDir('trajex-dsh-');
+  writeSession(dir, 'fork', 'session.v4.jsonl', header('fork', { isSeeded: true }), [user(0, 'p1', 'inherited')]);
+  const [{ values }] = parseAll(dir);
+  assert.deepEqual(byKind(values, 'message').map(message => message.visibility), ['inactive']);
+  assert.equal(byKind(values, 'session')[0].message_count, 0);
+});
+
+test('raw lookup resolves a de-duplicated uuid to the event with that seq', () => {
+  const dir = makeTempDir('trajex-dsh-');
+  writeSession(dir, 's', 'session.v4.jsonl', header('s'), [user(0, 'same', 'first copy'), user(1, 'same', 'second copy')]);
+  const { provider } = discover(dir);
+  const [{ unit, values }] = parseAll(dir);
+  const session = { id: unit.sessionId, jsonl_path: unit.key };
+  const [first, second] = byKind(values, 'message');
+  assert.match(second.uuid, /#1$/);
+  assert.equal(provider.raw({ source: 'deepseek', messageUuid: first.uuid, session, agentId: null }).messageText, 'first copy');
+  assert.equal(provider.raw({ source: 'deepseek', messageUuid: second.uuid, session, agentId: null }).messageText, 'second copy');
 });
 
 test('a child indexed as its own root is retracted by the tree that adopts it, never tombstoned', () => {

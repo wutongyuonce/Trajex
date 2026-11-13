@@ -15,7 +15,7 @@
 ```
 
 - 每个会话目录可能同时保留多个 generation：DSH 迁移格式时在旁边发布更高版本，旧文件不变。Trajex 只读取支持范围（v0–v4）内的最高 generation；同版本同时存在两种编码时优先 `.zstd`。
-- 只有未知更高 generation（例如 `session.v5.*`）或 header 尚不可读的目录不产生新索引，但已有快照受保护，不会被 tombstone。
+- 只有未知更高 generation（例如 `session.v5.*`）或 header 尚不可读的目录不产生新索引，已有快照受保护，不会被 tombstone；它所属的会话树也暂停重放，避免连带删除该成员的旧证据。
 - 项目目录名不参与解析；项目与身份都来自 header 的 `cwd`。
 
 ## 2. 物理编码
@@ -83,7 +83,7 @@ v4:    message { role: "tool", toolCallId, source: { kind: "tool", callId },
 
 1. 枚举两级目录，为每个会话目录选择支持的最高 generation，并读取 header（压缩日志只解码第一帧，按文件快照缓存）。
 2. 沿 `parentSession` 在同一项目作用域内分组为会话树；根会话的 artifact 路径就是 unit key 和 `jsonl_path`。
-3. 按成员快照计算树签名，与 cursor 中保存的一致则跳过。
+3. 每轮为所有树按成员快照计算签名（成员增删会改变未被 watcher 提示的树），与 cursor 一致且根已按同一路径索引时跳过。
 4. 变化时全量重放整棵树：先 `delete-session`，再按成员顺序投影；每个成员读前读后快照必须一致。
 5. 根层可读时清单是权威的：消失的会话生成 tombstone；被新树收编的旧根身份在同一事务内由该树撤回。
 

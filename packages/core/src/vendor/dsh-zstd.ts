@@ -23,6 +23,8 @@
 import zlib from 'node:zlib';
 
 const ZSTD_MAGIC = 0xFD2FB528;
+/** RFC 8878 Block_Maximum_Size 的上限；更大的块尺寸只可能来自损坏，而不是撕裂尾部。 */
+const MAX_BLOCK_SIZE = 128 * 1024;
 const SKIPPABLE_MAGIC_MASK = 0xFFFFFFF0;
 const SKIPPABLE_MAGIC_BASE = 0x184D2A50;
 
@@ -94,6 +96,9 @@ export function scanZstdFrames(buffer: Buffer, maxFrames = Number.POSITIVE_INFIN
       const blockSize = blockHeader >>> 3;
       if (blockType === 0x03) {
         throw new Error(`corrupt Zstandard session log: reserved block type at byte ${offset - 3}`);
+      }
+      if (blockSize > MAX_BLOCK_SIZE) {
+        throw new Error(`corrupt Zstandard session log: block size ${blockSize} exceeds the format maximum at byte ${offset - 3}`);
       }
       // RLE block（type 1）在负载中只存一个字节。
       const payloadBytes = blockType === 0x01 ? 1 : blockSize;

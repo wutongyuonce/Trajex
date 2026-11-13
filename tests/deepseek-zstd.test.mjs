@@ -52,6 +52,14 @@ test('skippable frames are stepped over and the unused header bit is ignored (RF
   reservedBit[4] |= 0x08;
   assert.throws(() => scanZstdFrames(reservedBit), /reserved frame-header bit/);
   assert.throws(() => scanZstdFrames(Buffer.from('not zstd')), /invalid frame magic/);
+
+  // A block size beyond the format maximum is corruption, not a torn tail that hides later frames.
+  const oversized = Buffer.alloc(4 + 2 + 3);
+  oversized.writeUInt32LE(0xFD2FB528, 0);
+  oversized.writeUInt8(0x00, 4);
+  oversized.writeUInt8(0x00, 5);
+  oversized.writeUIntLE(1 | (200_000 << 3), 6, 3);
+  assert.throws(() => scanZstdFrames(Buffer.concat([oversized, data])), /exceeds the format maximum/);
 });
 
 test('a complete frame that fails its checksum rejects as corruption', skipWithoutZstd, () => {

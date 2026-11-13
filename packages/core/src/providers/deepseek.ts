@@ -164,20 +164,26 @@ function readHeaderLine(artifact: Artifact, size: number): string | null {
   }
 }
 
-function validHeader(value: unknown, artifact: Artifact): Json | null {
-  if (!isRecord(value) || value.type !== 'session' || typeof value.id !== 'string' || !value.id) return null;
-  const version = value.version === undefined ? 0 : value.version;
-  return version === artifact.version ? value : null;
+function sessionHeader(value: unknown): Json | null {
+  return isRecord(value) && value.type === 'session' && typeof value.id === 'string' && value.id ? value : null;
 }
 
+function validHeader(value: unknown, artifact: Artifact): Json | null {
+  const header = sessionHeader(value);
+  if (header === null) return null;
+  const version = header.version === undefined ? 0 : header.version;
+  return version === artifact.version ? header : null;
+}
+
+/** 按文件快照缓存 header 行的解析结果（未校验版本）。 */
 const headerCache = new Map<string, { signature: string; header: Json | null }>();
 
 function snapshotSignature(snapshot: FileSnapshot): string {
   return `${snapshot.mtimeMs}:${snapshot.size}:${snapshot.ctimeMs}:${snapshot.ino}`;
 }
 
-/** 读取并校验 artifact header；同一文件快照只解析一次。不可读或未完成时返回 null。 */
-function cachedHeader(artifact: Artifact): Json | null {
+/** 读取 artifact 的 session header（不论版本是否受支持）；同一文件快照只解析一次。 */
+function peekHeader(artifact: Artifact): Json | null {
   let snapshot: FileSnapshot;
   try { snapshot = fileSnapshot(artifact.path); } catch { return null; }
   const signature = snapshotSignature(snapshot);
@@ -186,12 +192,17 @@ function cachedHeader(artifact: Artifact): Json | null {
   let header: Json | null = null;
   try {
     const line = readHeaderLine(artifact, snapshot.size);
-    if (line !== null) header = validHeader(JSON.parse(line), artifact);
+    if (line !== null) header = sessionHeader(JSON.parse(line));
   } catch {
     header = null;
   }
   headerCache.set(artifact.path, { signature, header });
   return header;
+}
+
+/** 可索引的 header：版本必须与文件名 generation 一致。不可读或未完成时返回 null。 */
+function cachedHeader(artifact: Artifact): Json | null {
+  return validHeader(peekHeader(artifact), artifact);
 }
 
 /**
@@ -267,10 +278,18 @@ function inside(root: string, path: string): boolean {
   return Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-/** 列出来源根下所有可用会话；有规范 artifact 但都不可用的目录记入 protectedDirs。 */
+/** 有规范 artifact 却没有可读的受支持 generation 的会话目录；header 仍可读时用于判断归属。 */
+interface BlockedSession {
+  sessionDir: string;
+  projectDir: string;
+  header: Json | null;
+}
+
+/** 列出来源根下所有可用会话；有规范 artifact 但都不可用的目录记入 protectedDirs / blocked。 */
 function inventory(root: string, rootEntries: readonly Dirent[]) {
   const sessions: DiscoveredSession[] = [];
   const protectedDirs = new Set<string>();
+  const blocked: BlockedSession[] = [];
   const seen = new Set<string>();
   for (const project of listDirs(root, rootEntries)) {
     const projectDir = join(root, project.name);
@@ -290,7 +309,11 @@ function inventory(root: string, rootEntries: readonly Dirent[]) {
         break;
       }
       if (found === null) {
-        if (artifacts.length > 0) protectedDirs.add(sessionDir);
+        if (artifacts.length > 0) {
+          protectedDirs.add(sessionDir);
+          const header = artifacts.map(peekHeader).find(value => value !== null) ?? null;
+          blocked.push({ sessionDir, projectDir: normalize(projectDir), header });
+        }
         continue;
       }
       // 同一作用域身份的副本只保留路径序最靠前的一份。
@@ -299,24 +322,34 @@ function inventory(root: string, rootEntries: readonly Dirent[]) {
       sessions.push(found);
     }
   }
-  return { sessions: sessions.sort((a, b) => a.artifact.path.localeCompare(b.artifact.path)), protectedDirs };
+  return {
+    sessions: sessions.sort((a, b) => a.artifact.path.localeCompare(b.artifact.path)),
+    protectedDirs,
+    blocked,
+  };
 }
 
-/** 沿 `parentSession` 在同一项目作用域内找到最上层仍存在的祖先；防环。 */
-function groupTrees(sessions: readonly DiscoveredSession[]): DiscoveredSession[][] {
-  const byKey = new Map(sessions.map(session => [`${session.scope}\0${session.rawId}`, session]));
+/** 沿 `parentSession` 在同一项目作用域内找到最上层仍存在的祖先；防环。没有可用祖先时返回 null。 */
+function ancestorRoot(
+  byKey: ReadonlyMap<string, DiscoveredSession>, scope: string, parentId: unknown, start?: DiscoveredSession,
+): DiscoveredSession | null {
+  let root: DiscoveredSession | null = start ?? null;
+  let nextParent = parentId;
+  const visited = new Set<string>(start ? [start.memberId] : []);
+  for (;;) {
+    if (typeof nextParent !== 'string' || !nextParent) return root;
+    const parent = byKey.get(`${scope}\0${nextParent}`);
+    if (!parent || visited.has(parent.memberId)) return root;
+    visited.add(parent.memberId);
+    root = parent;
+    nextParent = parent.header.parentSession;
+  }
+}
+
+function groupTrees(sessions: readonly DiscoveredSession[], byKey: ReadonlyMap<string, DiscoveredSession>): DiscoveredSession[][] {
   const trees = new Map<string, DiscoveredSession[]>();
   for (const session of sessions) {
-    let root = session;
-    const visited = new Set<string>([root.memberId]);
-    for (;;) {
-      const parentId = root.header.parentSession;
-      if (typeof parentId !== 'string' || !parentId) break;
-      const parent = byKey.get(`${root.scope}\0${parentId}`);
-      if (!parent || visited.has(parent.memberId)) break;
-      visited.add(parent.memberId);
-      root = parent;
-    }
+    const root = ancestorRoot(byKey, session.scope, session.header.parentSession, session)!;
     const members = trees.get(root.memberId) ?? [];
     members.push(session);
     trees.set(root.memberId, members);
@@ -363,25 +396,50 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
     path === sessionDir || inside(sessionDir, path) || inside(path, sessionDir)
   ));
 
-  const { sessions, protectedDirs } = inventory(normalizedRoot, rootEntries);
+  const { sessions, protectedDirs, blocked } = inventory(normalizedRoot, rootEntries);
   const indexed = (ctx.indexedSessions?.() ?? []).filter(session => inside(normalizedRoot, normalize(session.jsonlPath)));
+  const indexedById = new Map<string, IndexedSession[]>();
+  const indexedByDir = new Map<string, IndexedSession[]>();
+  for (const session of indexed) {
+    indexedById.set(session.sessionId, [...(indexedById.get(session.sessionId) ?? []), session]);
+    const dir = dirname(normalize(session.jsonlPath));
+    indexedByDir.set(dir, [...(indexedByDir.get(dir) ?? []), session]);
+  }
+  const byKey = new Map(sessions.map(session => [`${session.scope}\0${session.rawId}`, session]));
+
+  // 受保护的会话目录不能参与重放，但它可能属于某棵树：重放那棵树会把它上次的快照一并删除。
+  // header 仍可读时冻结它所属的树；header 完全不可读时无法判断归属，冻结同项目目录下的树。
+  // 以受保护会话为父的树同样冻结，否则子会话会被重复发布为独立根。
+  const frozenRoots = new Set<string>();
+  const frozenProjects = new Set<string>();
+  const blockedKeys = new Set<string>();
+  for (const entry of blocked) {
+    if (entry.header === null) { frozenProjects.add(entry.projectDir); continue; }
+    const scope = deepseekProjectScope(entry.header.cwd);
+    blockedKeys.add(`${scope}\0${entry.header.id}`);
+    const owner = ancestorRoot(byKey, scope, entry.header.parentSession);
+    if (owner) frozenRoots.add(owner.memberId);
+  }
+
   const liveRootIds = new Set<string>();
   const memberIds = new Set(sessions.map(session => session.memberId));
   const retracted = new Set<string>();
   const units: IndexUnit[] = [];
 
-  for (const members of groupTrees(sessions)) {
+  for (const members of groupTrees(sessions, byKey)) {
     const rootSession = members[0]!;
     liveRootIds.add(rootSession.memberId);
-    const treeIds = new Set(members.map(member => member.memberId));
-    const treeDirs = new Set(members.map(member => member.sessionDir));
+    if (frozenRoots.has(rootSession.memberId)
+      || blockedKeys.has(`${rootSession.scope}\0${rootSession.header.parentSession}`)
+      || members.some(member => frozenProjects.has(dirname(member.sessionDir)))) continue;
+    const key = rootSession.artifact.path;
     // 这棵树现在拥有的旧身份：曾作为独立根索引的成员，或同目录下已被替换的旧 session。
-    const retractSessionIds = indexed
-      .filter((session: IndexedSession) => session.sessionId !== rootSession.memberId && (
-        treeIds.has(session.sessionId) || treeDirs.has(dirname(normalize(session.jsonlPath)))
-      ))
-      .map(session => session.sessionId);
-    if (!members.some(member => touched(member.sessionDir)) && retractSessionIds.length === 0) continue;
+    const retractSessionIds = new Set<string>();
+    for (const member of members) {
+      for (const session of [...(indexedById.get(member.memberId) ?? []), ...(indexedByDir.get(member.sessionDir) ?? [])]) {
+        if (session.sessionId !== rootSession.memberId) retractSessionIds.add(session.sessionId);
+      }
+    }
 
     let snapshots: Array<{ path: string; snapshot: FileSnapshot }>;
     try {
@@ -390,15 +448,19 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
       // 成员在枚举后消失；下一轮发现会看到一致的 inventory。
       continue;
     }
-    const key = rootSession.artifact.path;
-    if (retractSessionIds.length === 0 && cursorSignature(ctx.lastCursor(key)) === treeSignature(snapshots)) continue;
+    // 每轮都按成员快照签名判断，而不是只看 watcher 提示的目录：删除或新增一个成员会改变
+    // 其他成员所在树的形状。根身份尚未以自身路径索引时也必须重放。
+    const indexedRoot = indexedById.get(rootSession.memberId) ?? [];
+    const projectedHere = indexedRoot.some(session => normalize(session.jsonlPath) === key);
+    if (retractSessionIds.size === 0 && projectedHere
+      && cursorSignature(ctx.lastCursor(key)) === treeSignature(snapshots)) continue;
     for (const id of retractSessionIds) retracted.add(id);
     const project = projectSlugFromPath(rootSession.header.cwd);
     units.push({
       key,
       sessionId: rootSession.memberId,
       ...(project ? { project } : {}),
-      ...(retractSessionIds.length ? { retractSessionIds: [...new Set(retractSessionIds)] } : {}),
+      ...(retractSessionIds.size ? { retractSessionIds: [...retractSessionIds] } : {}),
       meta: {
         kind: 'deepseek-tree',
         members: members.map(member => ({
@@ -579,7 +641,8 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
     // seeded 标记尚未落盘时整段跳过子会话正文，等待下一次变化重放，避免泄漏父前缀。
     const cut = inheritedCut(header, version, events);
     const skipBody = !isRoot && cut === null;
-    const inheritedBefore = cut ?? 0;
+    // 作为根的 seeded 会话尚未写入结束标记时，已有事件全部属于继承前缀。
+    const inheritedBefore = cut ?? Number.POSITIVE_INFINITY;
     const replaced = new Set<number>();
     for (const event of events) {
       const range = replaceRange(event.surfaceOp);
@@ -846,7 +909,9 @@ function rawDeepseek(root: string, input: RawLookup): RawRecord | null {
     const match = MEMBER_PREFIX_RE.exec(input.messageUuid);
     if (!match) return null;
     const memberId = match[1]!;
-    const location = match[2]!.replace(/#\d+$/, '');
+    const duplicate = /#(-?\d+)$/.exec(match[2]!);
+    const location = duplicate ? match[2]!.slice(0, duplicate.index) : match[2]!;
+    const seqMatches = (candidate: DshEvent) => !duplicate || candidate.seq === Number(duplicate[1]);
     const sessionPath = typeof input.session?.jsonl_path === 'string' ? normalize(input.session.jsonl_path) : null;
     let artifact: Artifact | null = null;
     if (sessionPath && input.session?.id === memberId && inside(normalize(root), sessionPath)) {
@@ -865,7 +930,7 @@ function rawDeepseek(root: string, input: RawLookup): RawRecord | null {
     const assistantById = /^a([^:]+):(reasoning|text|tool_use)$/.exec(location);
     if (assistantById) {
       const nativeId = decodeURIComponent(assistantById[1]!);
-      event = events.find(candidate => candidate.type === 'assistant/message'
+      event = events.find(candidate => candidate.type === 'assistant/message' && seqMatches(candidate)
         && isRecord(candidate.data.message) && candidate.data.message.id === nativeId);
       if (event) {
         const content = (event.data.message as Json).content;
@@ -874,11 +939,11 @@ function rawDeepseek(root: string, input: RawLookup): RawRecord | null {
       }
     } else if (user) {
       const nativeId = user[1]!;
-      event = events.find(candidate => candidate.type === 'user/message'
+      event = events.find(candidate => candidate.type === 'user/message' && seqMatches(candidate)
         && (candidate.data.id === nativeId || String(candidate.seq) === nativeId));
       if (event) messageText = userContent(event.data.content).text;
     } else if (assistant) {
-      event = events.find(candidate => candidate.type === 'assistant/message'
+      event = events.find(candidate => candidate.type === 'assistant/message' && seqMatches(candidate)
         && String(candidate.data.turn) === assistant[1] && String(candidate.data.step) === assistant[2]);
       if (event) {
         const content = isRecord(event.data.message) ? event.data.message.content : null;

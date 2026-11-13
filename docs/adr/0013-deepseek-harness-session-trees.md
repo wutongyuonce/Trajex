@@ -37,8 +37,19 @@ the root artifact path. Children are sidechain members of the root session:
 their messages carry `agent_id` (the child's identity) and each child produces
 one `subagents` row. A `started subagent <id>` tool result links the child to
 the spawning tool call. The cursor is
-`maxMtime:lines:dsh-tree-v1:<sha256 of member path + snapshot>`; discovery skips
-a tree whose current member snapshots hash to the stored value.
+`maxMtime:lines:dsh-tree-v1:<sha256 of member path + snapshot>`. Every discovery
+compares each tree's current signature, not just the trees inside watcher-hinted
+directories: adding or removing one member changes the shape of a tree whose
+other directories were not touched. A tree is skipped only when its signature
+matches and its root is already indexed under the same path; deletion
+tombstones remain scoped to watcher hints or a full reconcile.
+
+A session directory with no readable supported generation freezes the tree it
+belongs to, so replaying that tree cannot delete the member's last snapshot.
+Membership is taken from the blocked header when it is still readable. Trees
+whose root names the blocked session as parent are frozen too, so they are not
+published as separate roots. If the header itself is unreadable, every tree with
+a member in that project directory is frozen.
 
 Any member change fully replays the tree: the unit emits `delete-session` for
 the root, then every member. This follows ADR-0002's full-replay rule instead of
@@ -77,8 +88,8 @@ of the tree's session directories are retracted the same way.
   parent already records. The prefix ends at the last
   `session/end-seed { inherited: true }` (v2+) or at `seedLength` (v0/v1). A
   seeded session without its parent keeps that prefix as `inactive`. If the
-  end-seed marker is not durable yet, the child contributes no body until the
-  next change.
+  end-seed marker is not durable yet, an attached child contributes no body and
+  a seeded root keeps every event `inactive` until the next change.
 - Complete malformed lines are skipped and an unterminated raw tail waits.
   Titles prefer the latest `session/title`, falling back to the first physical
   user text.

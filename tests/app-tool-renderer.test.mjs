@@ -125,3 +125,47 @@ test('apply_patch uses a compact patch viewer instead of a character field grid'
 test('Codex exec uses the Claude Bash terminal icon', () => {
   assert.equal(getToolIcon('exec'), getToolIcon('Bash'));
 });
+
+test('generic object tool input continues to render as a field grid', () => {
+  const html = renderPrettyTool({
+    name: 'custom_tool',
+    input_json: JSON.stringify({ path: 'app.css', recursive: true }),
+    result: {},
+  });
+
+  assert.match(html, /class="field-grid"/);
+  assert.match(html, /class="field-key">path</);
+  assert.match(html, /class="field-key">recursive</);
+  assert.doesNotMatch(html, /class="file-content"/);
+});
+
+test('string tool inputs preserve numeric prefixes, tabs, blank lines and trailing newlines', () => {
+  const input = '  12\t<value> &amp;\n13\tsecond\n\n14\tlast\n';
+  const html = renderPrettyTool({ name: 'custom_tool', input_json: JSON.stringify(input) });
+  assert.equal(html.match(/<div class="code">([\s\S]*?)<\/div>/)?.[1],
+    '  12\t&lt;value&gt; &amp;amp;\n13\tsecond\n\n14\tlast\n');
+});
+
+test('Read output still moves its captured line numbers into the gutter', () => {
+  const html = renderPrettyTool({ name: 'Read', result: { content: '12\tfirst\n13\tsecond' } });
+  assert.match(html, /<div class="gutter">12\n13<\/div>/);
+  assert.match(html, /<div class="code">first\nsecond<\/div>/);
+});
+
+test('long apply_patch inputs preserve every line without creating character or line DOM rows', () => {
+  const renderPatch = count => {
+    const patch = ['*** Begin Patch', '*** Update File: example.txt', '@@',
+      ...Array.from({ length: count }, (_, i) => `+line ${i}: <tag> &amp;\tvalue`),
+      '*** End Patch', ''].join('\n');
+    const html = renderPrettyTool({ name: 'apply_patch', input_json: JSON.stringify(patch) });
+    const escaped = patch.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    assert.equal(html.match(/<div class="code">([\s\S]*?)<\/div>/)?.[1], escaped);
+    assert.equal((html.match(/class="file-content"/g) || []).length, 1);
+    assert.doesNotMatch(html, /class="field-(?:grid|key)"|<tag>/);
+    assert.match(html, /file-content-body collapsed/);
+    assert.ok(html.includes(`Show all ${patch.split('\n').length} lines`));
+    return (html.match(/<[a-z][^>]*>/g) || []).length;
+  };
+  assert.equal(renderPatch(4_000), renderPatch(20),
+    'increasing patch length must not increase the number of DOM elements');
+});

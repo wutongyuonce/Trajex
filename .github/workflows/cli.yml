@@ -34,6 +34,9 @@ jobs:
           npm --prefix app ci
           npm --prefix app run test:main-schema
 
+      - name: Verify tool input rendering and Codex patch round-trip
+        run: node --experimental-test-module-mocks --test tests/app-tool-renderer.test.mjs tests/app-codex-patch-pipeline.test.mjs
+
       - name: Verify POSIX bootstrap installer
         if: runner.os != 'Windows'
         run: node --test tests/cli-bootstrap-install.test.mjs

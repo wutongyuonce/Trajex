@@ -22,7 +22,7 @@ function fakeProvider(id, { marker, units = [] } = {}) {
     indexVersionMarker: marker,
     watchTargets() { return []; },
     discover() { return units; },
-    *parse() { return '1:1:1:1:1'; },
+    *parse() { yield* []; return '1:1:1:1:1'; },
     raw() { return null; },
   };
 }

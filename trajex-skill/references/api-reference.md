@@ -58,6 +58,7 @@ Full-text search across all indexed message text using FTS5.
 | `opts.limit` | `number` | Max results, default 20 |
 | `opts.sessionId` | `string` | Restrict to one session |
 | `opts.project` | `string` | SQL `LIKE` pattern over `sessions.project` |
+| `opts.projectPath` | `string` | Exact `sessions.project_path` (no wildcards) |
 | `opts.after` | `string` | ISO lower bound on message timestamp |
 | `opts.before` | `string` | ISO upper bound on message timestamp |
 | `opts.cwd` | `string` | SQL `LIKE` filter over `messages.cwd` |
@@ -65,6 +66,13 @@ Full-text search across all indexed message text using FTS5.
 | `opts.includeMeta` | `boolean` | Include `is_meta=1` rows, default false |
 | `opts.includeInactive` | `boolean` | Include `visibility='inactive'` rows, default false |
 | `opts.fallback` | `'or'` | On zero hits only, retry safe tokens joined by OR |
+| `opts.contextLimit` | `number` | Temporal neighbors per hit, integer 0–6, default 6 |
+| `opts.snippetTokens` | `number` | Return only an FTS excerpt of 1–64 tokens instead of full text |
+
+With `snippetTokens`, `message.text` is a match excerpt and the message also
+carries `textLength` (full length) and `isSnippet: true`; without it those keys
+are absent. The excerpt is navigation, not evidence — expand with
+`messages(uuid)`, `context(uuid)` or `raw(uuid)`.
 
 Returns:
 

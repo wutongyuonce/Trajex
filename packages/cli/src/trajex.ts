@@ -69,7 +69,37 @@ async function main() {
     return;
   }
   if (args[0] === '--search' && args[1]) {
-    try { emit(searchText(args.slice(1).join(' '))); } catch (error) { fail(error); }
+    try {
+      const textParts: string[] = [];
+      const searchOpts: Record<string, unknown> = {};
+      const valueFlags: Record<string, string> = {
+        '--limit': 'limit', '--context-limit': 'contextLimit', '--snippet-tokens': 'snippetTokens',
+        '--project-path': 'projectPath', '--session-id': 'sessionId',
+        '--after': 'after', '--before': 'before', '--source': 'source',
+      };
+      const rest = args.slice(1);
+      for (let i = 0; i < rest.length; i++) {
+        const arg = rest[i];
+        if (arg === '--') {
+          textParts.push(...rest.slice(i + 1));
+          break;
+        }
+        // 第一个参数始终是检索文本，即使它看起来像 flag，保持旧调用兼容。
+        if (i === 0) { textParts.push(arg); continue; }
+        if (Object.hasOwn(valueFlags, arg)) {
+          const value = rest[++i];
+          if (!value) throw new Error(`${arg} requires a value`);
+          if (['--limit', '--context-limit', '--snippet-tokens'].includes(arg)) {
+            const parsed = Number(value);
+            if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`${arg} requires a non-negative integer`);
+            searchOpts[valueFlags[arg]] = parsed;
+          } else searchOpts[valueFlags[arg]] = value;
+        } else if (arg.startsWith('--')) throw new Error(`Unknown --search option: ${arg}`);
+        else textParts.push(arg);
+      }
+      if (!textParts.length) throw new Error('--search requires text');
+      emit(searchText(textParts.join(' '), searchOpts));
+    } catch (error) { fail(error); }
     return;
   }
   if (args[0] === '--query' && args[1]) {
@@ -80,7 +110,7 @@ async function main() {
     try { emit(await executeAttune(readFileSync(resolve(args[1]), 'utf8'))); } catch (error) { fail(error); }
     return;
   }
-  process.stderr.write('Usage:\n  trajex --build\n  trajex --search "text"\n  trajex --query <file.js>\n  trajex --attune <file.js>\n');
+  process.stderr.write('Usage:\n  trajex --build\n  trajex --search "text" [--limit N] [--project-path PATH] [--session-id ID] [--snippet-tokens N] [--context-limit 0..6] [--after ISO] [--before ISO] [--source ID] [-- literal text...]\n  trajex --query <file.js>\n  trajex --attune <file.js>\n');
   process.exitCode = 1;
 }
 

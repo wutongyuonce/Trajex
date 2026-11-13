@@ -93,6 +93,12 @@ return {
 when the primary FTS query is empty. Do not use it for exact scopes or sentinels,
 where an empty result is meaningful.
 
+When many hits are plausible but response space is tight, make the first pass
+`search(topic, { projectPath, limit: 30, snippetTokens: 16, contextLimit: 0 })`,
+then expand only useful hits with `messages(uuid)` or `raw(uuid)`. The CLI
+accepts the same controls: `trajex --search "text" --project-path PATH
+--snippet-tokens 16 --context-limit 0`.
+
 Use `sql()` only as an escalation path for exact joins, aggregations, or schema
 questions that helpers cannot express cleanly. Do not use raw SQL as a generic
 fallback for broad retrieval.

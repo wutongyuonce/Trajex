@@ -29,6 +29,9 @@ interface QueryOptions extends Record<string, any> {
   sessionId?: string;      // 单会话过滤（=）
   sessions?: string[];     // 多会话过滤（IN）
   project?: string;        // 项目过滤（LIKE 模糊匹配）
+  projectPath?: string;    // search() 专用：精确匹配 sessions.project_path
+  contextLimit?: number;   // search() 专用：每条命中的时间邻域条数（0..6）
+  snippetTokens?: number;  // search() 专用：只返回 FTS 命中片段（1..64 token）
   after?: string;          // 时间窗口下界（timestamp >）
   before?: string;         // 时间窗口上界（timestamp <）
   cwd?: string;            // 工作目录过滤
@@ -315,20 +318,33 @@ function createQueryApi(
 
   /** 以 FTS5 检索消息，并附带命中点附近的会话上下文。 */
   const search = (text: string, opts: QueryOptions = {}) => {
-    const { sessionId, project, after, before, cwd, source, includeMeta = false, includeInactive = false, fallback } = opts;
+    const {
+      sessionId, project, projectPath, after, before, cwd, source,
+      includeMeta = false, includeInactive = false, fallback, contextLimit = 6, snippetTokens,
+    } = opts;
     const limit = normalizeLimit(opts.limit, 20);
+    if (!Number.isInteger(contextLimit) || contextLimit < 0 || contextLimit > 6) {
+      throw new RangeError('search() contextLimit must be an integer from 0 to 6');
+    }
+    if (snippetTokens !== undefined && (!Number.isInteger(snippetTokens) || snippetTokens < 1 || snippetTokens > 64)) {
+      throw new RangeError('search() snippetTokens must be an integer from 1 to 64');
+    }
     let where = 'WHERE mf.text MATCH ?';
     const filterParams: any[] = [];
     if (sessionId) { where += ' AND mf.session_id=?'; filterParams.push(sessionId); }
     if (project)   { where += ' AND s.project LIKE ?'; filterParams.push(project); }
+    if (projectPath) { where += ' AND s.project_path=?'; filterParams.push(projectPath); }
     if (after)     { where += ' AND m.timestamp>?';    filterParams.push(after); }
     if (before)    { where += ' AND m.timestamp<?';    filterParams.push(before); }
     if (cwd)       { where += ' AND m.cwd LIKE ?';     filterParams.push(cwd); }
     if (source && source !== 'all') { where += " AND COALESCE(m.source, s.source, 'claude')=?"; filterParams.push(source); }
     if (!includeMeta) where += ' AND COALESCE(m.is_meta,0)=0';
     where += includeInactive ? " AND m.visibility != 'hidden'" : " AND m.visibility = 'visible'";
+    const hitText = snippetTokens === undefined ? 'm.text' : `snippet(messages_fts, 2, '', '', '…', ${snippetTokens})`;
     const stmt = db.prepare(`
-      SELECT m.uuid,m.session_id,m.text,m.content_type,m.is_meta,m.visibility,m.role,m.timestamp,m.model,m.cwd,m.source as m_source,
+      SELECT m.uuid,m.session_id,${hitText} AS text,
+             ${snippetTokens === undefined ? 'NULL' : 'length(m.text)'} AS text_length,
+             m.content_type,m.is_meta,m.visibility,m.role,m.timestamp,m.model,m.cwd,m.source as m_source,
              s.id as s_id,s.title as s_title,s.project as s_project,s.started_at as s_started,
              s.source as s_source,
              rank
@@ -404,8 +420,9 @@ function createQueryApi(
       };
       const indexedTimestamp = typeof r.timestamp === 'string'
         && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(r.timestamp);
-      const ctx = (indexedTimestamp ? indexedContext : scanContext)
+      const ctx = (contextLimit === 0 ? [] : (indexedTimestamp ? indexedContext : scanContext)
         .all(contextParams)
+        .slice(0, contextLimit))
         .sort((a: DbRow, b: DbRow) => {
           if (a.timestamp === b.timestamp) return 0;
           if (a.timestamp == null) return -1;
@@ -414,7 +431,11 @@ function createQueryApi(
         });
       const sourceValue = r.m_source || r.s_source || 'claude';
       return {
-        message: { uuid: r.uuid, text: r.text, content_type: r.content_type, is_meta: r.is_meta || 0, visibility: r.visibility, role: r.role, timestamp: r.timestamp, model: r.model, cwd: r.cwd, source: sourceValue },
+        message: {
+          uuid: r.uuid, text: r.text,
+          ...(snippetTokens === undefined ? {} : { textLength: r.text_length, isSnippet: true }),
+          content_type: r.content_type, is_meta: r.is_meta || 0, visibility: r.visibility, role: r.role, timestamp: r.timestamp, model: r.model, cwd: r.cwd, source: sourceValue,
+        },
         session: { id: r.s_id, title: r.s_title, project: r.s_project, started_at: r.s_started, source: r.s_source || sourceValue },
         rank: r.rank,
         context: ctx,

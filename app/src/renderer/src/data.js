@@ -120,7 +120,10 @@ export async function fetchSessionDetailPatch(sessionId) {
   if (!current || typeof window.trajex.getSessionPatch !== 'function') {
     return { sessionId, current: null, patch: null };
   }
-  const patch = await window.trajex.getSessionPatch(sessionId, current.cursor);
+  // contextBridge recursively copies object properties across isolated worlds.
+  // A primitive cursor avoids that traversal on the scrolling renderer; the
+  // preload decodes it before invoking the unchanged main-process protocol.
+  const patch = await window.trajex.getSessionPatch(sessionId, JSON.stringify(current.cursor));
   return { sessionId, current, patch };
 }
 

@@ -16,8 +16,8 @@ contextBridge.exposeInMainWorld('trajex', {
   getSessionMessages: (id: string) => ipcRenderer.invoke('db:getSessionMessages', id),
   getSessionToolCalls: (id: string) => ipcRenderer.invoke('db:getSessionToolCalls', id),
   getSessionToolResults: (id: string) => ipcRenderer.invoke('db:getSessionToolResults', id),
-  getSessionPatch: (id: string, cursor: SessionPatchCursor): Promise<SessionPatch | null> => (
-    ipcRenderer.invoke('db:getSessionPatch', id, cursor)
+  getSessionPatch: async (id: string, cursor: SessionPatchCursor | string): Promise<SessionPatch | null> => (
+    ipcRenderer.invoke('db:getSessionPatch', id, typeof cursor === 'string' ? JSON.parse(cursor) : cursor)
   ),
   getSessionSubagents: (id: string) => ipcRenderer.invoke('db:getSessionSubagents', id),
   getSessionWorkflows: (id: string) => ipcRenderer.invoke('db:getSessionWorkflows', id),

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 wutongyuonce and contributors.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, ref, triggerRef } from 'vue';
 import {
   defaultRangeExtractor,
   elementScroll,
@@ -36,6 +36,7 @@ export function estimateTimelineItemSize(item) {
 export function createViewportRangeExtractor({
   getScrollElement,
   getVirtualizer,
+  getScrollOffset,
   bufferViewports = 4,
 }) {
   return range => {
@@ -48,15 +49,19 @@ export function createViewportRangeExtractor({
     // the scroll event. Buffer in pixels so short rows do not collapse a
     // count-based overscan into less than one trackpad gesture.
     const bufferSize = viewportSize * bufferViewports;
-    const scrollOffset = element.scrollTop || 0;
+    const scrollOffset = getScrollOffset?.() ?? (element.scrollTop || 0);
     const first = instance.getVirtualItemForOffset(Math.max(0, scrollOffset - bufferSize));
     const last = instance.getVirtualItemForOffset(
       scrollOffset + viewportSize + bufferSize,
     );
     if (!first || !last) return defaultRangeExtractor(range);
 
-    const startIndex = Math.max(0, Math.min(first.index, range.startIndex));
-    const endIndex = Math.min(range.count - 1, Math.max(last.index, range.endIndex));
+    // The DOM offset can already have advanced while virtual-core still holds
+    // the previous range. Unioning that stale range with the physical viewport
+    // mounts the entire intervening transcript on a far jump. The pixel window
+    // itself covers the viewport, including suppressed scroll compensation.
+    const startIndex = Math.max(0, first.index);
+    const endIndex = Math.min(range.count - 1, last.index);
     return Array.from(
       { length: endIndex - startIndex + 1 },
       (_, offset) => startIndex + offset,
@@ -101,9 +106,11 @@ export function useSessionTimelineViewport({
     onSuppressedAdjustment: applySuppressedAdjustment,
   });
   let virtualizer = null;
+  let rangeRefreshPending = false;
   const rangeExtractor = createViewportRangeExtractor({
     getScrollElement: () => scrollElement.value,
     getVirtualizer: () => virtualizer?.value,
+    getScrollOffset: () => (scrollElement.value?.scrollTop || 0) + suppressedAdjustment,
   });
   virtualizer = useVirtualizer(computed(() => ({
     count: items.value.length,
@@ -123,6 +130,19 @@ export function useSessionTimelineViewport({
     useAnimationFrameWithResizeObserver: true,
     measureElement: measureVirtualElement,
     scrollToFn: scrollPolicy.scrollToFn,
+    onChange: instance => {
+      if (rangeRefreshPending) return;
+      rangeRefreshPending = true;
+      nextTick(() => {
+        rangeRefreshPending = false;
+        if (!scrollElement.value || virtualizer?.value !== instance) return;
+        instance.setOptions({
+          ...instance.options,
+          rangeExtractor: range => rangeExtractor(range),
+        });
+        triggerRef(virtualizer);
+      });
+    },
   })));
 
   const virtualRows = computed(() => virtualizer.value.getVirtualItems());
@@ -161,9 +181,31 @@ export function useSessionTimelineViewport({
     suppressedAdjustment = 0;
   }
 
+  const pendingRowMeasurements = new Set();
+  let rowMeasurementPending = false;
+
   function measureElement(element) {
-    if (!element) return;
-    virtualizer.value.measureElement(element);
+    if (element) pendingRowMeasurements.add(element);
+    if (rowMeasurementPending) return;
+    rowMeasurementPending = true;
+    nextTick(() => {
+      rowMeasurementPending = false;
+      const instance = virtualizer.value;
+      const rows = [...pendingRowMeasurements]
+        .filter(row => row.isConnected)
+        .map(row => {
+          const index = instance.indexFromElement(row);
+          const key = instance.options.getItemKey(index);
+          const isNew = instance.elementsCache.get(key) !== row;
+          return { row, index, height: isNew ? row.offsetHeight : null };
+        });
+      pendingRowMeasurements.clear();
+      instance.measureElement(null);
+      for (const { row, index, height } of rows) {
+        if (height !== null) instance.resizeItem(index, height);
+        instance.measureElement(row);
+      }
+    });
   }
 
   async function settleAfterUserScroll(commit = () => Promise.resolve()) {
@@ -199,6 +241,7 @@ export function useSessionTimelineViewport({
         : null;
     settlementActive = true;
     try {
+      instance.scrollToOffset(scrollOffset, { behavior: 'auto' });
       // Publish the coalesced live patch inside the same geometry transaction.
       // Real row sizes remain live throughout; only scrollTop corrections are
       // suppressed until the reader anchor can be reconciled once.
@@ -282,6 +325,7 @@ export function useSessionTimelineViewport({
   }
 
   function runWithMeasurementRetry(scroll) {
+    clearSuppressedAdjustment();
     scroll();
     const targetWindow = scrollElement.value?.ownerDocument?.defaultView;
     if (!targetWindow) return Promise.resolve();

@@ -314,6 +314,7 @@ async function loadLiveSnapshot() {
   // full-load generation so a patch cannot invalidate cold-open layout work.
   const revision = loadRevision;
   const patchRequest = await fetchSessionDetailPatch(sessionId);
+  await new Promise(resolve => setTimeout(resolve, 0));
   return { sessionId, revision, patchRequest };
 }
 
@@ -367,6 +368,7 @@ async function commitSessionSnapshot(latest) {
   await nextTick();
   timelineViewport.completeInitialSnapshot();
   if (restoreTail) await timelineViewport.scrollToEnd();
+  await new Promise(resolve => requestAnimationFrame(resolve));
   syncTimelineScrollMargin();
   if (timelineReady.value) {
     if (!pendingFocusUuid.value) onScroll();

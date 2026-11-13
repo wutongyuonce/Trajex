@@ -63,6 +63,7 @@ Full-text search across all indexed message text using FTS5.
 | `opts.source` | `string` | `"claude"`, `"codex"`, `"pi"`, or omitted/all |
 | `opts.includeMeta` | `boolean` | Include `is_meta=1` rows, default false |
 | `opts.includeInactive` | `boolean` | Include `visibility='inactive'` rows, default false |
+| `opts.fallback` | `'or'` | On zero hits only, retry safe tokens joined by OR |
 
 Returns:
 
@@ -86,6 +87,10 @@ Valid FTS5 syntax in `text` is honored. Input that FTS5 would reject as
 malformed (for example a hyphenated term like `foo-bar`) does not error: it
 falls back to safe per-token quoting — the same tokenization `memories()` uses —
 so ordinary text never crashes the query.
+
+`fallback: 'or'` is opt-in and does not alter a non-empty primary result. Use it
+for semantic-history recall, not exact scopes or sentinels where zero hits carry
+meaning. The retry retains all structural, visibility, and meta filters.
 
 #### `context(uuid)`
 

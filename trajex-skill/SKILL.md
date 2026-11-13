@@ -82,9 +82,13 @@ const topic = 'English topic terms translated from the user request';
 return {
   orientation: map.current_project,
   prior_memories: memories({ project, query: topic, limit: 5 }),
-  session_evidence: search(topic.replace(/[-_]/g, ' '), { project, limit: 8 }),
+  session_evidence: search(topic.replace(/[-_]/g, ' '), { project, limit: 8, fallback: 'or' }),
 };
 ```
+
+`fallback: 'or'` is for semantic-history recall: it retries safe token OR only
+when the primary FTS query is empty. Do not use it for exact scopes or sentinels,
+where an empty result is meaningful.
 
 Use `sql()` only as an escalation path for exact joins, aggregations, or schema
 questions that helpers cannot express cleanly. Do not use raw SQL as a generic
@@ -162,7 +166,11 @@ Use `message.is_meta` to separate transcript control-plane material from convers
 branches. `hidden` rows remain source evidence but are excluded from normal
 conversation display.
 
-Opts: `{ limit, sessionId, project, after, before, cwd, source, includeMeta, includeInactive }`.
+Opts: `{ limit, sessionId, project, after, before, cwd, source, includeMeta, includeInactive, fallback }`.
+
+Set `fallback: 'or'` only for semantic-history queries that may omit prior
+wording. The raw/safe primary query runs first; a non-empty result is returned
+unchanged. Exact-scope and sentinel queries should leave it unset.
 
 `project` is a SQL `LIKE` filter over `sessions.project`, not an exact project identity.
 Results are already ordered by FTS5 rank; lower rank sorts earlier.

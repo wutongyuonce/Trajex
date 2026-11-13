@@ -36,6 +36,7 @@ interface QueryOptions extends Record<string, any> {
   source?: string;         // Provider 来源过滤；'all' 表示不过滤
   includeMeta?: boolean;   // 是否包含 meta（System 卡片）消息；默认剔除
   includeInactive?: boolean; // 是否包含已被替代但保留的消息；默认剔除
+  fallback?: 'or';         // 零命中时是否退回安全 token OR 检索
   query?: string;          // FTS 检索词（memories() 用）
   projectLimit?: number;   // overview 专用：项目列表条数
   memoryLimit?: number;    // overview 专用：记忆列表条数
@@ -223,12 +224,12 @@ function assertEnglishMemoryText(value: unknown, label: string): void {
 }
 
 /** 把用户文本拆成最多 12 个 token 并逐个加引号，规避 FTS5 把连字符/标点误解析为运算符。 */
-function buildSafeFtsQuery(text: unknown): string {
+function buildSafeFtsQuery(text: unknown, separator = ' '): string {
   const tokens = String(text || '').match(/[\p{Letter}\p{Number}]+/gu) || [];
   return tokens
     .slice(0, 12)
     .map(token => `"${token}"`)
-    .join(' ');
+    .join(separator);
 }
 
 /** 仅 FTS 语法/运算符错误可降级到安全分词；缺表、磁盘、授权失败必须抛出。 */
@@ -270,7 +271,7 @@ function createQueryApi(
 
   /** 以 FTS5 检索消息，并附带命中点附近的会话上下文。 */
   const search = (text: string, opts: QueryOptions = {}) => {
-    const { sessionId, project, after, before, cwd, source, includeMeta = false, includeInactive = false } = opts;
+    const { sessionId, project, after, before, cwd, source, includeMeta = false, includeInactive = false, fallback } = opts;
     const limit = normalizeLimit(opts.limit, 20);
     let where = 'WHERE mf.text MATCH ?';
     const filterParams: any[] = [];
@@ -299,6 +300,10 @@ function createQueryApi(
       if (!isFtsSyntaxError(error)) throw error;
       const safe = buildSafeFtsQuery(text);
       rows = safe ? runMatch(safe) : [];
+    }
+    if (rows.length === 0 && fallback === 'or') {
+      const broad = buildSafeFtsQuery(text, ' OR ');
+      rows = broad ? runMatch(broad) : [];
     }
     const metaClause = includeMeta ? '' : 'AND COALESCE(is_meta,0)=0';
     const visibilityClause = includeInactive ? "AND COALESCE(visibility,'visible') != 'hidden'" : "AND COALESCE(visibility,'visible') = 'visible'";

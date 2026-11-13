@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `search()` 新增可选 `fallback: 'or'` 选项：仅当主 FTS 查询零命中时使用安全 token OR 重试，并完整保留结构、可见性与 meta 过滤条件。
+
 ### Fixed
 
 - 桌面索引器现在直接转发 Provider 显式声明的 `file` 级监听目标与压缩 transcript（`.jsonl.zstd` / `.jsonl.zst`），异步转发目录及重命名缺失路径以支持删除对账，且不将已固定轮询的精确文件重复提升进 hot overlay。

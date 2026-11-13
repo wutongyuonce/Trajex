@@ -49,6 +49,57 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** node:sqlite 给出数字（可能为扩展）结果码，其他绑定用 SQLITE_READONLY*；不按 Provider 文案归类。 */
+function isReadOnlyFailure(error: unknown): boolean {
+  const detail = error as { code?: unknown; errcode?: unknown } | null;
+  return (typeof detail?.errcode === 'number' && (detail.errcode & 0xff) === 8)
+    || (typeof detail?.code === 'string' && /^SQLITE_READONLY(?:_|$)/.test(detail.code));
+}
+
+/**
+ * 把索引访问边界上的只读/无法打开/权限拒绝错误包装成指明索引路径的错误，并保留原始错误。
+ * 其他错误原样返回；不切换到旧结果、不自动改权限、不选择备用索引。
+ */
+function indexAccessFailure(error: unknown): unknown {
+  const detail = error as { code?: unknown; errcode?: unknown; trajex?: unknown } | null;
+  const readOnly = isReadOnlyFailure(error);
+  const cantOpen = (typeof detail?.errcode === 'number' && (detail.errcode & 0xff) === 14)
+    || (typeof detail?.code === 'string' && /^SQLITE_CANTOPEN(?:_|$)/.test(detail.code));
+  const denied = typeof detail?.code === 'string' && ['EACCES', 'EPERM', 'EROFS'].includes(detail.code);
+  if (!readOnly && !cantOpen && !denied) return error;
+  const failure = Object.assign(new Error(
+    `Cannot ${readOnly ? 'refresh' : 'access'} the Trajex index at ${DB_PATH}: ${errorMessage(error)}. `
+    + (readOnly ? 'The index database, its directory and writer-lease file must be writable; ' : '')
+    + 'if this command is sandboxed, retry the same command with host-approved permissions.',
+    { cause: error },
+  ), { code: detail?.code, errcode: detail?.errcode, trajex: detail?.trajex });
+  if (error instanceof Error) failure.stack += `\nCaused by: ${error.stack}`;
+  return failure;
+}
+
+/** 执行一次不改变任何行的写事务：只读文件也能以读写模式打开，必须实际写一次才能确认。 */
+function probeIndexWritability(db: NodeSqliteDb): void {
+  runRetryableWriteTransaction(nodeSqliteTransactionAdapter(db), () => {
+    db.prepare('UPDATE index_state SET mtime=mtime WHERE 0').run();
+  }, { label: 'index-writability' });
+}
+
+/**
+ * 单元级只读错误不一定来自索引（Provider 可能只读打开来源库）。安全回滚后探测共享 writer，
+ * 确认是索引不可写才整体中止；事务状态不确定时不再开启新事务。
+ */
+function rethrowIfIndexWriterReadOnly(db: NodeSqliteDb, error: unknown): void {
+  if (!isReadOnlyFailure(error)) return;
+  if (hasUnusableTransaction(error)) throw error;
+  try {
+    probeIndexWritability(db);
+  } catch (probeError) {
+    if (isReadOnlyFailure(probeError)) throw indexAccessFailure(error);
+    // 探测以其他方式失败时归因未知：保留原始错误并中止，而不是掩盖它继续执行。
+    throw error;
+  }
+}
+
 
 /**
  * 补齐 workflow → Workflow tool_use 的延迟关联。
@@ -108,7 +159,15 @@ function isMissingIndexStateTable(error: unknown): boolean {
 }
 
 /** 只读预检查写入所有权；新库缺 index_state 时允许写路径初始化。 */
-function inspectBuildOwnership({ force = false }: { force?: boolean } = {}) {
+function inspectBuildOwnership(options: { force?: boolean } = {}) {
+  try {
+    return readBuildOwnership(options);
+  } catch (error) {
+    throw indexAccessFailure(error);
+  }
+}
+
+function readBuildOwnership({ force = false }: { force?: boolean } = {}) {
   if (!existsSync(DB_PATH)) return { skip: false };
   const db = openReadDb();
   try {
@@ -175,22 +234,39 @@ function ensureReadableSchema(): { ready: boolean; reason?: string } {
 function buildIndex({ force = false }: { force?: boolean } = {}) {
   const ownership = inspectBuildOwnership({ force });
   if (ownership.skip) return ownership; // skip 为 false 有资格写，为 true 直接返回
-  const lease = acquireWriterLease({
-    lockPath: writerLockPathFor(DB_PATH),
-    openDb: openWriterLeaseDb,
-  });
+  let lease;
+  try {
+    lease = acquireWriterLease({
+      lockPath: writerLockPathFor(DB_PATH),
+      openDb: openWriterLeaseDb,
+    });
+  } catch (error) {
+    throw indexAccessFailure(error);
+  }
   if (!lease) return { skip: true, reason: 'writer_busy' };
   try {
     // 首次检查与取得硬锁之间 daemon 可能启动，因此持锁后再次检查。
     const ownershipAfterLease = inspectBuildOwnership({ force });
     if (ownershipAfterLease.skip) return ownershipAfterLease;
 
-    const db = openDb();
+    let db: NodeSqliteDb;
+    try {
+      db = openDb();
+    } catch (error) {
+      throw indexAccessFailure(error);
+    }
     const txDb = nodeSqliteTransactionAdapter(db);
     const skippedFiles: SkippedFile[] = [];
-    const providerPlan = createProviderIndexPlan(db, createBuiltinProviderRegistry(), { force });
-    assertRebuildRootsAvailable(providerPlan);
     try {
+      try {
+        // 只读 SQLite 文件也能以读写模式打开：在发现/解析来源前先实际写一次，避免逐个 transcript 重试。
+        probeIndexWritability(db);
+      } catch (error) {
+        if (isBeginBusyFailure(error)) return { skip: true, reason: 'database_busy', skipped: 0, skippedFiles };
+        throw indexAccessFailure(error);
+      }
+      const providerPlan = createProviderIndexPlan(db, createBuiltinProviderRegistry(), { force });
+      assertRebuildRootsAvailable(providerPlan);
       try {
         if (providerPlan.fullRebuild) {
           runRetryableWriteTransaction(txDb, () => {
@@ -209,7 +285,7 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
         if (isBeginBusyFailure(error)) {
           return { skip: true, reason: 'database_busy', skipped: skippedFiles.length, skippedFiles };
         }
-        throw error;
+        throw indexAccessFailure(error);
       }
 
       const providerResult = indexProviderPlan({
@@ -223,6 +299,8 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
           ]));
         },
         onError: (error, { provider, unit }) => {
+          // 确认是共享 writer 还是单个来源失败；初始探测之后的权限变化也必须中止本批。
+          rethrowIfIndexWriterReadOnly(db, error);
           if (isBeginBusyFailure(error)) return 'stop';
           if (hasUnusableTransaction(error)) throw error;
           const detail = error as { message?: unknown; trajex?: unknown } | null;
@@ -253,7 +331,7 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
         if (isBeginBusyFailure(error)) {
           return { skip: true, reason: 'database_busy', skipped: skippedFiles.length, skippedFiles };
         }
-        throw error;
+        throw indexAccessFailure(error);
       }
       return { skip: false, skipped: skippedFiles.length, skippedFiles };
     } finally {

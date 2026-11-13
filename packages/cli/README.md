@@ -10,3 +10,14 @@ trajex --query /tmp/query.mjs
 
 The CLI remains daemon-free: each command refreshes the local index when write
 ownership is available, then exits.
+
+### Index access errors
+
+`--search` and `--query` read from SQLite, but their pre-query refresh needs
+write access to `~/.trajex/trajex.sqlite`, its directory (including SQLite
+`-wal`/`-shm` sidecars), and the writer-lease file. The CLI probes the index with
+a no-op write before source discovery; on SQLite read-only/cannot-open or
+filesystem `EACCES`/`EPERM`/`EROFS` failures it stops once, names the index
+path, and keeps the original error. It does not fall back to stale results or
+change permissions. If a host sandbox is responsible, retry the same command
+with host-approved permissions.

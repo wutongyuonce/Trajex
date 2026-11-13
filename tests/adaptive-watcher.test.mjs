@@ -4,8 +4,19 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import { makeTempDir } from './temp-dirs.mjs';
 
 import { createAdaptiveWatcher } from '../packages/adaptive-watcher/src/index.ts';
+
+async function waitFor(cond, ms = 2000) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (cond()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return cond();
+}
 
 function manualTimers() {
   const pending = new Set();
@@ -57,4 +68,40 @@ test('adaptive watcher polls exact files and keeps only the newest hot file', as
     { type: 'paths', paths: ['hot.jsonl'] },
   ]);
   await watcher.close();
+});
+
+test('close() guards event delivery synchronously, before its promise settles', async () => {
+  const root = makeTempDir('trajex-adw-sync-guard-');
+  const invalidations = [];
+  let capturedCallback = null;
+  let resolveUnsubscribe = null;
+  const subscribe = (_root, callback) => {
+    capturedCallback = callback;
+    return Promise.resolve({
+      unsubscribe() {
+        return new Promise((resolve) => { resolveUnsubscribe = resolve; });
+      },
+    });
+  };
+  const watcher = createAdaptiveWatcher({
+    targets: [{ kind: 'tree', path: root }],
+    hotPolling: false,
+    onInvalidate: (inv) => invalidations.push(inv),
+    subscribe,
+    logger: { warn: () => {} },
+  });
+
+  assert.ok(await waitFor(() => capturedCallback !== null), 'the tree root is subscribed');
+  const closePromise = watcher.close();
+  let settled = false;
+  void closePromise.then(() => { settled = true; });
+
+  capturedCallback(null, [{ type: 'update', path: join(root, 'x.jsonl') }]);
+  assert.deepEqual(invalidations, [], 'an event delivered synchronously after close() is a no-op');
+  await Promise.resolve();
+  assert.equal(settled, false, 'close() is still pending — the guard did not depend on completion');
+
+  resolveUnsubscribe();
+  await closePromise;
+  assert.equal(settled, true);
 });

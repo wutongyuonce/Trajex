@@ -12,6 +12,7 @@ import { writeHeartbeat } from './indexer.ts';
 import { createIndexerService } from './indexer-service.ts';
 import { createWorkerBuildIndex } from './indexer-worker-client.ts';
 import { previewLocalMarkdownLink, resolveExistingLocalMarkdownFile } from './local-markdown-link.mjs';
+import { createDeferredQuit } from './quit-teardown.ts';
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
 import {
   coreSchemaNeedsMigration,
@@ -370,17 +371,15 @@ app.whenReady().then(() => {
   });
 });
 
-let isQuitting = false;
-
-app.on('before-quit', (event) => {
-  if (isQuitting) return;
-  event.preventDefault();
-  isQuitting = true;
-  void stopBackgroundResources({ stopWorker: true }).then(
-    () => app.quit(),
-    () => app.quit(),
-  );
-});
+// Quit must not tear the JS environment down while a watcher is still live: a
+// @parcel/watcher callback firing during CleanupHandles throws with no JS
+// frame to catch it, and napi_throw fatals the process (#187). The stop is
+// not cached: a macOS pause (window-all-closed) can be followed by activate →
+// restart, and a later quit must stop the restarted singletons.
+app.on('before-quit', createDeferredQuit({
+  quit: () => app.quit(),
+  stop: () => stopBackgroundResources({ stopWorker: true }),
+}));
 
 app.on('window-all-closed', () => {
   void stopBackgroundResources({ stopWorker: true }).catch(() => {});

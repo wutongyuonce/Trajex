@@ -1,6 +1,8 @@
 # Trajex CLI
 
-The local Trajex runtime used by coding agents. It indexes Claude Code, Codex, and official Pi v3 transcripts into `~/.trajex/trajex.sqlite` and exposes the stable `build`, `search`, `query`, and `attune` process interface.
+The local Trajex runtime used by coding agents. It indexes Claude Code, Codex, official Pi v3, and DeepSeek Harness transcripts into `~/.trajex/trajex.sqlite` and exposes the stable `build`, `search`, `query`, and `attune` process interface.
+
+DeepSeek Harness sessions are read from `$DSH_HOME/sessions` (default `~/.dsh/sessions`). Its default compressed logs (`*.jsonl.zstd`) need Node.js 22.15 or newer; on older runtimes they are skipped with a warning and uncompressed logs are still indexed.
 
 ```bash
 npm install --global @trajex-apps/cli

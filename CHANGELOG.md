@@ -4,6 +4,8 @@
 
 ### Added
 
+- 新增 DeepSeek Harness Provider：读取 `$DSH_HOME/sessions`（默认 `~/.dsh/sessions`，可在 Settings 中指定），每个会话目录只索引支持的最高 generation（v0–v4），用 Node 内建 zstd 逐帧解码默认压缩日志（Node.js 22.15+）。根会话与其子代理/fork 会话合并为一个 session 并生成 `subagents` 记录，被 compaction 替换的历史与 fork 继承前缀保留为 `inactive` 证据，摘要写入 `summaries`；Core 不引入新的运行时依赖。
+
 - `search()` 新增 `projectPath`（精确匹配项目路径）、`contextLimit`（0–6）与 `snippetTokens`（1–64，只返回 FTS 命中片段并附 `textLength` / `isSnippet`）；`trajex --search` 支持对应的 `--limit`、`--project-path`、`--session-id`、`--snippet-tokens`、`--context-limit`、`--after`、`--before`、`--source` 与 `--` 字面分隔符，首个参数始终作为检索文本以兼容旧调用。
 - 查询 API 新增有界 `messages()`：支持单条精确读取、锚点邻域（时间线或父链）与会话区间 cursor 分页，窗口上限 500 条，父链遍历遇循环或超过 10,000 条记录时显式报错；不需要 schema 变更或重建索引。
 - `sessions()` 的 `sessionId` / `sessions` 现在可用原生 Provider ID 片段定位会话（如 `pi:<uuid>:<scope>` 中的 uuid）：精确 ID 优先，片段按字面匹配、在过滤范围内取最新 10 条；其他 helper 仍要求精确 canonical ID。

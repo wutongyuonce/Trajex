@@ -1,7 +1,7 @@
 # Trajex
 
 Trajex is explicit memory infrastructure for coding agents: it indexes local
-Claude Code, Codex and Pi sessions into a queryable SQLite evidence layer, and a
+Claude Code, Codex, Pi and DeepSeek Harness sessions into a queryable SQLite evidence layer, and a
 CodeAct runtime lets an agent write a small query, run it, and answer from real
 session history. This glossary pins the terms that are specific to Trajex; it is
 not a spec.
@@ -29,7 +29,7 @@ promoted to an external tool surface.
 ## Indexing
 
 **Provider adapter**:
-A pure per-source module (claude, codex, pi, …) that owns its
+A pure per-source module (claude, codex, pi, deepseek, …) that owns its
 descriptor, watch roots, discovery, parsing, cursor interpretation, and raw
 record lookup. It discovers `IndexUnit`s rather than assuming one transcript
 file per unit. It
@@ -48,6 +48,15 @@ projects the source-declared active context into `visibility`: current context
 is visible, superseded branch evidence is inactive, and source-suppressed
 transport context is hidden.
 _Avoid_: Pi project, Pi directory
+
+**DeepSeek Harness session tree**:
+One root DeepSeek Harness session plus every child (subagent or fork) session
+attached to it through `parentSession` in the same project scope, read from the
+configured sessions directory (default `$DSH_HOME/sessions`, else
+`~/.dsh/sessions`). Each session directory contributes only its highest
+supported generation (v0–v4). The tree is one Trajex session and one
+`IndexUnit`; children are sidechain members with `agent_id`.
+_Avoid_: DSH project, DSH generation file
 
 **Visibility**:
 The canonical evidence state of a message or summary: `visible` belongs to the

@@ -32,7 +32,7 @@ scope locator finds the relevant project/session/file, do not also run broad FTS
 unless scoped evidence is insufficient and `query_plan` says why.
 
 Session references resolve through `sessions()`: a raw provider uuid (Pi ids are
-`pi:<uuid>:<scope>`, Codex ids `codex:<uuid>`) resolves to the containing
+`pi:<uuid>:<scope>`, DeepSeek Harness ids `deepseek:<id>:<scope>`, Codex ids `codex:<uuid>`) resolves to the containing
 sessions, capped at the 10 newest matches within the requested filters. All other
 helpers match `sessionId` exactly; feed them the canonical `id` from the
 `sessions()` row, never the raw uuid.
@@ -43,7 +43,7 @@ Project-like fields are distinct:
 - `memories.project`: stored project slug copied onto registered memory records.
 - `sessions.project_path`: absolute session path derived from message `cwd` when available; slug decoding is only a fallback.
 - `messages.cwd`: working directory at message time.
-`sessions.source` / `messages.source`: transcript provider (`claude`, `codex`, or `pi`).
+`sessions.source` / `messages.source`: transcript provider (`claude`, `codex`, `pi`, or `deepseek`).
 - helper `project`: SQL `LIKE` over `sessions.project`, not exact membership.
 - helper `source`: optional provider filter. Omit it unless provenance matters.
 

@@ -22,7 +22,10 @@ destructive cleanup.
 ### The Provider source root is the reliability boundary
 
 The inventory roots are Claude's configured `projects/` directory, Codex's
-configured `sessions/` directory, and Pi's configured final session directory.
+configured `sessions/` directory, Pi's configured final session directory, and
+DeepSeek Harness's configured sessions directory. A DeepSeek Harness session
+directory that still holds a canonical artifact but no readable supported
+generation keeps its last snapshot instead of being tombstoned (ADR-0013).
 
 - `discover()` remains responsible for source inventory and reconciliation.
   The shared context exposes `indexedSessions()` so a provider can compare

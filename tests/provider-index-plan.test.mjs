@@ -105,6 +105,7 @@ test('skipped units do not block version markers; stop and inventory issues do',
       ['codex', '__codex_v1__'],
       ['pi', '__pi_v1__'],
     ]),
+    replayKeys: new Map(),
     fullRebuild: false,
     inventoryIssues: [{ provider: 'pi', path: '/pi', error: 'missing' }],
   };
@@ -112,6 +113,7 @@ test('skipped units do not block version markers; stop and inventory issues do',
   writeProviderIndexMarkers(db, plan, {
     committed: [],
     failedProviders: new Set(['claude']),
+    failedItems: [],
   });
   const present = new Set(
     db.prepare('SELECT jsonl_path FROM index_state').all().map(row => row.jsonl_path),
@@ -124,6 +126,7 @@ test('skipped units do not block version markers; stop and inventory issues do',
   writeProviderIndexMarkers(db, plan, {
     committed: [],
     failedProviders: new Set(),
+    failedItems: [],
     stopped: { item: { provider: { name: 'claude' }, unit: { key: '/x' }, cursor: null }, error: new Error('busy') },
   });
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM index_state').get().c, 0);

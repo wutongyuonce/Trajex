@@ -31,6 +31,7 @@ export interface ProviderIndexItem {
 export interface ProviderIndexPlan {
   readonly items: ProviderIndexItem[];
   readonly pendingMarkers: ReadonlyMap<string, string>;
+  readonly replayKeys: ReadonlyMap<string, readonly string[]>;
   /** 仅 force 为 true。缺 version marker 只让该 Provider 的 unit 用空 cursor 重放。 */
   readonly fullRebuild: boolean;
   readonly inventoryIssues: readonly ProviderInventoryRootIssue[];
@@ -80,6 +81,7 @@ export function readRecentTranscriptHints(db: SqliteDb, limit = 64): string[] {
 export interface ProviderIndexResult {
   readonly committed: ProviderIndexItem[];
   readonly failedProviders: ReadonlySet<string>;
+  readonly failedItems: ProviderIndexItem[];
   readonly stopped?: { item: ProviderIndexItem; error: unknown };
 }
 
@@ -122,6 +124,7 @@ export function createProviderIndexPlan(
 ): ProviderIndexPlan {
   const items: ProviderIndexItem[] = [];
   const pendingMarkers = new Map<string, string>();
+  const replayKeys = new Map<string, readonly string[]>();
   const inventoryIssues: ProviderInventoryRootIssue[] = [];
   const providers = registry.list();
   const provenance = priorSessions ?? readProviderSessionProvenance(db);
@@ -140,10 +143,13 @@ export function createProviderIndexPlan(
       .filter(session => session.source === provider.name)
       .map(({ sessionId, jsonlPath }) => ({ sessionId, jsonlPath }));
     const indexedSessions = (): readonly IndexedSession[] => providerSessions;
-    const fullReindex = force || (
-      markerMissing.get(provider.name) === true
-      && providerSessions.length > 0
-    );
+    const missingMarker = markerMissing.get(provider.name) === true && providerSessions.length > 0;
+    const fullReindex = force || missingMarker;
+    if (missingMarker) {
+      replayKeys.set(provider.name, [
+        ...new Set(providerSessions.map(session => session.jsonlPath)),
+      ]);
+    }
     const units = provider.discover({
       lastCursor: fullReindex ? () => null : (key) => storedProviderCursor(db, key),
       changedPaths: fullReindex ? undefined : changedPaths,
@@ -162,7 +168,7 @@ export function createProviderIndexPlan(
       });
     }
   }
-  return { items, pendingMarkers, fullRebuild, inventoryIssues };
+  return { items, pendingMarkers, replayKeys, fullRebuild, inventoryIssues };
 }
 
 /** 任何全量清理都必须在写入前通过现有 Provider 来源根预检。 */
@@ -194,23 +200,57 @@ export function indexProviderPlan({
 }): ProviderIndexResult {
   const committed: ProviderIndexItem[] = [];
   const failedProviders = new Set<string>();
+  const failedItems: ProviderIndexItem[] = [];
+  const blocked = new Set(plan.inventoryIssues.map(issue => issue.provider));
+  let replayScheduleCommitted = plan.pendingMarkers.size === 0 && (plan.replayKeys?.size ?? 0) === 0;
   for (const item of plan.items) {
     try {
       const cursor = runTransaction(`provider:${item.provider.name}:${item.unit.key}`, () => {
+        // Commit the replay schedule with its first completed unit. After an
+        // interruption, newly written cursors identify exactly what can resume.
+        if (!replayScheduleCommitted) {
+          const clear = db.prepare('DELETE FROM index_state WHERE jsonl_path = ?');
+          const keysToReplay = new Set(
+            plan.items
+              .filter(({ provider }) => plan.pendingMarkers.has(provider.name) && !blocked.has(provider.name))
+              .map(({ unit }) => unit.key),
+          );
+          for (const [provider, keys] of plan.replayKeys ?? []) {
+            if (blocked.has(provider)) continue;
+            for (const key of keys) keysToReplay.add(key);
+          }
+          for (const key of keysToReplay) clear.run(key);
+          writePendingMarkers(db, plan);
+        }
         const nextCursor = persist(db, item.unit, item.provider.parse(item.unit, item.cursor));
         onPersisted(item, nextCursor);
         return nextCursor;
       });
+      replayScheduleCommitted = true;
       committed.push(item);
       onCommitted(item, cursor);
     } catch (error) {
       failedProviders.add(item.provider.name);
+      failedItems.push(item);
       if (onError(error, item) === 'stop') {
-        return { committed, failedProviders, stopped: { item, error } };
+        return { committed, failedProviders, failedItems, stopped: { item, error } };
       }
     }
   }
-  return { committed, failedProviders };
+  return { committed, failedProviders, failedItems };
+}
+
+/** Write every pending version marker, so the first-unit transaction and finalize share one marker row shape. */
+function writePendingMarkers(db: SqliteDb, plan: ProviderIndexPlan): void {
+  const blocked = new Set(plan.inventoryIssues.map(issue => issue.provider));
+  const write = db.prepare(
+    'INSERT OR REPLACE INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)',
+  );
+  const now = Date.now();
+  for (const [provider, marker] of plan.pendingMarkers) {
+    if (blocked.has(provider)) continue;
+    write.run(marker, now);
+  }
 }
 
 /**
@@ -225,11 +265,20 @@ export function writeProviderIndexMarkers(
 ): void {
   if (result.stopped !== undefined) return;
   const blocked = new Set(plan.inventoryIssues.map(issue => issue.provider));
-  const write = db.prepare(
-    'INSERT OR REPLACE INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)',
-  );
-  for (const [provider, marker] of plan.pendingMarkers) {
+  const retry = db.prepare('DELETE FROM index_state WHERE jsonl_path = ?');
+  const committed = new Set(result.committed.map(
+    (item) => `${item.provider.name}\0${item.unit.key}`,
+  ));
+  for (const [provider, keys] of plan.replayKeys ?? []) {
     if (blocked.has(provider)) continue;
-    write.run(marker, Date.now());
+    for (const key of keys) {
+      if (!committed.has(`${provider}\0${key}`)) retry.run(key);
+    }
   }
+  for (const item of result.failedItems ?? []) {
+    if (plan.pendingMarkers.has(item.provider.name) && !blocked.has(item.provider.name)) {
+      retry.run(item.unit.key);
+    }
+  }
+  writePendingMarkers(db, plan);
 }

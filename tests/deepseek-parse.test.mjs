@@ -379,7 +379,7 @@ test('DSH_HOME resolution follows the harness and the registry exposes the sourc
   assert.equal(deepseekSessionsRoot({ DSH_HOME: '~' }), join(homedir(), 'sessions'));
   assert.equal(deepseekSessionsRoot({ DSH_HOME: '~/dsh' }), join(homedir(), 'dsh', 'sessions'));
   assert.equal(deepseekSessionsRoot({ DSH_HOME: '~other' }), join(resolve('~other'), 'sessions'));
-  assert.equal(deepseekSessionsRoot({ DSH_HOME: '/opt/dsh' }), join('/opt/dsh', 'sessions'));
+  assert.equal(deepseekSessionsRoot({ DSH_HOME: '/opt/dsh' }), join(resolve('/opt/dsh'), 'sessions'));
   const provider = createDeepseekProvider({ rootDir: '/configured/sessions' });
   assert.deepEqual(provider.watchTargets(), [{ kind: 'tree', path: '/configured/sessions' }]);
   assert.equal(provider.descriptor.name, 'DeepSeek Harness');

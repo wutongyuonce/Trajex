@@ -17,6 +17,10 @@ import type { SqliteDb } from './sqlite-types.ts';
 const COLUMN_MIGRATIONS = [
   ['sessions', 'source', "TEXT DEFAULT 'claude'"],
   ['sessions', 'source_status', "TEXT DEFAULT 'present'"],
+  ['sessions', 'device_id', 'TEXT'],
+  ['sessions', 'device_name', 'TEXT'],
+  ['sources', 'device_id', 'TEXT'],
+  ['sources', 'device_name', 'TEXT'],
   ['messages', 'content_type', 'TEXT'],
   ['messages', 'is_meta', 'INTEGER DEFAULT 0'],
   ['messages', 'visibility', "TEXT DEFAULT 'visible'"],

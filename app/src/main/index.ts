@@ -17,6 +17,7 @@ import { preserveRejectedSettings, readSettingsFile, type SettingsReadResult } f
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
 import { coreSchemaNeedsMigration, installCoreSchema } from '../../../packages/core/src/schema-migrations.ts';
 import { normalizeKeep, snapshotDirFor } from '../../../packages/core/src/snapshots.ts';
+import { ensureDeviceIdentity } from '../../../packages/core/src/sync.ts';
 import { createBuiltinProviderRegistry } from '../../../packages/core/src/providers/builtins.ts';
 import {
   buildSourceCatalog,
@@ -455,6 +456,8 @@ const SESSION_METADATA_COLUMNS = [
   'jsonl_path',
   'source',
   'source_status',
+  'device_id',
+  'device_name',
 ].join(', ');
 
 function querySessionMetadata(sessionId: string): SessionMetadata | null {
@@ -781,6 +784,7 @@ ipcMain.handle('settings:get', () => {
                COUNT(*) AS session_count,
                MAX(started_at) AS last_indexed
         FROM sessions
+        WHERE device_id IS NULL
         GROUP BY COALESCE(source, 'claude')
       `).all();
       for (const row of rows) {
@@ -802,6 +806,10 @@ ipcMain.handle('settings:get', () => {
   const lastIndexed = sources.map((source) => source.lastIndexed).filter(Boolean).sort().at(-1) || '';
   const connected = sources.some((source) => source.status !== 'error');
 
+  const identity = ensureDeviceIdentity(persisted);
+  if (identity.changed && readSettingsFile(SETTINGS_PATH).ok) {
+    savePersistedSettings(persisted);
+  }
   return {
     version: app.getVersion(),
     providerRoots,
@@ -811,6 +819,9 @@ ipcMain.handle('settings:get', () => {
     autoRefresh: persisted.autoRefresh !== false,
     autoSnapshot: persisted.autoSnapshot !== false,
     snapshotKeep: normalizeKeep(persisted.snapshotKeep),
+    syncDir: typeof persisted.syncDir === 'string' ? persisted.syncDir : '',
+    deviceId: identity.deviceId,
+    deviceName: identity.deviceName,
     sources,
     memoryCount,
     sessionCount,
@@ -952,14 +963,59 @@ function missingBeforeFrom(olderThanDays: unknown): number | undefined {
   return Number.isFinite(days) && days > 0 ? Date.now() - days * DAY_MS : undefined;
 }
 
-/** 设置页「历史保留」概览：缺失来源数、部分/全部缺失的会话数与快照列表。 */
+/** 设置页「历史保留」概览：缺失来源数、部分/全部缺失的会话数、快照列表与同步设备。 */
 ipcMain.handle('retention:summary', async (_, olderThanDays?: number) => {
   if (!indexerWorker) indexerWorker = createWorkerBuildIndex();
-  const paths = getRuntimePaths();
-  if (!fs.existsSync(paths.dbPath)) return { ok: true, missingSources: 0, partialSessions: 0, missingSessions: 0, snapshots: [] };
+  const persisted = loadPersistedSettings();
+  const identity = ensureDeviceIdentity(persisted);
+  const paths = getRuntimePaths(persisted);
+  const syncDir = typeof persisted.syncDir === 'string' && persisted.syncDir.trim() ? persisted.syncDir.trim() : null;
+  if (!fs.existsSync(paths.dbPath)) {
+    return { ok: true, missingSources: 0, partialSessions: 0, missingSessions: 0, snapshots: [], peers: [] };
+  }
   return indexerWorker.call('retention-summary', {
-    dbPath: paths.dbPath, ...snapshotOptions(), missingBefore: missingBeforeFrom(olderThanDays), writerLeaseWaitMs: 2000,
+    dbPath: paths.dbPath,
+    ...snapshotOptions(persisted, paths.dbPath),
+    missingBefore: missingBeforeFrom(olderThanDays),
+    syncDir,
+    deviceId: identity.deviceId,
+    writerLeaseWaitMs: 2000,
   });
+});
+
+ipcMain.handle('sync:now', async () => {
+  if (!indexerWorker) indexerWorker = createWorkerBuildIndex();
+  const persisted = loadPersistedSettings();
+  const identity = ensureDeviceIdentity(persisted);
+  if (identity.changed && readSettingsFile(SETTINGS_PATH).ok) savePersistedSettings(persisted);
+  const syncDir = typeof persisted.syncDir === 'string' ? persisted.syncDir.trim() : '';
+  if (!syncDir) throw new Error('Select a sync folder first');
+  const paths = getRuntimePaths(persisted);
+  const result = unwrapMaintenance(await indexerWorker.call('sync-folder', {
+    dbPath: paths.dbPath,
+    ...snapshotOptions(persisted, paths.dbPath),
+    syncDir,
+    deviceId: identity.deviceId,
+    deviceName: identity.deviceName,
+    writerLeaseWaitMs: 5000,
+  }), 'sync');
+  if (!db) openDb(paths.dbPath);
+  notifyIndexUpdated();
+  return result;
+});
+
+ipcMain.handle('sync:removePeer', async (_, peerDeviceId: string) => {
+  if (!indexerWorker) indexerWorker = createWorkerBuildIndex();
+  if (typeof peerDeviceId !== 'string' || !peerDeviceId.trim()) throw new Error('Invalid peer device ID');
+  const paths = getRuntimePaths();
+  const result = unwrapMaintenance(await indexerWorker.call('remove-sync-peer', {
+    dbPath: paths.dbPath,
+    ...snapshotOptions(),
+    peerDeviceId: peerDeviceId.trim(),
+    writerLeaseWaitMs: 5000,
+  }), 'remove peer');
+  notifyIndexUpdated();
+  return result;
 });
 
 ipcMain.handle('retention:snapshot', async () => {

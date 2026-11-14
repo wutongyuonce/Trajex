@@ -21,10 +21,10 @@ export const OWNED_TABLES = [
 ] as const;
 
 
-/** Provider 发现阶段可见的来源清单（只含已知路径；不暴露 transcript 内容）。 */
+/** Provider 发现阶段可见的本机来源清单（不含同步导入的其他设备来源，也不暴露 transcript 内容）。 */
 export function readKnownSources(db: SqliteDb, provider: string): KnownSource[] {
   return db.prepare(
-    'SELECT path, session_id, member, status FROM sources WHERE provider = ? AND path IS NOT NULL',
+    'SELECT path, session_id, member, status FROM sources WHERE provider = ? AND path IS NOT NULL AND device_id IS NULL',
   ).all(provider).map((row) => ({
     path: String(row.path),
     sessionId: String(row.session_id),
@@ -38,12 +38,15 @@ function deleteSourceRows(db: SqliteDb, sourceId: number): void {
   for (const table of OWNED_TABLES) db.prepare(`DELETE FROM ${table} WHERE source_id = ?`).run(sourceId);
 }
 
-/** 删除来源及其行；会话因此不再有任何来源时一并删除会话行。 */
-function removeSource(db: SqliteDb, sourceId: number, sessionId: string): void {
+/** 删除来源及其行；主来源被删但仍有子来源时把会话清为占位行；没有任何来源时一并删除会话行。 */
+export function removeSource(db: SqliteDb, sourceId: number, sessionId: string, member?: string): void {
+  const actualMember = member ?? String(db.prepare('SELECT member FROM sources WHERE id = ?').get(sourceId)?.member ?? '');
   deleteSourceRows(db, sourceId);
   db.prepare('DELETE FROM sources WHERE id = ?').run(sourceId);
   if (!db.prepare('SELECT 1 FROM sources WHERE session_id = ? LIMIT 1').get(sessionId)) {
     db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  } else if (actualMember === SESSION_MEMBER) {
+    db.prepare('UPDATE sessions SET jsonl_path = NULL, message_count = 0 WHERE id = ?').run(sessionId);
   }
 }
 
@@ -66,16 +69,24 @@ export function declareSource(
 ): DeclaredSource {
   const supersededSessionIds: string[] = [];
   const holders = db.prepare(
-    'SELECT id, session_id FROM sources WHERE path = ? AND NOT (session_id = ? AND member = ?)',
+    'SELECT id, session_id, member FROM sources WHERE device_id IS NULL AND path = ? AND NOT (session_id = ? AND member = ?)',
   ).all(path, sessionId, member);
   for (const holder of holders) {
-    removeSource(db, Number(holder.id), String(holder.session_id));
+    removeSource(db, Number(holder.id), String(holder.session_id), String(holder.member));
     supersededSessionIds.push(String(holder.session_id));
   }
+  // 本机也出现了某个此前仅从其他设备同步导入的 sessionId 时，整会话归本机所有，先清理对端遗留来源。
+  const remoteSources = db.prepare(
+    'SELECT id, session_id, member FROM sources WHERE session_id = ? AND device_id IS NOT NULL',
+  ).all(sessionId);
+  for (const remote of remoteSources) {
+    removeSource(db, Number(remote.id), String(remote.session_id), String(remote.member));
+  }
+  db.prepare('DELETE FROM sessions WHERE id = ? AND device_id IS NOT NULL').run(sessionId);
   const existing = db.prepare('SELECT id FROM sources WHERE session_id = ? AND member = ?').get(sessionId, member);
   if (existing) {
-    db.prepare(`UPDATE sources SET provider = ?, path = ?, status = 'present', missing_since = NULL, last_seen_at = ?
-      WHERE id = ?`).run(provider, path, now, existing.id);
+    db.prepare(`UPDATE sources SET provider = ?, path = ?, status = 'present', missing_since = NULL,
+      last_seen_at = ?, device_id = NULL, device_name = NULL WHERE id = ?`).run(provider, path, now, existing.id);
     return { id: Number(existing.id), supersededSessionIds };
   }
   db.prepare(`INSERT INTO sources (provider, session_id, member, path, status, first_seen_at, last_seen_at)
@@ -87,7 +98,7 @@ export function declareSource(
 /** 记录一个已索引路径从权威 inventory 中消失；行全部保留。返回受影响的会话。 */
 export function markSourcesMissing(db: SqliteDb, provider: string, path: string, now: number): string[] {
   const rows = db.prepare(
-    "SELECT id, session_id FROM sources WHERE provider = ? AND path = ? AND status = 'present'",
+    "SELECT id, session_id FROM sources WHERE device_id IS NULL AND provider = ? AND path = ? AND status = 'present'",
   ).all(provider, path);
   const mark = db.prepare("UPDATE sources SET status = 'missing', missing_since = ? WHERE id = ?");
   for (const row of rows) mark.run(now, row.id);
@@ -124,12 +135,12 @@ export interface PurgeResult {
  */
 export function purgeMissingSources(db: SqliteDb, { missingBefore }: { missingBefore?: number } = {}): PurgeResult {
   const rows = missingBefore === undefined
-    ? db.prepare("SELECT id, session_id FROM sources WHERE status = 'missing'").all()
-    : db.prepare("SELECT id, session_id FROM sources WHERE status = 'missing' AND COALESCE(missing_since, 0) <= ?").all(missingBefore);
+    ? db.prepare("SELECT id, session_id, member FROM sources WHERE device_id IS NULL AND status = 'missing'").all()
+    : db.prepare("SELECT id, session_id, member FROM sources WHERE device_id IS NULL AND status = 'missing' AND COALESCE(missing_since, 0) <= ?").all(missingBefore);
   const sessionsBefore = Number(db.prepare('SELECT COUNT(*) AS n FROM sessions').get()?.n ?? 0);
   const touched = new Set<string>();
   for (const row of rows) {
-    removeSource(db, Number(row.id), String(row.session_id));
+    removeSource(db, Number(row.id), String(row.session_id), String(row.member));
     touched.add(String(row.session_id));
   }
   refreshSessionSourceStatus(db, touched);
@@ -137,13 +148,13 @@ export function purgeMissingSources(db: SqliteDb, { missingBefore }: { missingBe
   return { sources: rows.length, sessions: sessionsBefore - sessionsAfter };
 }
 
-/** 统计清单状态，供设置页与清理预览使用。 */
+/** 统计本机清单状态，供设置页与清理预览使用。 */
 export function sourceLedgerSummary(db: SqliteDb, { missingBefore }: { missingBefore?: number } = {}) {
   const missingSources = Number(db.prepare(
-    "SELECT COUNT(*) AS n FROM sources WHERE status = 'missing' AND COALESCE(missing_since, 0) <= ?",
+    "SELECT COUNT(*) AS n FROM sources WHERE device_id IS NULL AND status = 'missing' AND COALESCE(missing_since, 0) <= ?",
   ).get(missingBefore ?? Number.MAX_SAFE_INTEGER)?.n ?? 0);
   const byStatus = Object.fromEntries(db.prepare(
-    "SELECT source_status AS status, COUNT(*) AS n FROM sessions GROUP BY source_status",
+    "SELECT source_status AS status, COUNT(*) AS n FROM sessions WHERE device_id IS NULL GROUP BY source_status",
   ).all().map(row => [String(row.status ?? 'present'), Number(row.n)]));
   return {
     missingSources,

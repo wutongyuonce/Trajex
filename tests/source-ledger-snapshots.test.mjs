@@ -5,14 +5,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { appendFileSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
   buildIndex,
   getRetentionSummary,
   purgeMissing,
+  removeSyncPeer,
   restoreSnapshot,
+  syncFolder,
   takeSnapshot,
 } from '../app/src/main/indexer.ts';
 import { createQueryApi } from '../packages/core/src/query.ts';
@@ -408,4 +410,100 @@ test('restoring the oldest snapshot succeeds even when snapshotKeep was lowered 
   });
   assert.equal(restored.ok, true);
   assert.equal(listSnapshots(env.snapshotDir).length, 1, 'pruned to snapshotKeep after restore');
+});
+
+test('multi-device folder sync exchanges per-device shards and memory files without lock conflicts or local purge interference', () => {
+  const syncDir = makeTempDir('trajex-sync-folder-');
+  const envA = makeEnv('trajex-device-a-');
+  const envB = makeEnv('trajex-device-b-');
+
+  const projA = join(envA.claudeDir, 'projects', '-work-a');
+  const projB = join(envB.claudeDir, 'projects', '-work-b');
+  mkdirSync(projA, { recursive: true });
+  mkdirSync(projB, { recursive: true });
+
+  writeFileSync(join(projA, 'sess-a.jsonl'), claudeLine('ma-1', 'user', 'studio exclusive needle'));
+  writeFileSync(join(projB, 'sess-b.jsonl'), claudeLine('mb-1', 'user', 'macbook exclusive needle'));
+
+  buildIndex({ ...envA, DatabaseImpl: TestDatabase, autoSnapshot: false });
+  buildIndex({ ...envB, DatabaseImpl: TestDatabase, autoSnapshot: false });
+
+  // Device B creates a durable memory with a local Markdown file that does not exist on Device A's original path.
+  const memMdB = join(envB.home, 'memory-b.md');
+  writeFileSync(memMdB, '# Memory from MacBook\nFull body text.\n');
+  const dbB = new DatabaseSync(envB.dbPath);
+  dbB.prepare("INSERT INTO memories (id, session_id, project, path, summary, created_at) VALUES ('mem-b1', 'sess-b', '-work-b', ?, 'macbook memory summary', '2026-11-01T00:00:00Z')")
+    .run(memMdB);
+  dbB.close();
+
+  // Both devices sync with the shared folder; also place a corrupt peer file to simulate an incomplete cloud download.
+  mkdirSync(join(syncDir, 'devices'), { recursive: true });
+  writeFileSync(join(syncDir, 'devices', 'dev-corrupt.sqlite'), 'partial icloud download');
+
+  const syncB1 = syncFolder({
+    dbPath: envB.dbPath,
+    DatabaseImpl: TestDatabase,
+    syncDir,
+    deviceId: 'dev-macbook',
+    deviceName: 'MacBook-Air',
+  });
+  assert.equal(syncB1.ok, true);
+  assert.equal(syncB1.exportedSessions, 1);
+  assert.equal(syncB1.exportedMemories, 1);
+  assert.equal(syncB1.skippedPeers.length, 1, 'corrupt/incomplete peer shard is skipped without failing');
+
+  const syncA1 = syncFolder({
+    dbPath: envA.dbPath,
+    DatabaseImpl: TestDatabase,
+    syncDir,
+    deviceId: 'dev-studio',
+    deviceName: 'Mac-Studio',
+  });
+  assert.equal(syncA1.ok, true);
+  assert.equal(syncA1.importedPeers, 1);
+  assert.equal(syncA1.importedSessions, 1);
+
+  // Re-syncing without changes skips unchanged peer shards.
+  const syncA2 = syncFolder({
+    dbPath: envA.dbPath,
+    DatabaseImpl: TestDatabase,
+    syncDir,
+    deviceId: 'dev-studio',
+    deviceName: 'Mac-Studio',
+  });
+  assert.equal(syncA2.importedPeers, 0);
+
+  // Local build and local purge on Device A never mark or delete Device B's imported sessions,
+  // even though Device B's source paths do not exist on Device A!
+  buildIndex({ ...envA, DatabaseImpl: TestDatabase, autoSnapshot: false });
+  purgeMissing({ dbPath: envA.dbPath, DatabaseImpl: TestDatabase });
+
+  const checkA = new DatabaseSync(envA.dbPath);
+  try {
+    const api = createQueryApi(checkA);
+    assert.equal(api.search('"macbook exclusive needle"').length, 1, 'peer messages are searchable via FTS on Device A');
+    const peerSession = checkA.prepare("SELECT device_id, device_name, source_status FROM sessions WHERE id = 'sess-b'").get();
+    assert.equal(peerSession.device_id, 'dev-macbook');
+    assert.equal(peerSession.device_name, 'MacBook-Air');
+    assert.equal(peerSession.source_status, 'present');
+
+    const memRow = checkA.prepare("SELECT summary, path FROM memories WHERE id = 'mem-b1'").get();
+    assert.equal(memRow.summary, 'macbook memory summary');
+    assert.ok(memRow.path.includes('synced-memories') && existsSync(memRow.path), 'peer memory file is materialized in synced-memories');
+    assert.match(readFileSync(memRow.path, 'utf8'), /Full body text/);
+  } finally {
+    checkA.close();
+  }
+
+  // Removing the peer device cleans up only that peer's sessions and messages.
+  removeSyncPeer({ dbPath: envA.dbPath, DatabaseImpl: TestDatabase, peerDeviceId: 'dev-macbook' });
+  const afterRemove = new DatabaseSync(envA.dbPath);
+  try {
+    assert.deepEqual(
+      afterRemove.prepare('SELECT id FROM sessions ORDER BY id').all().map(r => r.id),
+      ['sess-a'],
+    );
+  } finally {
+    afterRemove.close();
+  }
 });

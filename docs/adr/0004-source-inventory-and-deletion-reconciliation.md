@@ -52,24 +52,23 @@ being tombstoned (ADR-0013).
 
 ### Force rebuild is all-or-nothing for existing Provider snapshots
 
-- Before force cleanup, discovery preflights every Provider represented by the
-  existing index. If any such Provider reports an unavailable source root, the
-  whole rebuild aborts before destructive cleanup and the current database
-  remains unchanged.
-- A Provider with no prior indexed sessions and no available source root
+- Before force rebuild, discovery preflights every Provider represented by the
+  existing local sources (`sources WHERE device_id IS NULL`). If any such
+  Provider reports an unavailable source root, the whole rebuild aborts before
+  any write and the current database remains unchanged.
+- A Provider with no prior known sources and no available source root
   contributes no state and does not block rebuild. This keeps unused built-in
-  Providers optional without weakening protection for an existing snapshot.
-- When all existing Provider roots are available, force rebuild replaces all
-  regenerable transcript projections with the authoritative current inventory.
-  An available but empty root therefore removes that Provider's old sessions.
-- App rebuild applies the same rule before swapping its temporary database;
-  CLI/Core rebuild applies it before cleaning the current database. Approved
-  durable `memories` survive either form.
+  Providers optional without weakening protection for an existing index.
+- When all existing Provider roots are available, force rebuild replays every
+  present source in place from a null cursor after taking a `pre-rebuild`
+  snapshot ([ADR-0014](0014-source-ledger-retention-and-snapshots.md)).
+  Known sources missing from an available root are marked `missing` and kept
+  until explicit purge. Approved durable `memories` survive in place.
 
 Deleting an entire source root intentionally is ambiguous and therefore keeps
-the old snapshot during a normal build. A user who wants to prove an empty
+the old state during a normal build. A user who wants to prove an empty
 inventory can recreate the configured root as an empty readable directory and
-build again.
+build again (which marks those sources `missing`), then purge them in Settings.
 
 ### Daemon recovery from an incomplete inventory
 
@@ -84,28 +83,31 @@ build again.
   the recovered source is indexed before incremental events take over.
 - The App also requests a full inventory every five minutes. This periodic
   reconcile bounds how long a missed filesystem event can leave the derived
-  index stale, but deletion remains authorized only by Provider discovery
-  after successful root enumeration.
+  index stale, while missing transitions remain authorized only by Provider
+  discovery after successful root enumeration.
 - A manual force rebuild still fails immediately on an unavailable root. It
-  never turns into an unbounded background rebuild or replaces the last usable
-  database.
+  never turns into an unbounded background rebuild.
 
 ## Consequences
 
-- A genuinely deleted transcript or descendant subtree is removed once its
-  source root can be enumerated.
-- A transiently missing or unreadable source root cannot cause mass deletion.
+- A genuinely deleted transcript or descendant subtree is marked `missing` once
+  its source root can be enumerated, and is deleted only by explicit purge
+  ([ADR-0014](0014-source-ledger-retention-and-snapshots.md)).
+- A transiently missing or unreadable source root cannot cause mass `missing`
+  transitions.
 - A source root that recovers while the App remains open is inventoried and
   watched without requiring an App restart or manual rebuild.
-- A transiently unreadable descendant can cause deletion by design; the root is
-  the only fallback boundary.
-- Same-path identity replacement is handled as two facts: retract the old
-  session, then index the new session.
-- A failed force preflight cannot partially clean or replace the usable index.
-- Reconciliation is intentionally session-scoped to indexed transcript paths;
-  auxiliary files without an independent session projection are out of scope.
+- A transiently unreadable descendant marks its sources `missing` until the
+  next readable scan restores them to `present`; the root is the fallback
+  boundary.
+- Same-path identity replacement is handled by supersession when the new
+  identity declares that path (ADR-0014).
+- A failed force preflight cannot partially modify the index.
+- Reconciliation is source-scoped (`sources` table): main transcripts,
+  subagents, workflows, and DeepSeek tree members each track their own path and
+  status.
 - Adaptive watcher mechanics and scheduling latency are defined in ADR-0011;
-  this ADR remains the authority for destructive cleanup decisions.
+  this ADR defines the source-root availability boundary.
 - This ADR does not decide how JSONL corruption is parsed, how cursors advance,
   or how SQL transactions retry. Those are parser/persistence concerns in
   ADR-0002 and ADR-0003.

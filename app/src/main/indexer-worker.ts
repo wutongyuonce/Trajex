@@ -3,7 +3,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { parentPort } from 'node:worker_threads';
-import { buildIndex, getRetentionSummary, purgeMissing, restoreSnapshot, takeSnapshot } from './indexer.ts';
+import {
+  buildIndex,
+  getRetentionSummary,
+  purgeMissing,
+  removeSyncPeer,
+  restoreSnapshot,
+  syncFolder,
+  takeSnapshot,
+} from './indexer.ts';
 
 if (!parentPort) throw new Error('indexer-worker must run as a worker thread');
 const port = parentPort;
@@ -15,6 +23,8 @@ const OPERATIONS: Record<string, (args: any) => unknown> = {
   snapshot: takeSnapshot,
   purge: purgeMissing,
   restore: restoreSnapshot,
+  'sync-folder': syncFolder,
+  'remove-sync-peer': removeSyncPeer,
 };
 
 port.on('message', ({ id, op = 'build', args }: { id: number; op?: string; args?: Record<string, unknown> }) => {

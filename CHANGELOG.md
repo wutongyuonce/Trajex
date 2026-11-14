@@ -7,6 +7,7 @@
 - **来源清单与历史保留（ADR-0014）：** 索引从“镜像”升级为“档案”。新增 `sources` 来源清单表与各投影表的 `source_id` 归属列，`sessions.source_status`（`present` / `partial` / `missing`）由来源状态推导并在会话列表中展示标签。当 Agent 删除本地历史文件（如 Claude 30 天自动清理、主文件被删而子代理仍在）时，Trajex 只将来源标为 `missing`，会话与消息完整保留、可继续检索；子代理先于主文件出现时自动创建占位会话，不再产生孤儿数据。
 - **显式清理（Purge）：** 桌面设置页新增“Kept history”管理，可按“全部缺失 / 缺失满 7、30、90 天”显式清理来源已删除的历史（唯一会删除索引历史的操作），`memories` 永不删除，清理前自动保存快照。
 - **索引快照与恢复（Snapshots）：** 基于 `VACUUM INTO` 在 `~/.trajex/snapshots/` 生成完整一致的快照，默认保留最新 3 份（可在设置中选择 1–20 份），支持每日自动快照、手动快照，以及在 schema 升级、版本重放、强制重建、清理、恢复前自动保存快照；支持从任意快照一键恢复（校验完整性与 schema 版本、保留当前 `memories`、恢复后增量追平本地会话）。
+- **多端文件夹同步（方案 A，Folder Sync）：** 支持选择 iCloud Drive / Dropbox / Syncthing / NAS 同步文件夹。每台设备只写自己的只读分片 `devices/<deviceId>.sqlite`（`VACUUM INTO` 原子改名）与记忆 Markdown 文件 `memories/<id>.md`，并将其他设备的分片按 `device_id` 导入本机索引，避免多机直接写同一 SQLite 导致的锁冲突与损坏；本机发现、重建与清理只触及本机数据（`device_id IS NULL`）。
 
 ### Changed
 

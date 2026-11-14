@@ -237,6 +237,12 @@ function trajexStyle(session) {
                     <span class="dot"></span>
                   </template>
                   <span>{{ rowAt(item.index).message_count || 0 }} msg</span>
+                  <template v-if="rowAt(item.index).device_id">
+                    <span class="dot"></span>
+                    <span class="device-tag" :title="`Synced from ${rowAt(item.index).device_name || rowAt(item.index).device_id}`">
+                      {{ rowAt(item.index).device_name || rowAt(item.index).device_id }}
+                    </span>
+                  </template>
                   <template v-if="rowAt(item.index).source_status === 'missing' || rowAt(item.index).source_status === 'partial'">
                     <span class="dot"></span>
                     <span
@@ -348,6 +354,10 @@ function trajexStyle(session) {
 .srow-meta .source-gone {
   color: #fbbf24;
   opacity: 0.85;
+}
+.srow-meta .device-tag {
+  color: var(--fg-2);
+  opacity: 0.78;
 }
 .srow-meta .dot {
   width: 2px;

@@ -69,4 +69,6 @@ contextBridge.exposeInMainWorld('trajex', {
   purgeMissingHistory: (olderThanDays?: number) => ipcRenderer.invoke('retention:purge', olderThanDays),
   restoreSnapshot: (name: string) => ipcRenderer.invoke('retention:restore', name),
   revealSnapshots: () => ipcRenderer.invoke('retention:revealSnapshots'),
+  syncNow: () => ipcRenderer.invoke('sync:now'),
+  removeSyncPeer: (peerDeviceId: string) => ipcRenderer.invoke('sync:removePeer', peerDeviceId),
 });

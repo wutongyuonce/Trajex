@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { createBuiltinProviderRegistry } from '../../../packages/core/src/providers/builtins.ts';
 import type { ProviderRegistry } from '../../../packages/core/src/providers/registry.ts';
+import { ensureFtsReady } from '../../../packages/core/src/index-finalize.ts';
 import { runProviderBuild } from '../../../packages/core/src/index-build.ts';
 import { readRecentTranscriptHints } from '../../../packages/core/src/provider-indexing.ts';
 import type { ProviderInventoryRootIssue } from '../../../packages/core/src/provider-indexing.ts';
@@ -35,6 +36,7 @@ import {
   type SnapshotInfo,
 } from '../../../packages/core/src/snapshots.ts';
 import { purgeMissingSources, sourceLedgerSummary } from '../../../packages/core/src/sources.ts';
+import { listSyncPeers, removePeerDeviceRows, syncWithFolder } from '../../../packages/core/src/sync.ts';
 import { runWriteTransaction, configureConnection, betterSqliteTransactionAdapter } from '../../../packages/core/src/tx.ts';
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
 import { runRetryableWriteTransaction, isBeginBusyFailure, hasUnusableTransaction } from '../../../packages/core/src/write-coordinator.ts';
@@ -334,12 +336,41 @@ function maintenance<T>(options: MaintenanceOptions, work: (db: any, dir: string
   return result ?? { ok: false, reason: 'writer_busy' };
 }
 
-/** 设置页概览：来源清单状态与现有快照。 */
-function getRetentionSummary(options: MaintenanceOptions & { missingBefore?: number } = {}) {
+/** 设置页概览：来源清单状态、现有快照与已连接的同步设备。 */
+function getRetentionSummary(
+  options: MaintenanceOptions & { missingBefore?: number; syncDir?: string | null; deviceId?: string } = {},
+) {
   return maintenance(options, (db, dir) => ({
     ...sourceLedgerSummary(db, { missingBefore: options.missingBefore }),
     snapshots: listSnapshots(dir),
+    peers: listSyncPeers(db, options.syncDir, options.deviceId ?? ''),
   }));
+}
+
+/** 双向文件夹同步：导出本机分片并导入其他设备的分片。 */
+function syncFolder(options: MaintenanceOptions & { syncDir: string; deviceId: string; deviceName: string }) {
+  const DatabaseImpl = options.DatabaseImpl ?? Database;
+  const dbPath = options.dbPath ?? DEFAULT_DB_PATH;
+  return maintenance(options, (db) => {
+    const txDb = betterSqliteTransactionAdapter(db);
+    return syncWithFolder(db, {
+      syncDir: options.syncDir,
+      deviceId: options.deviceId,
+      deviceName: options.deviceName,
+      trajexDir: path.dirname(dbPath),
+      openDb: (p, opts) => new DatabaseImpl(p, opts),
+      runTransaction: (label, work) => runRetryableWriteTransaction(txDb, work, { label }),
+    });
+  });
+}
+
+/** 移除某个同步设备在本机索引中的导入数据。 */
+function removeSyncPeer(options: MaintenanceOptions & { peerDeviceId: string }) {
+  return maintenance(options, (db) => {
+    const txDb = betterSqliteTransactionAdapter(db);
+    runRetryableWriteTransaction(txDb, () => removePeerDeviceRows(db, options.peerDeviceId), { label: 'remove-peer' });
+    return { removed: options.peerDeviceId };
+  });
 }
 
 /** 手动拍快照。 */
@@ -401,8 +432,8 @@ function restoreSnapshot(options: MaintenanceOptions & { snapshotPath: string })
         restoreDurableMemories(db, preservedMemories);
         // 恢复后的索引用当前设置的快照数量修剪；cursor 原样保留，下一次构建增量同步。
         db.prepare("DELETE FROM index_state WHERE jsonl_path = '__last_build__'").run();
+        ensureFtsReady(db, { force: true });
       }, { label: 'restore' });
-      db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
     } finally {
       checkpointDb(db, 'TRUNCATE');
       db.close();
@@ -418,7 +449,9 @@ export {
   inferProjectPath,
   openIndexDb,
   purgeMissing,
+  removeSyncPeer,
   restoreSnapshot,
+  syncFolder,
   takeSnapshot,
   writeHeartbeat,
 };

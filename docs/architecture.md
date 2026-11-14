@@ -27,7 +27,7 @@ SQLite（schema.sql）  ──►  query.ts（search / messages / sessions / fai
 | `packages/core/src/parsing.ts` | Provider 共用的纯函数：按行读文件、截断、时间戳规范化、项目路径推断 |
 | `packages/core/src/vendor/dsh-zstd.ts` | DeepSeek Harness 多帧 Zstandard 日志的只读帧扫描 |
 | `packages/core/src/provider-indexing.ts`、`index-build.ts` | 为一次构建生成计划，逐单元事务执行或标记缺失，调用收尾与快照（CLI 与 App 共用） |
-| `packages/core/src/sources.ts`、`snapshots.ts` | 来源清单（`sources` 表）、显式清理（purge）与 `VACUUM INTO` 快照/恢复（ADR-0014） |
+| `packages/core/src/sources.ts`、`snapshots.ts`、`sync.ts` | 来源清单（`sources` 表）、显式清理（purge）、`VACUUM INTO` 快照/恢复与多端文件夹分片同步（ADR-0014） |
 | `packages/core/src/persist.ts` | 按来源声明（`source` 记录）归属每一行、原地替换或增量合并、补占位会话 |
 | `packages/core/src/index-finalize.ts` | 收尾：FTS 就绪、project_path 推断、workflow 关联修复 |
 | `packages/core/src/indexer.ts` | CLI 侧构建入口：写入所有权检查、只读探测、强制重建 |

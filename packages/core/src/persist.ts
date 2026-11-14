@@ -125,7 +125,6 @@ export function persist(
   const now = options.now ?? Date.now();
   const st = statements(db);
   const sessionIds = new Set<string>();
-  const sessionsWithRows = new Set<string>();
   const emittedSessions = new Set<string>();
   const replacedMainSessions = new Set<string>();
   const replacedKeys = new Map<number, KeptKeys>();
@@ -147,7 +146,7 @@ export function persist(
       sessionIds.add(current.sessionId);
       for (const id of declared.supersededSessionIds) sessionIds.add(id);
     }
-    if (sessionId) sessionsWithRows.add(sessionId);
+    if (sessionId) sessionIds.add(sessionId);
     return current.id;
   };
 
@@ -259,12 +258,17 @@ export function persist(
   for (const sessionId of replacedMainSessions) {
     if (emittedSessions.has(sessionId)) continue;
     const hasRows = OWNED_TABLES.some(table => Boolean(db.prepare(`SELECT 1 FROM ${table} WHERE session_id = ? LIMIT 1`).get(sessionId)));
-    if (!hasRows) db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    if (!hasRows) {
+      db.prepare("DELETE FROM sources WHERE session_id = ? AND member = '' AND device_id IS NULL").run(sessionId);
+      if (!db.prepare('SELECT 1 FROM sources WHERE session_id = ? LIMIT 1').get(sessionId)) {
+        db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+      }
+    }
   }
-  for (const sessionId of sessionsWithRows) {
+  for (const sessionId of sessionIds) {
     if (emittedSessions.has(sessionId)) continue;
+    if (!db.prepare('SELECT 1 FROM sources WHERE session_id = ? LIMIT 1').get(sessionId)) continue;
     st.placeholder.run(sessionId, unit.project ?? null, lastProvider, sessionId);
-    sessionIds.add(sessionId);
   }
   refreshSessionSourceStatus(db, sessionIds);
   options.onSessionIds?.(sessionIds);

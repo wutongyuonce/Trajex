@@ -118,7 +118,23 @@ Snapshot failure aborts the purge, restore or replay that needed it. A failed
 daily snapshot is retried after the next build. `PRAGMA user_version` (now 1)
 versions the schema.
 
-### 5. Migration from 0.3.x
+### 5. Multi-device folder sync (Plan A)
+
+Each device has a stable `deviceId` (stored in `settings.json`) and writes only
+its own shard `<syncDir>/devices/<deviceId>.sqlite` via `VACUUM INTO` a
+temporary file followed by atomic rename, plus `<deviceId>.meta.json` and
+active memory Markdown files in `<syncDir>/memories/<id>.md`. Only local rows
+(`device_id IS NULL`) are exported, so peer shards are never re-exported.
+
+When importing `<syncDir>/devices/<peerId>.sqlite`, the shard is first checked
+with `validateSnapshot` (`PRAGMA quick_check` and `user_version <= SCHEMA_VERSION`);
+an incomplete cloud download or a future-schema shard is skipped without
+touching local data. Imported `sources` and `sessions` carry `device_id = peerId`
+and `device_name = peerName`; local `discover()`, `rebuild`, and `purge` filter
+by `device_id IS NULL` so they never mark or delete peer data, and `INSERT OR
+IGNORE` guarantees local sources and sessions always win on any ID collision.
+
+### 6. Migration from 0.3.x
 
 On first open the schema adds `sources`, the `source_id` columns and
 `sessions.source_status`. It then creates one source per session from
@@ -141,11 +157,12 @@ are dropped, and real ones that were never re-declared stay `missing`. A
 | A different source declared at a held path | holder superseded (rows deleted) |
 | Snapshot cannot be written | purge / restore / replay aborted before changing anything |
 | Snapshot corrupt or from a newer schema | restore refused, current index untouched |
+| Peer shard incomplete or from a newer schema | peer skipped for this sync, local index untouched |
 
 ## Non-goals
 
-- Multi-device sync. It builds on this ledger (one writer per device), but the
-  transport is a separate decision.
+- Remote server sync transports (S3/R2/PostgreSQL). Only local sync folders
+  (iCloud Drive, Dropbox, Syncthing, NAS) are implemented in 0.4.0.
 - Purge or restore from the CLI. Both are App actions. The CLI takes pre-change
   snapshots and never deletes.
 - Per-segment retention inside one Codex thread; the thread is one source.

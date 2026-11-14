@@ -141,11 +141,17 @@ export function hasIndexedData(db: SqliteDb): boolean {
 }
 
 /**
- * 恢复前的完整性与版本检查；任何失败都在动当前索引之前报告。
- * openReadOnly 由调用方提供（不同进程使用不同 SQLite 驱动）。
+ * 完整性与版本检查；任何失败都在动当前索引之前报告。
+ * requireSnapshotName 为 false 时也用于校验多端同步分片。
  */
-export function validateSnapshot(path: string, openReadOnly: (path: string) => SqliteDb): { userVersion: number } {
-  if (!SNAPSHOT_NAME_RE.test(basename(path)) || !existsSync(path)) throw new Error(`Not a Trajex snapshot: ${path}`);
+export function validateSnapshot(
+  path: string,
+  openReadOnly: (path: string) => SqliteDb,
+  { requireSnapshotName = true }: { requireSnapshotName?: boolean } = {},
+): { userVersion: number } {
+  if ((requireSnapshotName && !SNAPSHOT_NAME_RE.test(basename(path))) || !existsSync(path)) {
+    throw new Error(`Not a Trajex snapshot: ${path}`);
+  }
   const db = openReadOnly(path);
   try {
     const check = String(Object.values(db.prepare('PRAGMA quick_check').get() ?? {})[0] ?? '');
@@ -191,11 +197,11 @@ export function readDurableMemories(db: SqliteDb): Array<Record<string, unknown>
   return db.prepare(`SELECT ${select} FROM memories`).all() as Array<Record<string, unknown>>;
 }
 
-/** 将读取出的 memories 合并写入目标索引（同 id 以传入为准）。 */
+/** 将读取出的 memories 合并写入目标索引（快照中已有的记忆保持快照时的状态，快照之后新增的记忆补回）。 */
 export function restoreDurableMemories(db: SqliteDb, rows: ReadonlyArray<Record<string, unknown>>): void {
   if (!rows.length) return;
   const placeholders = MEMORY_COLUMNS.map(() => '?').join(',');
-  const stmt = db.prepare(`INSERT OR REPLACE INTO memories (${MEMORY_COLUMNS.join(',')}) VALUES (${placeholders})`);
+  const stmt = db.prepare(`INSERT OR IGNORE INTO memories (${MEMORY_COLUMNS.join(',')}) VALUES (${placeholders})`);
   for (const row of rows) {
     stmt.run(...MEMORY_COLUMNS.map(column => row[column] ?? null));
   }

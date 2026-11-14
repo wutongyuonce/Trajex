@@ -25,7 +25,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   message_count INTEGER DEFAULT 0, -- 消息总数
   jsonl_path TEXT,                 -- 主来源文件的绝对路径（占位会话为空）
   source TEXT DEFAULT 'claude',    -- 来源标识：claude / codex / pi / deepseek
-  source_status TEXT DEFAULT 'present'); -- present / partial / missing，由 sources 推导
+  source_status TEXT DEFAULT 'present', -- present / partial / missing，由 sources 推导
+  device_id TEXT,                  -- 本机会话为空；同步导入的会话为来源设备 ID
+  device_name TEXT);               -- 同步导入会话的设备展示名称
 
 -- ============================================================
 -- 2. 消息表：单条对话消息，是搜索和展示的核心实体
@@ -140,6 +142,8 @@ CREATE TABLE IF NOT EXISTS sources (
   first_seen_at INTEGER,           -- 首次读取时间（毫秒）
   last_seen_at INTEGER,            -- 最近一次读取时间（毫秒）
   missing_since INTEGER,           -- 被发现缺失的时间（毫秒）；present 时为空
+  device_id TEXT,                  -- 本机来源为空；同步导入的来源为设备 ID
+  device_name TEXT,                -- 同步导入来源的设备展示名称
   UNIQUE (session_id, member));
 
 -- ============================================================
@@ -242,6 +246,8 @@ CREATE INDEX IF NOT EXISTS idx_wf_source_id ON workflows(source_id);
 CREATE INDEX IF NOT EXISTS idx_wa_source_id ON workflow_agents(source_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_source_id ON summaries(source_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_source_status ON sessions(source_status) WHERE source_status != 'present';
+CREATE INDEX IF NOT EXISTS idx_sources_device ON sources(device_id) WHERE device_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_device ON sessions(device_id) WHERE device_id IS NOT NULL;
 
 -- ============================================================
 -- 13. 记忆表：用户通过 attune API (remember/forget) 创建的持久记忆

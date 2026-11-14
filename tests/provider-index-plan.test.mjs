@@ -52,6 +52,8 @@ function memoryPlanDb({ sessions = [], markers = [], cursors = [] } = {}) {
       first_seen_at INTEGER,
       last_seen_at INTEGER,
       missing_since INTEGER,
+      device_id TEXT,
+      device_name TEXT,
       UNIQUE (session_id, member)
     );
   `);

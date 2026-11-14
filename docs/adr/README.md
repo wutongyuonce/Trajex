@@ -18,7 +18,7 @@ packaging. The directory contains only the current fourteen ADRs.
 | [0011](0011-adaptive-watching-and-bounded-index-scheduling.md) | App watch targets, adaptive invalidation, bounded scheduling, and periodic reconciliation |
 | [0012](0012-semantic-read-only-sql-validation.md) | Query sandbox semantic read-only SQL validation and single-statement enforcement |
 | [0013](0013-deepseek-harness-session-trees.md) | DeepSeek Harness generations, session-tree units, and projection |
-| [0014](0014-source-ledger-retention-and-snapshots.md) | Source ledger, archive retention on deletion, explicit purge, and snapshots |
+| [0014](0014-source-ledger-retention-and-snapshots.md) | Source ledger, archive retention on deletion, explicit purge, snapshots, and folder sync |
 
 The first six ADRs describe the indexing architecture itself. ADR-0011 records
 the App daemon's freshness path; ADR-0007 through ADR-0010 describe runtime

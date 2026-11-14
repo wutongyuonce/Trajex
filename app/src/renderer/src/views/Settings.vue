@@ -20,7 +20,9 @@ const version = ref('');
 // 历史保留与快照（ADR-0014）。
 const autoSnapshot = ref(true);
 const snapshotKeep = ref(3);
-const retention = ref({ missingSources: 0, partialSessions: 0, missingSessions: 0, snapshots: [] });
+const syncDir = ref('');
+const deviceName = ref('');
+const retention = ref({ missingSources: 0, partialSessions: 0, missingSessions: 0, snapshots: [], peers: [] });
 const purgeAge = ref(0);
 const confirmingPurge = ref(false);
 const confirmingRestore = ref('');
@@ -51,6 +53,8 @@ async function loadSettings() {
   version.value = s.version || '';
   autoSnapshot.value = s.autoSnapshot !== false;
   snapshotKeep.value = s.snapshotKeep || 3;
+  syncDir.value = s.syncDir || '';
+  deviceName.value = s.deviceName || '';
 }
 
 async function loadRetention() {
@@ -78,7 +82,7 @@ async function runRetention(label, work, notice) {
     retentionBusy.value = '';
     confirmingPurge.value = false;
     confirmingRestore.value = '';
-    await loadRetention();
+    await Promise.all([loadSettings(), loadRetention()]);
   }
 }
 
@@ -126,6 +130,37 @@ function fmtSnapshotTime(ms) {
 
 function revealSnapshots() {
   window.trajex?.revealSnapshots?.();
+}
+
+async function browseSyncDir() {
+  if (!window.trajex?.browseFolder) return;
+  const chosen = await window.trajex.browseFolder();
+  if (chosen) {
+    syncDir.value = chosen;
+    await saveSetting('syncDir', chosen);
+    await loadRetention();
+  }
+}
+
+async function clearSyncDir() {
+  syncDir.value = '';
+  await saveSetting('syncDir', '');
+  await loadRetention();
+}
+
+async function saveDeviceName() {
+  if (!deviceName.value.trim()) return;
+  await saveSetting('deviceName', deviceName.value.trim());
+}
+
+function syncNow() {
+  return runRetention('sync', () => window.trajex.syncNow(), (r) => (
+    `Exported ${r.exportedSessions} sessions (${r.exportedMemories} memories); imported ${r.importedSessions} sessions from ${r.importedPeers} peer(s).`
+  ));
+}
+
+function removePeer(peerDeviceId) {
+  return runRetention('remove-peer', () => window.trajex.removeSyncPeer(peerDeviceId), () => 'Removed synced device data.');
 }
 
 const REASON_LABELS = {
@@ -363,6 +398,53 @@ function fmtRelative(iso) {
             <div class="reset-hint">
               Restoring replaces the index with the snapshot, keeps your current memories, saves the current index
               as a snapshot first, and then catches up with your session files.
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-label">
+            Folder sync
+            <div class="form-label-hint">iCloud Drive, Dropbox, Syncthing, or NAS.</div>
+          </div>
+          <div class="form-control">
+            <div class="input-with-btn">
+              <input
+                type="text"
+                class="input mono"
+                :value="syncDir"
+                placeholder="No sync folder selected"
+                readonly
+              />
+              <button class="btn" :disabled="!!retentionBusy" @click="browseSyncDir">Browse…</button>
+              <button v-if="syncDir" class="btn subtle" :disabled="!!retentionBusy" @click="clearSyncDir">Clear</button>
+            </div>
+            <div class="retention-actions">
+              <span class="toggle-text">This device</span>
+              <input
+                v-model="deviceName"
+                type="text"
+                class="input"
+                style="max-width: 180px;"
+                placeholder="Device name"
+                @change="saveDeviceName"
+              />
+              <button class="btn" :disabled="!!retentionBusy || !syncDir" @click="syncNow">
+                {{ retentionBusy === 'sync' ? 'Syncing…' : 'Sync now' }}
+              </button>
+            </div>
+            <div v-if="retention.peers?.length" class="snapshot-list">
+              <div v-for="peer in retention.peers" :key="peer.deviceId" class="snapshot-row">
+                <span class="snapshot-time">{{ peer.deviceName }}</span>
+                <span class="snapshot-meta">
+                  {{ peer.sessions }} sessions
+                  <template v-if="peer.lastSyncedAt"> · synced {{ fmtSnapshotTime(peer.lastSyncedAt) }}</template>
+                </span>
+                <button class="btn subtle" :disabled="!!retentionBusy" @click="removePeer(peer.deviceId)">Remove</button>
+              </div>
+            </div>
+            <div class="reset-hint">
+              Each device writes its own read-only shard in <code>devices/&lt;deviceId&gt;.sqlite</code> and imports other devices' shards without lock conflicts.
             </div>
           </div>
         </div>

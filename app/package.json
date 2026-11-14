@@ -15,8 +15,7 @@
     "pack": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder --mac",
     "dist:mac": "electron-vite build && electron-builder --mac",
-    "generate:session-share": "node scripts/generate-session-share.mjs",
-    "verify:icons": "node scripts/verify-icons.mjs",
+
     "test:electron": "electron-vite build && electron --no-sandbox tests/electron-concurrency.mjs",
     "test:electron:timeline": "electron-vite build && electron --no-sandbox tests/electron-session-virtualization.mjs",
     "test:electron:reader-state": "electron-vite build && electron --no-sandbox tests/electron-session-reader-state.mjs",

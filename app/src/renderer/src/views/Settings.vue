@@ -1,11 +1,26 @@
-<!-- Copyright (C) 2026 tommy0103 and contributors. -->
 <!-- Copyright (C) 2026 wutongyuonce and contributors. -->
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, nextTick } from 'vue';
+import { isZh, locale, setLocale, t } from '../i18n.js';
 
 defineOptions({ name: 'Settings' });
+
+const THEME_KEY = 'trajex:theme';
+const currentTheme = ref(
+  typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light' ? 'light' : 'dark',
+);
+
+function selectTheme(nextTheme) {
+  currentTheme.value = nextTheme;
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.theme = nextTheme;
+  }
+  try {
+    localStorage.setItem(THEME_KEY, nextTheme);
+  } catch {}
+}
 
 const sources = ref([]);
 const dbPath = ref('');
@@ -17,7 +32,7 @@ const settingsRecovery = ref('');
 const saveError = ref('');
 const version = ref('');
 
-// 历史保留与快照（ADR-0014）。
+// 历史保留、快照与多端同步（ADR-0014）。
 const autoSnapshot = ref(true);
 const snapshotKeep = ref(3);
 const syncDir = ref('');
@@ -30,12 +45,12 @@ const retentionBusy = ref('');
 const retentionError = ref('');
 const retentionNotice = ref('');
 const KEEP_OPTIONS = [1, 2, 3, 5, 7, 10, 20];
-const AGE_OPTIONS = [
-  { value: 0, label: 'any age' },
-  { value: 7, label: 'missing for 7+ days' },
-  { value: 30, label: 'missing for 30+ days' },
-  { value: 90, label: 'missing for 90+ days' },
-];
+const ageOptions = computed(() => [
+  { value: 0, label: t('settings.ageAny') },
+  { value: 7, label: t('settings.age7') },
+  { value: 30, label: t('settings.age30') },
+  { value: 90, label: t('settings.age90') },
+]);
 
 onMounted(async () => {
   await loadSettings();
@@ -88,17 +103,25 @@ async function runRetention(label, work, notice) {
 
 function purgeMissing() {
   return runRetention('purge', () => window.trajex.purgeMissingHistory(purgeAge.value), (r) => (
-  r.sources ? `Removed ${r.sessions} sessions and ${r.sources} missing sources. A snapshot was kept first.` : 'Nothing to remove.'
+    r.sources
+      ? (isZh.value
+        ? `已清理 ${r.sessions} 个会话与 ${r.sources} 个缺失来源（已先自动保存快照）。`
+        : `Removed ${r.sessions} sessions and ${r.sources} missing sources. A snapshot was kept first.`)
+      : (isZh.value ? '没有需要清理的缺失来源。' : 'Nothing to remove.')
   ));
 }
 
 function takeSnapshot() {
-  return runRetention('snapshot', () => window.trajex.takeSnapshot(), r => `Snapshot ${r.snapshot.name} saved.`);
+  return runRetention('snapshot', () => window.trajex.takeSnapshot(), r => (
+    isZh.value ? `已保存快照 ${r.snapshot.name}。` : `Snapshot ${r.snapshot.name} saved.`
+  ));
 }
 
 function restoreSnapshot(name) {
   return runRetention('restore', () => window.trajex.restoreSnapshot(name), r => (
-    `Restored ${r.restored}. Your current memories were kept${r.safety ? `, and the previous index was saved as ${r.safety.name}` : ''}.`
+    isZh.value
+      ? `已恢复快照 ${r.restored}，当前记忆已保留${r.safety ? `（恢复前索引已备份为 ${r.safety.name}）` : ''}。`
+      : `Restored ${r.restored}. Your current memories were kept${r.safety ? `, and the previous index was saved as ${r.safety.name}` : ''}.`
   ));
 }
 
@@ -125,7 +148,11 @@ function fmtBytes(bytes) {
 }
 
 function fmtSnapshotTime(ms) {
-  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return new Date(ms).toLocaleString(isZh.value ? 'zh-CN' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function reasonLabel(reason) {
+  return t(`settings.reason.${reason}`);
 }
 
 function revealSnapshots() {
@@ -138,7 +165,7 @@ async function browseSyncDir() {
   if (chosen) {
     syncDir.value = chosen;
     await saveSetting('syncDir', chosen);
-    await loadRetention();
+    await syncNow();
   }
 }
 
@@ -155,18 +182,19 @@ async function saveDeviceName() {
 
 function syncNow() {
   return runRetention('sync', () => window.trajex.syncNow(), (r) => (
-    `Exported ${r.exportedSessions} sessions (${r.exportedMemories} memories); imported ${r.importedSessions} sessions from ${r.importedPeers} peer(s).`
+    isZh.value
+      ? `已导出本机 ${r.exportedSessions} 个会话（${r.exportedMemories} 条记忆）；从 ${r.importedPeers} 台设备导入了 ${r.importedSessions} 个会话。`
+      : `Exported ${r.exportedSessions} sessions (${r.exportedMemories} memories); imported ${r.importedSessions} sessions from ${r.importedPeers} peer(s).`
   ));
 }
 
 function removePeer(peerDeviceId) {
-  return runRetention('remove-peer', () => window.trajex.removeSyncPeer(peerDeviceId), () => 'Removed synced device data.');
+  return runRetention(
+    'remove-peer',
+    () => window.trajex.removeSyncPeer(peerDeviceId),
+    () => (isZh.value ? '已移除该同步设备的导入数据。' : 'Removed synced device data.'),
+  );
 }
-
-const REASON_LABELS = {
-  daily: 'daily', manual: 'manual', 'pre-upgrade': 'before upgrade', 'pre-rebuild': 'before rebuild',
-  'pre-replay': 'before re-index', 'pre-purge': 'before cleanup', 'pre-restore': 'before restore',
-};
 
 async function browseSourcePath(source) {
   if (!window.trajex?.browseFolder) return;
@@ -185,12 +213,10 @@ async function toggleAutoRefresh() {
 async function saveSetting(key, value) {
   if (!window.trajex?.setSetting) return;
   try {
-    // 保存才会挪开被拒绝的设置文件，提示随保存结果返回（auto-refresh 保存后不重载设置）。
     const result = await window.trajex.setSetting(key, value);
     settingsRecovery.value = result?.settingsRecovery || '';
     saveError.value = '';
   } catch (error) {
-    // 无法先保留设置文件时保存被拒绝；必须说明，否则看起来像已写入。
     saveError.value = error instanceof Error ? error.message : String(error);
   }
 }
@@ -222,11 +248,11 @@ function fmtRelative(iso) {
   if (!iso) return '';
   const diff = Date.now() - new Date(iso).getTime();
   const min = Math.floor(diff / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
+  if (min < 1) return isZh.value ? '刚刚' : 'just now';
+  if (min < 60) return isZh.value ? `${min} 分钟前` : `${min}m ago`;
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  return `${Math.floor(hr / 24)}d ago`;
+  if (hr < 24) return isZh.value ? `${hr} 小时前` : `${hr}h ago`;
+  return isZh.value ? `${Math.floor(hr / 24)} 天前` : `${Math.floor(hr / 24)}d ago`;
 }
 </script>
 
@@ -234,11 +260,41 @@ function fmtRelative(iso) {
   <div class="settings-wrap">
     <div class="settings-content">
 
+      <!-- Appearance & Language -->
+      <section class="settings-section">
+        <div class="settings-section-head">
+          <h2>{{ t('settings.appearanceTitle') }}</h2>
+          <p>{{ t('settings.appearanceDesc') }}</p>
+        </div>
+        <div class="form-row">
+          <div class="form-label">{{ t('settings.language') }}</div>
+          <div class="form-control">
+            <div class="segmented">
+              <button type="button" class="seg-btn" :class="{ active: locale === 'zh' }" @click="setLocale('zh')">中文</button>
+              <button type="button" class="seg-btn" :class="{ active: locale === 'en' }" @click="setLocale('en')">English</button>
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-label">{{ t('settings.theme') }}</div>
+          <div class="form-control">
+            <div class="segmented">
+              <button type="button" class="seg-btn" :class="{ active: currentTheme === 'dark' }" @click="selectTheme('dark')">
+                {{ t('settings.themeDark') }}
+              </button>
+              <button type="button" class="seg-btn" :class="{ active: currentTheme === 'light' }" @click="selectTheme('light')">
+                {{ t('settings.themeLight') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- Data Sources -->
       <section class="settings-section">
         <div class="settings-section-head">
-          <h2>Data Sources</h2>
-          <p>Where Trajex reads your agent session history.</p>
+          <h2>{{ t('settings.sourcesTitle') }}</h2>
+          <p>{{ t('settings.sourcesDesc') }}</p>
         </div>
 
         <div v-if="saveError" class="status-row error settings-notice">
@@ -264,27 +320,31 @@ function fmtRelative(iso) {
               </div>
               <div class="source-card-status">
                 <span class="stat-dot" :class="src.status"></span>
-                <span class="stat-text" :class="src.status">{{ src.statusText }}</span>
+                <span class="stat-text" :class="src.status">
+                  {{ src.status === 'ok' ? t('settings.statusConnected') : src.statusText }}
+                </span>
                 <template v-if="src.lastIndexed">
                   <span class="sep">·</span>
-                  <span>last read <strong>{{ fmtRelative(src.lastIndexed) }}</strong></span>
+                  <span>{{ isZh ? '最近读取' : 'last read' }} <strong>{{ fmtRelative(src.lastIndexed) }}</strong></span>
                 </template>
                 <template v-if="src.sessionCount">
                   <span class="sep">·</span>
-                  <span><strong>{{ src.sessionCount }}</strong> sessions</span>
+                  <span><strong>{{ src.sessionCount }}</strong> {{ isZh ? '个会话' : 'sessions' }}</span>
                 </template>
               </div>
             </div>
           </div>
           <div class="source-card-body">
-            <div class="path-input">
+            <div class="control-bar">
               <input class="path-field" :class="{ error: src.status === 'error' }" type="text" :value="src.path" spellcheck="false" readonly/>
-              <button class="btn" @click="browseSourcePath(src)">
-                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
-                  <path d="M2.5 3.5h3.5l1.2 1.2h4.3a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"/>
-                </svg>
-                Browse…
-              </button>
+              <div class="control-bar-actions">
+                <button class="btn action-btn" @click="browseSourcePath(src)">
+                  <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+                    <path d="M2.5 3.5h3.5l1.2 1.2h4.3a1 1 0 0 1 1 1V11a1 1 0 0 1-1 1H2.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1z"/>
+                  </svg>
+                  {{ t('settings.browse') }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -293,34 +353,53 @@ function fmtRelative(iso) {
       <!-- Index -->
       <section class="settings-section">
         <div class="settings-section-head">
-          <h2>Index location</h2>
-          <p>SQLite database where Trajex caches the unified session index.</p>
+          <h2>{{ t('settings.indexTitle') }}</h2>
+          <p>{{ t('settings.subtitle') }}</p>
         </div>
-        <div class="path-input" style="max-width: 480px;">
-          <input class="path-field" type="text" :value="dbPath" spellcheck="false" readonly/>
-          <button class="btn" @click="revealDb">Reveal</button>
+
+        <div class="form-row">
+          <div class="form-label">{{ t('settings.database') }}</div>
+          <div class="form-control">
+            <div class="control-bar">
+              <input class="path-field" type="text" :value="dbPath" spellcheck="false" readonly/>
+              <div class="control-bar-actions">
+                <button class="btn action-btn" @click="revealDb">{{ t('settings.reveal') }}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-label">{{ t('settings.autoRefresh') }}</div>
+          <div class="form-control">
+            <label class="toggle-label" @click.prevent="toggleAutoRefresh">
+              <span class="toggle-track" :class="{ on: autoRefresh }">
+                <span class="toggle-thumb"></span>
+              </span>
+              <span class="toggle-text">{{ t('settings.autoRefreshDesc') }}</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-label">{{ t('settings.rebuild') }}</div>
+          <div class="form-control">
+            <div class="control-bar-actions">
+              <button class="btn action-btn" :disabled="rebuilding" @click="rebuildIndex">
+                {{ rebuilding ? t('settings.rebuildingBtn') : t('settings.rebuildBtn') }}
+              </button>
+            </div>
+            <div class="reset-hint">{{ t('settings.rebuildHint') }}</div>
+            <div v-if="rebuildError" class="reset-error">{{ rebuildError }}</div>
+          </div>
         </div>
       </section>
 
-      <!-- Auto-refresh -->
+      <!-- History, snapshots & sync -->
       <section class="settings-section">
         <div class="settings-section-head">
-          <h2>Auto-refresh</h2>
-          <p>Trajex re-reads when new session files appear.</p>
-        </div>
-        <label class="toggle-label" @click.prevent="toggleAutoRefresh">
-          <span class="toggle-track" :class="{ on: autoRefresh }">
-            <span class="toggle-thumb"></span>
-          </span>
-          <span class="toggle-text">Watch data sources for changes</span>
-        </label>
-      </section>
-
-      <!-- History & snapshots -->
-      <section class="settings-section">
-        <div class="settings-section-head">
-          <h2>History &amp; snapshots</h2>
-          <p>Trajex keeps sessions after an agent deletes its own files. Snapshots let you go back.</p>
+          <h2>{{ t('settings.retentionTitle') }}</h2>
+          <p>{{ t('settings.retentionDesc') }}</p>
         </div>
 
         <div v-if="retentionError" class="status-row error settings-notice">
@@ -334,118 +413,124 @@ function fmtRelative(iso) {
 
         <div class="form-row">
           <div class="form-label">
-            Kept history
-            <div class="form-label-hint">Sessions whose source files are gone.</div>
+            {{ t('settings.keptHistory') }}
+            <div class="form-label-hint">{{ t('settings.keptHistoryHint') }}</div>
           </div>
           <div class="form-control">
             <div class="retention-stats">
-              <span><strong>{{ retention.missingSessions }}</strong> sessions fully kept</span>
-              <span class="sep">·</span>
-              <span><strong>{{ retention.partialSessions }}</strong> partially kept</span>
+              {{ t('settings.keptSummary', {
+                missing: retention.missingSessions,
+                partial: retention.partialSessions,
+                sources: retention.missingSources,
+              }) }}
             </div>
-            <div class="retention-actions">
+            <div class="control-bar">
               <select class="select" :value="purgeAge" :disabled="!!retentionBusy" @change="changePurgeAge">
-                <option v-for="option in AGE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+                <option v-for="option in ageOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
               </select>
-              <button v-if="!confirmingPurge" class="btn" :disabled="!!retentionBusy || !retention.missingSources" @click="confirmingPurge = true">
-                Remove {{ retention.missingSources }} missing sources…
-              </button>
-              <template v-else>
-                <button class="btn danger" :disabled="!!retentionBusy" @click="purgeMissing">
-                  {{ retentionBusy === 'purge' ? 'Removing…' : 'Remove permanently' }}
+              <div class="control-bar-actions">
+                <button v-if="!confirmingPurge" class="btn action-btn" :disabled="!!retentionBusy || !retention.missingSources" @click="confirmingPurge = true">
+                  {{ t('settings.purgeBtn', { n: retention.missingSources }) }}
                 </button>
-                <button class="btn subtle" :disabled="!!retentionBusy" @click="confirmingPurge = false">Cancel</button>
-              </template>
-            </div>
-            <div class="reset-hint">
-              Removes indexed history whose files no longer exist. Memories are never removed, and a snapshot is taken first.
-            </div>
-          </div>
-        </div>
-
-        <div class="form-row">
-          <div class="form-label">Snapshots</div>
-          <div class="form-control">
-            <label class="toggle-label" @click.prevent="toggleAutoSnapshot">
-              <span class="toggle-track" :class="{ on: autoSnapshot }"><span class="toggle-thumb"></span></span>
-              <span class="toggle-text">Take a snapshot every day</span>
-            </label>
-            <div class="retention-actions">
-              <span class="toggle-text">Keep</span>
-              <select class="select" :value="snapshotKeep" @change="changeSnapshotKeep">
-                <option v-for="n in KEEP_OPTIONS" :key="n" :value="n">{{ n }}</option>
-              </select>
-              <span class="toggle-text">newest</span>
-              <button class="btn" :disabled="!!retentionBusy" @click="takeSnapshot">
-                {{ retentionBusy === 'snapshot' ? 'Saving…' : 'Snapshot now' }}
-              </button>
-              <button class="btn subtle" @click="revealSnapshots">Show folder</button>
-            </div>
-            <div v-if="retention.snapshots?.length" class="snapshot-list">
-              <div v-for="snap in retention.snapshots" :key="snap.name" class="snapshot-row">
-                <span class="snapshot-time">{{ fmtSnapshotTime(snap.createdAt) }}</span>
-                <span class="snapshot-meta">{{ REASON_LABELS[snap.reason] || snap.reason }} · {{ fmtBytes(snap.bytes) }}</span>
-                <template v-if="confirmingRestore === snap.name">
-                  <button class="btn danger" :disabled="!!retentionBusy" @click="restoreSnapshot(snap.name)">
-                    {{ retentionBusy === 'restore' ? 'Restoring…' : 'Replace current index' }}
+                <template v-else>
+                  <button class="btn danger" :disabled="!!retentionBusy" @click="purgeMissing">
+                    {{ retentionBusy === 'purge' ? t('settings.purging') : t('settings.purgeConfirm') }}
                   </button>
-                  <button class="btn subtle" :disabled="!!retentionBusy" @click="confirmingRestore = ''">Cancel</button>
+                  <button class="btn subtle" :disabled="!!retentionBusy" @click="confirmingPurge = false">{{ t('settings.cancel') }}</button>
                 </template>
-                <button v-else class="btn subtle" :disabled="!!retentionBusy" @click="confirmingRestore = snap.name">Restore…</button>
               </div>
             </div>
-            <div v-else class="reset-hint">No snapshots yet.</div>
-            <div class="reset-hint">
-              Restoring replaces the index with the snapshot, keeps your current memories, saves the current index
-              as a snapshot first, and then catches up with your session files.
-            </div>
+            <div class="reset-hint">{{ t('settings.purgeHint') }}</div>
           </div>
         </div>
 
         <div class="form-row">
           <div class="form-label">
-            Folder sync
-            <div class="form-label-hint">iCloud Drive, Dropbox, Syncthing, or NAS.</div>
+            {{ t('settings.snapshots') }}
+            <div class="form-label-hint">{{ t('settings.snapshotsHint') }}</div>
           </div>
           <div class="form-control">
-            <div class="input-with-btn">
+            <label class="toggle-label" @click.prevent="toggleAutoSnapshot">
+              <span class="toggle-track" :class="{ on: autoSnapshot }"><span class="toggle-thumb"></span></span>
+              <span class="toggle-text">{{ t('settings.dailySnapshot') }}</span>
+            </label>
+            <div class="control-bar">
+              <select class="select" :value="snapshotKeep" @change="changeSnapshotKeep">
+                <option v-for="n in KEEP_OPTIONS" :key="n" :value="n">{{ t('settings.keepCount', { n }) }}</option>
+              </select>
+              <div class="control-bar-actions">
+                <button class="btn action-btn" :disabled="!!retentionBusy" @click="takeSnapshot">
+                  {{ retentionBusy === 'snapshot' ? t('settings.savingSnapshot') : t('settings.snapshotNow') }}
+                </button>
+                <button class="btn" @click="revealSnapshots">{{ t('settings.showFolder') }}</button>
+              </div>
+            </div>
+            <div v-if="retention.snapshots?.length" class="item-table">
+              <div v-for="snap in retention.snapshots" :key="snap.name" class="item-row">
+                <span class="item-primary">{{ fmtSnapshotTime(snap.createdAt) }}</span>
+                <span class="item-meta">{{ reasonLabel(snap.reason) }} · {{ fmtBytes(snap.bytes) }}</span>
+                <div class="item-actions">
+                  <template v-if="confirmingRestore === snap.name">
+                    <button class="btn danger" :disabled="!!retentionBusy" @click="restoreSnapshot(snap.name)">
+                      {{ retentionBusy === 'restore' ? t('settings.restoring') : t('settings.restoreConfirm') }}
+                    </button>
+                    <button class="btn subtle" :disabled="!!retentionBusy" @click="confirmingRestore = ''">{{ t('settings.cancel') }}</button>
+                  </template>
+                  <button v-else class="btn subtle" :disabled="!!retentionBusy" @click="confirmingRestore = snap.name">{{ t('settings.restore') }}</button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="reset-hint">{{ t('settings.noSnapshots') }}</div>
+            <div class="reset-hint">{{ t('settings.snapshotHint') }}</div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-label">
+            {{ t('settings.folderSync') }}
+            <div class="form-label-hint">{{ t('settings.folderSyncHint') }}</div>
+          </div>
+          <div class="form-control">
+            <div class="control-bar">
               <input
                 type="text"
-                class="input mono"
+                class="path-field"
                 :value="syncDir"
-                placeholder="No sync folder selected"
+                :placeholder="t('settings.syncFolderPlaceholder')"
                 readonly
               />
-              <button class="btn" :disabled="!!retentionBusy" @click="browseSyncDir">Browse…</button>
-              <button v-if="syncDir" class="btn subtle" :disabled="!!retentionBusy" @click="clearSyncDir">Clear</button>
+              <div class="control-bar-actions">
+                <button class="btn action-btn" :disabled="!!retentionBusy" @click="browseSyncDir">{{ t('settings.selectFolder') }}</button>
+                <button v-if="syncDir" class="btn subtle" :disabled="!!retentionBusy" @click="clearSyncDir">{{ t('settings.clear') }}</button>
+              </div>
             </div>
-            <div class="retention-actions">
-              <span class="toggle-text">This device</span>
+            <div class="control-bar">
               <input
                 v-model="deviceName"
                 type="text"
-                class="input"
-                style="max-width: 180px;"
-                placeholder="Device name"
+                class="path-field"
+                :placeholder="t('settings.deviceNamePlaceholder')"
                 @change="saveDeviceName"
               />
-              <button class="btn" :disabled="!!retentionBusy || !syncDir" @click="syncNow">
-                {{ retentionBusy === 'sync' ? 'Syncing…' : 'Sync now' }}
-              </button>
-            </div>
-            <div v-if="retention.peers?.length" class="snapshot-list">
-              <div v-for="peer in retention.peers" :key="peer.deviceId" class="snapshot-row">
-                <span class="snapshot-time">{{ peer.deviceName }}</span>
-                <span class="snapshot-meta">
-                  {{ peer.sessions }} sessions
-                  <template v-if="peer.lastSyncedAt"> · synced {{ fmtSnapshotTime(peer.lastSyncedAt) }}</template>
-                </span>
-                <button class="btn subtle" :disabled="!!retentionBusy" @click="removePeer(peer.deviceId)">Remove</button>
+              <div class="control-bar-actions">
+                <button class="btn action-btn" :disabled="!!retentionBusy || !syncDir" @click="syncNow">
+                  {{ retentionBusy === 'sync' ? t('settings.syncing') : t('settings.syncNow') }}
+                </button>
               </div>
             </div>
-            <div class="reset-hint">
-              Each device writes its own read-only shard in <code>devices/&lt;deviceId&gt;.sqlite</code> and imports other devices' shards without lock conflicts.
+            <div v-if="retention.peers?.length" class="item-table">
+              <div v-for="peer in retention.peers" :key="peer.deviceId" class="item-row">
+                <span class="item-primary">{{ peer.deviceName }}</span>
+                <span class="item-meta">
+                  {{ t('settings.peerMeta', { n: peer.sessions }) }}
+                  <template v-if="peer.lastSyncedAt"> · {{ t('settings.peerSyncedAt', { time: fmtSnapshotTime(peer.lastSyncedAt) }) }}</template>
+                </span>
+                <div class="item-actions">
+                  <button class="btn subtle" :disabled="!!retentionBusy" @click="removePeer(peer.deviceId)">{{ t('settings.removePeer') }}</button>
+                </div>
+              </div>
             </div>
+            <div class="reset-hint">{{ t('settings.syncExplain') }}</div>
           </div>
         </div>
       </section>
@@ -453,28 +538,18 @@ function fmtRelative(iso) {
       <!-- About -->
       <section class="settings-section last">
         <div class="settings-section-head">
-          <h2>About</h2>
-          <p>The kind of details you don't usually need.</p>
+          <h2>{{ t('settings.aboutTitle') }}</h2>
         </div>
         <div class="form-row">
-          <div class="form-label">Version</div>
-          <div class="form-control version-text">
-            Trajex {{ version }}
+          <div class="form-label">{{ t('settings.version') }}</div>
+          <div class="form-control">
+            <div class="version-text">Trajex {{ version }}</div>
           </div>
         </div>
         <div class="form-row">
-          <div class="form-label">Reset</div>
+          <div class="form-label">{{ t('settings.storage') }}</div>
           <div class="form-control">
-            <div class="reset-actions">
-              <button class="btn" :disabled="rebuilding" @click="rebuildIndex">
-                {{ rebuilding ? 'Rebuilding…' : 'Rebuild index' }}
-              </button>
-            </div>
-            <div class="reset-hint">
-              Rebuilding re-reads your coding agent session data. It keeps memories and history whose files are gone,
-              and takes a snapshot first.
-            </div>
-            <div v-if="rebuildError" class="reset-error">{{ rebuildError }}</div>
+            <div class="version-text">{{ t('settings.storageDesc') }}</div>
           </div>
         </div>
       </section>
@@ -485,26 +560,26 @@ function fmtRelative(iso) {
 
 <style scoped>
 .settings-wrap { flex: 1; overflow-y: auto; min-height: 0; }
-.settings-content { max-width: 720px; margin: 0 auto; padding: 36px 32px 80px; }
+.settings-content { max-width: 740px; margin: 0 auto; padding: 36px 32px 80px; }
 
-.settings-section { margin-bottom: 44px; }
+.settings-section { margin-bottom: 40px; }
 .settings-section.last { margin-bottom: 0; }
 .settings-section-head {
-  margin-bottom: 16px; padding-bottom: 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.18);
+  margin-bottom: 14px; padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.16);
 }
 .settings-section-head h2 {
-  font-size: 18px; font-weight: 600;
+  font-size: 17px; font-weight: 600;
   color: var(--fg); letter-spacing: -0.01em; margin-bottom: 2px;
 }
 .settings-section-head p {
-  font-size: 13px; color: var(--muted);
+  font-size: 12.5px; color: var(--muted);
 }
 
 /* Source cards */
 .source-card {
-  padding: 18px; border: 1px solid rgba(255,255,255,0.18); border-radius: 8px;
-  background: rgba(0,0,0,0.18); margin-bottom: 12px;
+  padding: 16px; border: 1px solid rgba(255,255,255,0.16); border-radius: 8px;
+  background: rgba(0,0,0,0.18); margin-bottom: 10px;
   transition: border-color 0.15s;
 }
 [data-theme='light'] .settings-section-head { border-color: var(--hairline); }
@@ -513,10 +588,10 @@ function fmtRelative(iso) {
 [data-theme='light'] .source-card:hover { border-color: var(--hairline-strong); }
 .source-card.error { border-color: rgba(248,113,113,0.25); }
 .source-card.warn { border-color: rgba(251,191,36,0.20); }
-.source-card-head { margin-bottom: 14px; }
+.source-card-head { margin-bottom: 12px; }
 .source-card-info { flex: 1; min-width: 0; }
 .source-card-name {
-  font-size: 14px; color: var(--fg); font-weight: 600; letter-spacing: -0.005em;
+  font-size: 13.5px; color: var(--fg); font-weight: 600; letter-spacing: -0.005em;
   display: flex; align-items: baseline; gap: 8px;
 }
 .source-card-name .vendor { font-size: 11.5px; color: var(--muted); font-weight: 400; }
@@ -541,88 +616,149 @@ function fmtRelative(iso) {
 .source-card-status strong { color: var(--fg-2); font-weight: 500; }
 .source-card-body { display: flex; flex-direction: column; gap: 10px; }
 
+/* Strict 2-column form grid: labels and first control row share a 28px baseline */
 .form-row {
-  display: grid; grid-template-columns: 180px 1fr;
-  gap: 24px; padding: 14px 0; align-items: start;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 24px;
+  padding: 14px 0;
+  align-items: start;
 }
-.form-row + .form-row { border-top: 1px solid rgba(255,255,255,0.14); }
+.form-row + .form-row { border-top: 1px solid rgba(255,255,255,0.12); }
 [data-theme='light'] .form-row + .form-row { border-color: var(--hairline); }
-.form-label { font-size: 13px; color: var(--fg-2); font-weight: 500; padding-top: 6px; }
+.form-label {
+  font-size: 13px; color: var(--fg-2); font-weight: 500;
+  line-height: 20px; padding-top: 4px;
+}
 .form-label-hint {
-  font-size: 11.5px; color: var(--muted); margin-top: 4px; font-weight: 400;
+  font-size: 11.5px; color: var(--muted); margin-top: 3px; font-weight: 400; line-height: 1.4;
 }
-.form-label-hint code {
-  font-family: var(--font-mono); font-style: normal; font-size: 10.5px;
-  padding: 1px 4px; background: var(--theme-code-bg); border-radius: 3px; color: var(--muted);
+.form-control {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
 }
-.form-control { display: flex; flex-direction: column; gap: 8px; }
 
-.path-input { display: flex; gap: 6px; }
-.path-field {
-  flex: 1; height: 28px; padding: 0 10px;
-  background: var(--theme-code-bg); border: 1px solid rgba(255,255,255,0.24);
-  border-radius: 5px; font-family: var(--font-mono); font-size: 12px;
-  color: var(--fg); min-width: 0; transition: all 0.12s;
+/* Unified [ 1fr field/select ] + [ right-aligned action buttons ] row */
+.control-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
 }
-.path-field:focus { outline: 0; border-color: var(--accent); background: var(--theme-code-bg); box-shadow: 0 0 0 2px var(--accent-soft); }
-[data-theme='light'] .path-field { border-color: var(--hairline-strong); }
+.control-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.path-field, .select {
+  box-sizing: border-box;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  background: var(--theme-code-bg);
+  border: 1px solid rgba(255,255,255,0.22);
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--fg);
+  min-width: 0;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.path-field { font-family: var(--font-mono); }
+.path-field::placeholder { color: var(--muted-2); font-family: var(--font-sans); }
+.path-field:focus, .select:focus {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+[data-theme='light'] .path-field,
+[data-theme='light'] .select {
+  border-color: var(--hairline-strong);
+  background: var(--surface);
+}
 .path-field.error { border-color: rgba(248,113,113,0.4); }
-.path-field.error:focus { border-color: #f87171; box-shadow: 0 0 0 2px rgba(248,113,113,0.12); }
-.tz-field { max-width: 240px; }
 
 .btn {
-  display: inline-flex; align-items: center; gap: 6px;
+  box-sizing: border-box;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   height: 28px; padding: 0 12px;
-  border: 1px solid rgba(255,255,255,0.24); border-radius: 5px;
+  border: 1px solid rgba(255,255,255,0.22); border-radius: 5px;
   background: var(--surface); color: var(--fg-2);
   font-size: 12px; font-weight: 500; cursor: pointer;
   transition: all 0.12s; white-space: nowrap;
 }
-.btn:hover { background: var(--surface-strong); color: var(--fg); border-color: var(--hairline-vivid); }
+.btn.action-btn { min-width: 112px; }
+.btn:hover:not(:disabled) { background: var(--surface-strong); color: var(--fg); border-color: var(--hairline-vivid); }
 [data-theme='light'] .btn { border-color: var(--hairline-strong); }
-.btn:disabled { opacity: 0.4; cursor: default; }
-.btn.subtle { background: transparent; border-color: transparent; color: var(--muted); }
-.btn.subtle:hover { background: var(--surface); color: var(--fg-2); }
+.btn:disabled { opacity: 0.42; cursor: default; }
+.btn.subtle { background: transparent; border-color: transparent; color: var(--muted); padding: 0 8px; }
+.btn.subtle:hover:not(:disabled) { background: var(--surface); color: var(--fg-2); }
+.btn.danger { border-color: rgba(248,113,113,0.45); color: #f87171; }
+.btn.danger:hover:not(:disabled) { background: rgba(248,113,113,0.10); color: #fca5a5; }
 .btn svg { width: 13px; height: 13px; }
 
+/* Segmented toggle for language / theme */
+.segmented {
+  display: inline-flex;
+  align-self: flex-start;
+  height: 28px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--theme-code-bg);
+  border: 1px solid rgba(255,255,255,0.18);
+  gap: 2px;
+}
+[data-theme='light'] .segmented {
+  border-color: var(--hairline-strong);
+  background: var(--surface);
+}
+.seg-btn {
+  height: 22px;
+  padding: 0 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.seg-btn:hover { color: var(--fg-2); }
+.seg-btn.active {
+  background: var(--surface-strong);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+}
+
 .status-row {
-  display: flex; align-items: center; gap: 14px;
+  display: flex; align-items: center; gap: 10px;
   padding: 8px 12px; background: rgba(0,0,0,0.2);
   border: 1px solid var(--hairline); border-radius: 5px;
   font-family: var(--font-mono); font-size: 11.5px; flex-wrap: wrap;
 }
-.status-row.ok { border-color: rgba(52,211,153,0.20); background: rgba(52,211,153,0.04); }
-.status-row.warn { border-color: rgba(251,191,36,0.20); background: rgba(251,191,36,0.04); }
-.status-row.error { border-color: rgba(248,113,113,0.20); background: rgba(248,113,113,0.04); }
-.settings-notice { margin-bottom: 10px; word-break: break-all; }
+.status-row.ok { border-color: rgba(52,211,153,0.25); background: rgba(52,211,153,0.06); }
+.status-row.warn { border-color: rgba(251,191,36,0.25); background: rgba(251,191,36,0.06); }
+.status-row.error { border-color: rgba(248,113,113,0.25); background: rgba(248,113,113,0.06); }
+.settings-notice { margin-bottom: 10px; word-break: break-word; }
 
-.status-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-  position: relative;
-}
-.status-dot.ok { background: #34d399; box-shadow: 0 0 6px rgba(52,211,153,0.5); }
-.status-dot.warn { background: #fbbf24; box-shadow: 0 0 6px rgba(251,191,36,0.5); }
-.status-dot.error { background: #f87171; box-shadow: 0 0 6px rgba(248,113,113,0.5); }
-.status-dot.ok::before {
-  content: ''; position: absolute; inset: -3px;
-  border-radius: 50%; border: 1px solid #34d399; opacity: 0.5;
-  animation: pulse 1.6s ease-out infinite;
-}
-@keyframes pulse { 0% { transform: scale(0.8); opacity: 0.5; } 100% { transform: scale(1.6); opacity: 0; } }
-.status-text { color: var(--fg-2); font-weight: 500; }
-.status-text.error { color: #f87171; }
-.status-meta { display: flex; gap: 6px; color: var(--muted); align-items: center; flex-wrap: wrap; }
-.status-meta strong { color: var(--fg-2); font-weight: 500; }
-.status-meta .sep { color: var(--muted-2); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.status-dot.ok { background: #34d399; }
+.status-dot.warn { background: #fbbf24; }
+.status-dot.error { background: #f87171; }
 
-.toggle-label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
-.toggle-input { position: absolute; opacity: 0; width: 0; height: 0; }
+.toggle-label {
+  min-height: 28px;
+  display: inline-flex; align-items: center; gap: 8px;
+  cursor: pointer; align-self: flex-start;
+}
 .toggle-track {
-  position: relative; width: 30px; height: 16px;
+  position: relative; width: 30px; height: 16px; flex-shrink: 0;
   background: var(--surface-strong); border: 1px solid var(--hairline-strong);
   border-radius: 8px; transition: all 0.15s;
 }
-.toggle-track.on { background: rgba(167,139,250,0.12); border-color: rgba(167,139,250,0.5); }
+.toggle-track.on { background: rgba(167,139,250,0.16); border-color: rgba(167,139,250,0.55); }
 .toggle-thumb {
   position: absolute; top: 2px; left: 2px;
   width: 10px; height: 10px; border-radius: 50%;
@@ -633,42 +769,64 @@ function fmtRelative(iso) {
   box-shadow: 0 0 6px rgba(167,139,250,0.5);
 }
 .toggle-text { font-size: 12.5px; color: var(--fg-2); }
-.toggle-text code {
-  font-family: var(--font-mono); font-size: 11px;
-  padding: 1px 4px; background: rgba(0,0,0,0.3); border-radius: 3px;
-}
 
 .version-text {
-  font-family: var(--font-mono); font-size: 12px; color: var(--fg-2); padding-top: 6px;
+  min-height: 28px; display: flex; align-items: center;
+  font-family: var(--font-mono); font-size: 12px; color: var(--fg-2);
 }
 
-.reset-error { margin-top: 8px; color: #f87171; font-size: 11.5px; }
+.reset-hint {
+  font-size: 11.5px; color: var(--muted); line-height: 1.5;
+}
+.reset-error { margin-top: 4px; color: #f87171; font-size: 11.5px; }
 
 .retention-stats {
-  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
-  font-size: 12.5px; color: var(--muted); padding-top: 6px;
+  min-height: 28px;
+  display: flex; align-items: center;
+  font-size: 12.5px; color: var(--fg-2);
 }
-.retention-stats strong { color: var(--fg-2); font-weight: 500; }
-.retention-stats .sep { color: var(--muted-3); }
-.retention-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.select {
-  height: 28px; padding: 0 8px; border-radius: 5px;
-  border: 1px solid rgba(255,255,255,0.24); background: var(--surface);
-  color: var(--fg-2); font-size: 12px;
+
+/* Aligned table container for snapshots and synced peers */
+.item-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 5px;
+  background: var(--theme-code-bg);
+  overflow: hidden;
 }
-[data-theme='light'] .select { border-color: var(--hairline-strong); }
-.btn.danger { border-color: rgba(248,113,113,0.45); color: #f87171; }
-.btn.danger:hover { background: rgba(248,113,113,0.10); color: #fca5a5; }
-.snapshot-list { display: flex; flex-direction: column; gap: 2px; }
-.snapshot-row {
-  display: grid; grid-template-columns: minmax(150px, auto) 1fr auto auto;
-  gap: 10px; align-items: center; padding: 4px 0;
-  font-size: 12px; color: var(--fg-2);
+[data-theme='light'] .item-table {
+  border-color: var(--hairline-strong);
+  background: var(--surface);
 }
-.snapshot-time { font-family: var(--font-mono); font-size: 11.5px; }
-.snapshot-meta { color: var(--muted); font-size: 11.5px; }
-.reset-actions { display: flex; gap: 8px; }
-.reset-hint {
-  font-size: 11.5px; color: var(--muted); margin-top: 6px;
+.item-row {
+  display: grid;
+  grid-template-columns: minmax(145px, auto) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--fg-2);
+}
+.item-row + .item-row {
+  border-top: 1px solid var(--hairline);
+}
+.item-primary {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.item-meta {
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 </style>

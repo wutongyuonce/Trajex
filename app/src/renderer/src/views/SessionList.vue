@@ -204,11 +204,11 @@ function trajexStyle(session) {
       <div class="empty-divider"></div>
       <div class="empty-help">
         <div class="help-row">
-          <span class="label">expected</span>
+          <span class="label">{{ t('list.expected') }}</span>
           <code>~/.claude</code>
         </div>
         <div class="help-row">
-          <span class="label">searched</span>
+          <span class="label">{{ t('list.searched') }}</span>
           <code>{{ homePath }}</code>
         </div>
       </div>
@@ -216,8 +216,8 @@ function trajexStyle(session) {
 
     <!-- Empty state: search returned nothing -->
     <div v-else-if="state.loaded && !catalogueLoading && !itemCount" class="empty">
-      No sessions here.
-      <span class="hint">{{ state.query ? 'Try a different search term.' : 'Press / to search.' }}</span>
+      {{ t('list.empty') }}
+      <span class="hint">{{ state.query ? t('list.emptyQueryHint') : t('list.emptyDefaultHint') }}</span>
     </div>
 
 
@@ -236,10 +236,10 @@ function trajexStyle(session) {
                     <span class="project-tag" v-html="projectLabel(rowAt(item.index))"></span>
                     <span class="dot"></span>
                   </template>
-                  <span>{{ rowAt(item.index).message_count || 0 }} msg</span>
+                  <span>{{ t('list.msgCount', { n: rowAt(item.index).message_count || 0 }) }}</span>
                   <template v-if="rowAt(item.index).device_id">
                     <span class="dot"></span>
-                    <span class="device-tag" :title="`Synced from ${rowAt(item.index).device_name || rowAt(item.index).device_id}`">
+                    <span class="device-tag" :title="t('list.syncedFrom', { name: rowAt(item.index).device_name || rowAt(item.index).device_id })">
                       {{ rowAt(item.index).device_name || rowAt(item.index).device_id }}
                     </span>
                   </template>
@@ -247,10 +247,8 @@ function trajexStyle(session) {
                     <span class="dot"></span>
                     <span
                       class="source-gone"
-                      :title="rowAt(item.index).source_status === 'missing'
-                        ? 'The agent deleted this session\'s files. Trajex kept the history.'
-                        : 'Some of this session\'s files were deleted. Trajex kept their history.'"
-                    >{{ rowAt(item.index).source_status === 'missing' ? 'source deleted' : 'partly deleted' }}</span>
+                      :title="rowAt(item.index).source_status === 'missing' ? t('list.sourceDeletedTitle') : t('list.partlyDeletedTitle')"
+                    >{{ rowAt(item.index).source_status === 'missing' ? t('list.sourceDeleted') : t('list.partlyDeleted') }}</span>
                   </template>
                 </div>
               </div>
@@ -259,11 +257,11 @@ function trajexStyle(session) {
           </template>
           <div v-else-if="item.index === totals.normal" class="fold-banner" :class="{ expanded: showNoise }" @click="showNoise = !showNoise">
             <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 2.5l3 3.5-3 3.5"/></svg>
-            <div class="body"><strong>{{ totals.quiet }}</strong> quiet sessions hidden — untitled, likely tests or incomplete runs.</div>
-            <span v-if="!showNoise" class="reveal-link">Show all</span>
+            <div class="body">{{ t('list.quietHidden', { n: totals.quiet }) }}</div>
+            <span v-if="!showNoise" class="reveal-link">{{ t('list.showAll') }}</span>
           </div>
-          <div v-else-if="item.index === totals.normal + 1" class="noise-group-head">{{ totals.quiet }} sessions · untitled</div>
-          <button v-else-if="item.index === itemCount - 1" class="noise-fold-bottom" @click="showNoise = false">Collapse</button>
+          <div v-else-if="item.index === totals.normal + 1" class="noise-group-head">{{ t('list.noiseGroupHead', { n: totals.quiet }) }}</div>
+          <button v-else-if="item.index === itemCount - 1" class="noise-fold-bottom" @click="showNoise = false">{{ t('list.collapse') }}</button>
           <div v-else class="srow loading-row"></div>
         </div>
       </div>
@@ -281,24 +279,31 @@ function trajexStyle(session) {
 .session-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .session-list { position: relative; }
 .virtual-row { position: absolute; top: 0; left: 0; width: 100%; }
-.srow { box-sizing: border-box; height: 72px; min-height: 0; overflow: hidden; }
-.srow.noise { height: 64px; }
-.fold-banner { box-sizing: border-box; height: 56px; }
+.srow { box-sizing: border-box; height: 60px; min-height: 0; overflow: hidden; }
+.srow.noise { height: 60px; }
+.fold-banner { box-sizing: border-box; height: 48px; }
 .noise-group-head { box-sizing: border-box; height: 28px; }
 .noise-fold-bottom { box-sizing: border-box; height: 40px; }
 
 .srow {
   display: grid;
   grid-template-columns: 1fr auto;
-  align-items: start;
+  align-items: center;
   column-gap: 12px;
-  padding: 12px 16px;
-  min-height: var(--row-h-session);
+  padding: 0 16px;
   cursor: pointer;
   user-select: none;
   border-bottom: 1px solid var(--hairline);
   transition: background 0.06s;
   position: relative;
+}
+.srow-trajex {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  border-radius: 0 2px 2px 0;
 }
 .srow:hover {
   background: rgba(255, 255, 255, 0.025);

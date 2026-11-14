@@ -121,8 +121,8 @@
     width: 2px; background: var(--muted-2);
   }
   .srow-trajex {
-    position: absolute; left: 0; bottom: 0;
-    width: 3px; border-radius: 1.5px 1.5px 0 0;
+    position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    width: 3px; border-radius: 0 2px 2px 0;
   }
   .srow-body { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
   .srow-title {

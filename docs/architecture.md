@@ -66,10 +66,17 @@ SQLite（schema.sql）  ──►  query.ts（search / messages / sessions / fai
 | 新增一个 Agent 来源 | `providers/types.ts` 契约、`builtins.ts` 注册、ADR-0002/0004；参考 `deepseek.ts` 与 ADR-0013 |
 | 查询结果或参数 | `query.ts` + `trajex-skill/references/api-reference.md` + `tests/query.test.mjs` |
 | 表结构 | `schema.sql` + `schema-migrations.ts`；`tests/provider-schema-stability.test.mjs` 固定了 schema 哈希 |
-| 桌面页面 | `app/src/renderer/src/views/*.vue`，数据经 `data.js` → `window.trajex` → `app/src/main/index.ts` 的 IPC |
+| 桌面页面 | `app/src/renderer/src/views/*.vue`，数据经 `data.js` → `window.trajex` → `app/src/main/index.ts` 的 IPC，文案统一走 `i18n.js` |
 | 实时刷新、监听 | `app/src/main/indexer-service.ts`、`packages/adaptive-watcher/`、ADR-0011 |
 
-## 5. 验证
+## 5. 桌面端 UI 视觉对齐与多语言规范
+
+- **双列设置网格（`.form-row`）：** 左列固定 `180px`，右列 `minmax(0, 1fr)`，间距 `24px`。左列主标题（`line-height: 20px; padding-top: 4px`）与右列首行 `28px` 控件共享同一水平基线；右列所有控件行必须从右列左边缘（`x = 0`）平齐起排，禁止在输入框左侧散放内联文字导致上下两行输入框左边缘错位。
+- **操作栏对齐（`.control-bar`）：** 凡「输入框/下拉框 + 操作按钮」组合统一采用 `grid-template-columns: minmax(0, 1fr) auto; gap: 8px;`，输入框/下拉框与按钮高度统一为 `28px`，右侧主操作按钮统一 `min-width: 112px` 居中对齐，确保上下相邻行的输入框左右边缘与按钮左右边缘完全共线。
+- **会话列表行（`.srow`）：** 固定统一行高 `60px`，内容垂直居中（`align-items: center`）；左侧年龄/来源色条（`.srow-trajex`）垂直居中嵌入在标题与元信息左侧（`top: 50%; transform: translateY(-50%)`），不占用独立行。
+- **中英双语（`app/src/renderer/src/i18n.js`）：** 侧边栏顶部品牌区与设置页均提供一键中/英切换，所有视图、工具栏、空状态与提示文案均通过 `t()` 响应式渲染并持久化到 `localStorage('trajex:locale')`。
+
+## 6. 验证
 
 ```bash
 npm test            # 全部单元与集成测试（会先构建 CLI）

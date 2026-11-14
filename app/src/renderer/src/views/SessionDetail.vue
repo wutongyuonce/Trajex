@@ -27,6 +27,7 @@ import {
   createSessionSegments,
   findCurrentSessionSegment,
 } from '../session-segment-navigation.mjs';
+import { isZh, t } from '../i18n.js';
 import FlapNumber from '../components/FlapNumber.vue';
 import SessionTimelineRow from '../components/SessionTimelineRow.vue';
 import {
@@ -591,7 +592,7 @@ function navigateToSubagent(agentId) {
     <div class="detail">
       <!-- Loading state -->
       <div v-if="loading || !timelineReady" class="empty first-open-loading">
-        Loading session...
+        {{ t('detail.loading') }}
       </div>
 
       <!-- Session header -->
@@ -607,13 +608,13 @@ function navigateToSubagent(agentId) {
               via {{ sourceLabel(session.source, state.sources) }}
             </span>
           </div>
-          <div class="session-title">{{ session.title || '(untitled)' }}</div>
+          <div class="session-title">{{ session.title || t('list.untitled') }}</div>
           <div class="session-meta-inline">
-            <span>created {{ fmtRelative(new Date(session.started_at || 0).getTime()) }}</span>
+            <span>{{ isZh ? '创建于' : 'created' }} {{ fmtRelative(new Date(session.started_at || 0).getTime()) }}</span>
             <span class="dot"></span>
-            <span>last active {{ fmtRelative(new Date(session.ended_at || session.started_at || 0).getTime()) }}</span>
+            <span>{{ isZh ? '最近活跃' : 'last active' }} {{ fmtRelative(new Date(session.ended_at || session.started_at || 0).getTime()) }}</span>
             <span class="dot"></span>
-            <span>{{ session.message_count || 0 }} messages</span>
+            <span>{{ t('detail.msgs', { n: session.message_count || 0 }) }}</span>
             <template v-if="session.git_branch">
               <span class="dot"></span>
               <span>{{ session.git_branch }}</span>
@@ -624,7 +625,7 @@ function navigateToSubagent(agentId) {
             class="sidechain-toggle"
             :aria-expanded="showInactive"
             @click="showInactive = !showInactive"
-          >{{ showInactive ? 'Hide inactive branches' : `Show ${inactiveCount} inactive branch messages` }}</button>
+          >{{ showInactive ? t('detail.hideInactive') : t('detail.showInactive', { n: inactiveCount }) }}</button>
         </div>
 
         <!-- Message timeline -->

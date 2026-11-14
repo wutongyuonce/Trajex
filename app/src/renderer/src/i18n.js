@@ -1,0 +1,416 @@
+// Copyright (C) 2026 wutongyuonce and contributors.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+import { computed, ref } from 'vue';
+
+const LOCALE_KEY = 'trajex:locale';
+
+function detectInitialLocale() {
+  try {
+    const saved = localStorage.getItem(LOCALE_KEY);
+    if (saved === 'zh' || saved === 'en') return saved;
+  } catch {}
+  const nav = typeof navigator !== 'undefined' ? (navigator.language || '') : '';
+  return nav.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
+
+export const locale = ref(detectInitialLocale());
+export const isZh = computed(() => locale.value === 'zh');
+
+export function setLocale(next) {
+  const normalized = next === 'en' ? 'en' : 'zh';
+  locale.value = normalized;
+  try {
+    localStorage.setItem(LOCALE_KEY, normalized);
+  } catch {}
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = normalized === 'zh' ? 'zh-CN' : 'en';
+  }
+}
+
+export function toggleLocale() {
+  setLocale(locale.value === 'zh' ? 'en' : 'zh');
+}
+
+const MESSAGES = {
+  zh: {
+    // Navigation & Titlebar
+    'nav.sessions': '会话',
+    'nav.memory': '记忆',
+    'nav.activity': '活动',
+    'nav.settings': '设置',
+    'nav.allSessions': '全部会话',
+    'nav.session': '会话',
+    'nav.subagent': '子代理',
+    'nav.projects': '项目',
+    'nav.filterProjects': '筛选项目…',
+    'nav.noMatchingProjects': '无匹配项目',
+    'nav.quietProjects': '{n} 个静默项目',
+    'nav.sortBySessions': '按会话数排序（点击切换为最近活跃）',
+    'nav.sortByRecent': '按最近活跃排序（点击切换为会话数）',
+    'nav.switchToLight': '切换为浅色模式',
+    'nav.switchToDark': '切换为深色模式',
+    'nav.switchLocale': 'Switch to English',
+
+    // Toolbar
+    'toolbar.allSources': '全部来源',
+    'toolbar.searchSessions': '按标题或分支搜索会话…',
+    'toolbar.searchSessionsFull': '搜索会话标题与消息正文…',
+    'toolbar.searchMemories': '搜索记忆…',
+    'toolbar.fullText': '全文',
+    'toolbar.fullTextTitle': '在消息正文中搜索（全文检索）',
+    'toolbar.newest': '最新',
+    'toolbar.oldest': '最旧',
+    'toolbar.sortTitle': '切换时间排序方向',
+    'toolbar.sessionsCount': '{n} 个会话',
+    'toolbar.resultsCount': '{n} 条结果',
+    'toolbar.filesCount': '{n} 个文件',
+
+    // SessionList
+    'list.untitled': '（无标题）',
+    'list.msgCount': '{n} 条消息',
+    'list.syncedFrom': '同步自 {name}',
+    'list.sourceDeleted': '源文件已删',
+    'list.partlyDeleted': '部分已删',
+    'list.sourceDeletedTitle': 'Agent 已删除该会话的本地文件，Trajex 已为你保留历史记录。',
+    'list.partlyDeletedTitle': '该会话的部分本地文件已被删除，Trajex 已保留其历史记录。',
+    'list.noSessionsFoundTitle': '未找到会话记录',
+    'list.noSessionsFoundBody': 'Trajex 会在本地编码 Agent 目录中查找会话历史，但当前未发现任何记录。请先运行一次编码会话，或在设置中检查目录路径。',
+    'list.expected': '默认路径',
+    'list.searched': '当前主目录',
+    'list.empty': '暂无会话记录。',
+    'list.emptyQueryHint': '请尝试其他搜索关键词。',
+    'list.emptyDefaultHint': '按 / 键快速搜索。',
+    'list.quietHidden': '已折叠 {n} 个静默会话 — 无标题，通常为测试或未完成运行。',
+    'list.showAll': '展开全部',
+    'list.noiseGroupHead': '{n} 个会话 · 无标题',
+    'list.collapse': '收起',
+
+    // SessionDetail & SubagentDetail
+    'detail.backToSessions': '返回会话列表',
+    'detail.backToSession': '返回父会话',
+    'detail.msgs': '{n} 条消息',
+    'detail.tools': '{n} 次工具',
+    'detail.findInSession': '在会话中查找…',
+    'detail.noMatches': '无匹配',
+    'detail.prevMatch': '上一个匹配 (Shift+Enter)',
+    'detail.nextMatch': '下一个匹配 (Enter)',
+    'detail.clearSearch': '清除搜索 (Esc)',
+    'detail.copySessionId': '复制会话 ID',
+    'detail.copied': '已复制',
+    'detail.compacted': '上下文已压缩',
+    'detail.compactedSub': '更早的消息已被摘要替换',
+    'detail.showInactive': '展开 {n} 条已替换消息',
+    'detail.hideInactive': '收起已替换消息',
+    'detail.thinking': '思考过程',
+    'detail.pretty': '格式化',
+    'detail.raw': '原始数据',
+    'detail.subagents': '子代理',
+    'detail.workflow': '工作流',
+    'detail.loading': '正在加载会话…',
+    'detail.notFound': '未找到该会话。',
+
+    // MemoryList
+    'memory.active': '生效中',
+    'memory.archived': '已归档',
+    'memory.emptyTitle': '尚无持久记忆',
+    'memory.emptyBody': '当你在 Agent 会话中总结并确认一条值得长期保留的结论时，它会保存在这里，跨会话可检索。',
+    'memory.noResults': '没有匹配的记忆。',
+    'memory.openSession': '打开来源会话',
+    'memory.revealFile': '在访达中显示',
+    'memory.close': '关闭',
+
+    // Activity
+    'activity.title': '活动概览',
+    'activity.allSources': '全部来源',
+    'activity.sessions': '会话总数',
+    'activity.messages': '消息总数',
+    'activity.totalTokens': '总 Token',
+    'activity.activeDays': '活跃天数',
+    'activity.streak': '当前连续',
+    'activity.longestTurn': '最长单轮',
+    'activity.less': '少',
+    'activity.more': '多',
+    'activity.today': '今天',
+    'activity.yesterday': '昨天',
+    'activity.loadEarlier': '加载更早的活动记录',
+    'activity.noActivity': '暂无活动记录。',
+
+    // Settings
+    'settings.title': '设置',
+    'settings.subtitle': '配置 Trajex 读取、索引、保留与多端同步本地 Agent 历史的方式。',
+    'settings.appearanceTitle': '外观与语言',
+    'settings.appearanceDesc': '切换界面显示语言与明暗主题。',
+    'settings.language': '界面语言',
+    'settings.theme': '外观主题',
+    'settings.themeDark': '深色',
+    'settings.themeLight': '浅色',
+
+    'settings.sourcesTitle': '数据来源',
+    'settings.sourcesDesc': 'Trajex 读取编码 Agent 会话历史的本地目录。',
+    'settings.statusConnected': '已连接',
+    'settings.statusMissing': '未找到来源目录',
+    'settings.path': '路径',
+    'settings.sessions': '会话数',
+    'settings.lastIndexed': '最近索引',
+    'settings.browse': '浏览…',
+    'settings.reset': '重置',
+    'settings.reveal': '打开目录',
+
+    'settings.indexTitle': '索引',
+    'settings.database': '数据库文件',
+    'settings.memories': '记忆条目',
+    'settings.autoRefresh': '自动刷新',
+    'settings.autoRefreshDesc': '监听会话目录并在文件变化时自动更新索引',
+    'settings.rebuild': '重建索引',
+    'settings.rebuildBtn': '重建索引',
+    'settings.rebuildingBtn': '正在重建…',
+    'settings.rebuildHint': '重新读取当前存在的所有 Agent 会话文件；已保留的缺失来源历史与记忆不会被删除，并在开始前自动保存快照。',
+
+    'settings.retentionTitle': '历史保留、快照与同步',
+    'settings.retentionDesc': '当 Agent 自动清理旧文件时，Trajex 会为你保留历史；快照与多端同步让数据安全可恢复。',
+    'settings.keptHistory': '已保留历史',
+    'settings.keptHistoryHint': '本地源文件已被删除的会话',
+    'settings.keptSummary': '完整保留 {missing} 个会话 · 部分保留 {partial} 个会话（共 {sources} 个缺失来源）',
+    'settings.ageAny': '全部缺失来源（不限时间）',
+    'settings.age7': '缺失满 7 天以上',
+    'settings.age30': '缺失满 30 天以上',
+    'settings.age90': '缺失满 90 天以上',
+    'settings.purgeBtn': '清理 {n} 个缺失来源…',
+    'settings.purgeConfirm': '确认永久删除',
+    'settings.purging': '正在清理…',
+    'settings.cancel': '取消',
+    'settings.purgeHint': '仅清理源文件已不存在的索引记录；持久记忆永不删除，且清理前会自动保存一份快照。',
+
+    'settings.snapshots': '索引快照',
+    'settings.snapshotsHint': '自动或手动保存整库备份',
+    'settings.dailySnapshot': '每天自动保存一份快照',
+    'settings.keepCount': '保留最新 {n} 份快照',
+    'settings.snapshotNow': '立即快照',
+    'settings.savingSnapshot': '正在保存…',
+    'settings.showFolder': '打开目录',
+    'settings.restore': '恢复…',
+    'settings.restoreConfirm': '确认替换当前索引',
+    'settings.restoring': '正在恢复…',
+    'settings.noSnapshots': '暂无快照。',
+    'settings.snapshotHint': '恢复快照会先将当前索引备份为一份新快照，保留你当前的全部记忆，并在恢复后增量同步本地会话。',
+    'settings.reason.daily': '每日自动',
+    'settings.reason.manual': '手动保存',
+    'settings.reason.pre-upgrade': '升级前备份',
+    'settings.reason.pre-rebuild': '重建前备份',
+    'settings.reason.pre-replay': '重放前备份',
+    'settings.reason.pre-purge': '清理前备份',
+    'settings.reason.pre-restore': '恢复前备份',
+
+    'settings.folderSync': '多端文件夹同步',
+    'settings.folderSyncHint': 'iCloud Drive、Dropbox、Syncthing 或 NAS',
+    'settings.syncFolderPlaceholder': '选择 iCloud Drive 或网盘中的同步文件夹…',
+    'settings.selectFolder': '选择目录…',
+    'settings.clear': '清除',
+    'settings.deviceNamePlaceholder': '当前设备名称（如 MacBook-Pro）',
+    'settings.syncNow': '立即同步',
+    'settings.syncing': '正在同步…',
+    'settings.peerMeta': '{n} 个会话',
+    'settings.peerSyncedAt': '同步于 {time}',
+    'settings.removePeer': '移除',
+    'settings.syncExplain': '本地数据库仍保存在 ~/.trajex/trajex.sqlite；每台设备将自己的只读分片导出至同步目录的 devices/<设备ID>.sqlite，并自动导入其他设备的分片，绝无并发锁冲突。',
+
+    'settings.aboutTitle': '关于',
+    'settings.version': '版本',
+    'settings.storage': '存储方式',
+    'settings.storageDesc': '所有数据均保存在本机 SQLite 数据库中',
+  },
+  en: {
+    // Navigation & Titlebar
+    'nav.sessions': 'Sessions',
+    'nav.memory': 'Memory',
+    'nav.activity': 'Activity',
+    'nav.settings': 'Settings',
+    'nav.allSessions': 'All Sessions',
+    'nav.session': 'Session',
+    'nav.subagent': 'Subagent',
+    'nav.projects': 'PROJECTS',
+    'nav.filterProjects': 'Filter projects…',
+    'nav.noMatchingProjects': 'No matching projects',
+    'nav.quietProjects': '{n} quiet projects',
+    'nav.sortBySessions': 'Sorted by session count (click for recent)',
+    'nav.sortByRecent': 'Sorted by recent activity (click for count)',
+    'nav.switchToLight': 'Switch to light mode',
+    'nav.switchToDark': 'Switch to dark mode',
+    'nav.switchLocale': '切换到中文',
+
+    // Toolbar
+    'toolbar.allSources': 'All sources',
+    'toolbar.searchSessions': 'Search sessions by title or branch…',
+    'toolbar.searchSessionsFull': 'Search sessions and message text…',
+    'toolbar.searchMemories': 'Search memories…',
+    'toolbar.fullText': 'Full text',
+    'toolbar.fullTextTitle': 'Include message bodies in search',
+    'toolbar.newest': 'Newest',
+    'toolbar.oldest': 'Oldest',
+    'toolbar.sortTitle': 'Toggle sort direction',
+    'toolbar.sessionsCount': '{n} sessions',
+    'toolbar.resultsCount': '{n} results',
+    'toolbar.filesCount': '{n} files',
+
+    // SessionList
+    'list.untitled': '(untitled)',
+    'list.msgCount': '{n} msg',
+    'list.syncedFrom': 'Synced from {name}',
+    'list.sourceDeleted': 'source deleted',
+    'list.partlyDeleted': 'partly deleted',
+    'list.sourceDeletedTitle': "The agent deleted this session's files. Trajex kept the history.",
+    'list.partlyDeletedTitle': "Some of this session's files were deleted. Trajex kept their history.",
+    'list.noSessionsFoundTitle': 'No sessions found',
+    'list.noSessionsFoundBody': 'Trajex looked for coding agent session history in your home directory, but nothing turned up. Run a session first, or check your paths in Settings.',
+    'list.expected': 'expected',
+    'list.searched': 'searched',
+    'list.empty': 'No sessions here.',
+    'list.emptyQueryHint': 'Try a different search term.',
+    'list.emptyDefaultHint': 'Press / to search.',
+    'list.quietHidden': '{n} quiet sessions hidden — untitled, likely tests or incomplete runs.',
+    'list.showAll': 'Show all',
+    'list.noiseGroupHead': '{n} sessions · untitled',
+    'list.collapse': 'Collapse',
+
+    // SessionDetail & SubagentDetail
+    'detail.backToSessions': 'Back to sessions',
+    'detail.backToSession': 'Back to session',
+    'detail.msgs': '{n} msgs',
+    'detail.tools': '{n} tools',
+    'detail.findInSession': 'Find in session…',
+    'detail.noMatches': 'No matches',
+    'detail.prevMatch': 'Previous match (Shift+Enter)',
+    'detail.nextMatch': 'Next match (Enter)',
+    'detail.clearSearch': 'Clear search (Esc)',
+    'detail.copySessionId': 'Copy session ID',
+    'detail.copied': 'Copied',
+    'detail.compacted': 'Compacted',
+    'detail.compactedSub': 'Earlier messages were replaced',
+    'detail.showInactive': 'Show {n} inactive messages',
+    'detail.hideInactive': 'Hide inactive messages',
+    'detail.thinking': 'Thinking',
+    'detail.pretty': 'Pretty',
+    'detail.raw': 'Raw',
+    'detail.subagents': 'Subagents',
+    'detail.workflow': 'Workflow',
+    'detail.loading': 'Loading session…',
+    'detail.notFound': 'Session not found.',
+
+    // MemoryList
+    'memory.active': 'Active',
+    'memory.archived': 'Archived',
+    'memory.emptyTitle': 'No durable memories yet',
+    'memory.emptyBody': 'Approved conclusions saved from your coding sessions will appear here.',
+    'memory.noResults': 'No matching memories.',
+    'memory.openSession': 'Open session',
+    'memory.revealFile': 'Reveal file',
+    'memory.close': 'Close',
+
+    // Activity
+    'activity.title': 'Activity',
+    'activity.allSources': 'All sources',
+    'activity.sessions': 'SESSIONS',
+    'activity.messages': 'MESSAGES',
+    'activity.totalTokens': 'TOTAL TOKENS',
+    'activity.activeDays': 'ACTIVE DAYS',
+    'activity.streak': 'STREAK',
+    'activity.longestTurn': 'LONGEST TURN',
+    'activity.less': 'Less',
+    'activity.more': 'More',
+    'activity.today': 'Today',
+    'activity.yesterday': 'Yesterday',
+    'activity.loadEarlier': 'Load earlier activity',
+    'activity.noActivity': 'No activity recorded.',
+
+    // Settings
+    'settings.title': 'Settings',
+    'settings.subtitle': 'Local configuration for how Trajex reads, indexes, retains, and syncs your agent history.',
+    'settings.appearanceTitle': 'Appearance & language',
+    'settings.appearanceDesc': 'Choose your display language and color theme.',
+    'settings.language': 'Language',
+    'settings.theme': 'Theme',
+    'settings.themeDark': 'Dark',
+    'settings.themeLight': 'Light',
+
+    'settings.sourcesTitle': 'Data sources',
+    'settings.sourcesDesc': 'Where Trajex reads your agent session history.',
+    'settings.statusConnected': 'Connected',
+    'settings.statusMissing': 'No source folders found',
+    'settings.path': 'Path',
+    'settings.sessions': 'Sessions',
+    'settings.lastIndexed': 'Last indexed',
+    'settings.browse': 'Browse…',
+    'settings.reset': 'Reset',
+    'settings.reveal': 'Reveal',
+
+    'settings.indexTitle': 'Index',
+    'settings.database': 'Database',
+    'settings.memories': 'Memories',
+    'settings.autoRefresh': 'Auto-refresh',
+    'settings.autoRefreshDesc': 'Watch transcript folders and update the index automatically',
+    'settings.rebuild': 'Rebuild',
+    'settings.rebuildBtn': 'Rebuild index',
+    'settings.rebuildingBtn': 'Rebuilding…',
+    'settings.rebuildHint': 'Rebuilding re-reads your coding agent session data. It keeps memories and history whose files are gone, and takes a snapshot first.',
+
+    'settings.retentionTitle': 'History, snapshots & sync',
+    'settings.retentionDesc': 'Trajex keeps sessions after an agent deletes its own files. Snapshots and folder sync keep your history backed up across machines.',
+    'settings.keptHistory': 'Kept history',
+    'settings.keptHistoryHint': 'Sessions whose source files are gone',
+    'settings.keptSummary': '{missing} sessions fully kept · {partial} partially kept ({sources} missing sources)',
+    'settings.ageAny': 'All missing sources (any age)',
+    'settings.age7': 'Missing for 7+ days',
+    'settings.age30': 'Missing for 30+ days',
+    'settings.age90': 'Missing for 90+ days',
+    'settings.purgeBtn': 'Remove {n} missing sources…',
+    'settings.purgeConfirm': 'Remove permanently',
+    'settings.purging': 'Removing…',
+    'settings.cancel': 'Cancel',
+    'settings.purgeHint': 'Removes indexed history whose files no longer exist. Memories are never removed, and a snapshot is taken first.',
+
+    'settings.snapshots': 'Snapshots',
+    'settings.snapshotsHint': 'Automatic and manual full-index backups',
+    'settings.dailySnapshot': 'Take a snapshot every day',
+    'settings.keepCount': 'Keep {n} newest snapshots',
+    'settings.snapshotNow': 'Snapshot now',
+    'settings.savingSnapshot': 'Saving…',
+    'settings.showFolder': 'Show folder',
+    'settings.restore': 'Restore…',
+    'settings.restoreConfirm': 'Replace current index',
+    'settings.restoring': 'Restoring…',
+    'settings.noSnapshots': 'No snapshots yet.',
+    'settings.snapshotHint': 'Restoring replaces the index with the snapshot, keeps your current memories, saves the current index as a snapshot first, and then catches up with your session files.',
+    'settings.reason.daily': 'daily',
+    'settings.reason.manual': 'manual',
+    'settings.reason.pre-upgrade': 'before upgrade',
+    'settings.reason.pre-rebuild': 'before rebuild',
+    'settings.reason.pre-replay': 'before re-index',
+    'settings.reason.pre-purge': 'before cleanup',
+    'settings.reason.pre-restore': 'before restore',
+
+    'settings.folderSync': 'Folder sync',
+    'settings.folderSyncHint': 'iCloud Drive, Dropbox, Syncthing, or NAS',
+    'settings.syncFolderPlaceholder': 'Select a folder in iCloud Drive or cloud storage…',
+    'settings.selectFolder': 'Browse…',
+    'settings.clear': 'Clear',
+    'settings.deviceNamePlaceholder': 'This device name (e.g. MacBook-Pro)',
+    'settings.syncNow': 'Sync now',
+    'settings.syncing': 'Syncing…',
+    'settings.peerMeta': '{n} sessions',
+    'settings.peerSyncedAt': 'synced {time}',
+    'settings.removePeer': 'Remove',
+    'settings.syncExplain': 'Your active database stays at ~/.trajex/trajex.sqlite. Each device exports its own read-only shard to devices/<deviceId>.sqlite in the sync folder and imports peer shards automatically without lock conflicts.',
+
+    'settings.aboutTitle': 'About',
+    'settings.version': 'Version',
+    'settings.storage': 'Storage',
+    'settings.storageDesc': 'All data stays local on this machine',
+  },
+};
+
+export function t(key, params = {}) {
+  const dict = MESSAGES[locale.value] || MESSAGES.en;
+  const template = dict[key] ?? MESSAGES.en[key] ?? key;
+  return String(template).replace(/\{(\w+)\}/g, (_, k) => (params[k] !== undefined ? String(params[k]) : ''));
+}

@@ -287,14 +287,31 @@ function setSourceFilter(id) {
         <div class="sidebar-brand">
           <img :src="trajexIcon" alt="" />
           <span class="name">Trajex</span>
-          <button class="theme-toggle" type="button" :aria-label="theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'" :title="theme === 'dark' ? '切换到白天模式' : '切换到黑夜模式'" @click="toggleTheme">
-            <svg v-if="theme === 'dark'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke-linecap="round"/></svg>
-            <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.8 10.1A5.8 5.8 0 0 1 5.9 2.2a5.8 5.8 0 1 0 7.9 7.9Z" stroke-linejoin="round"/></svg>
-          </button>
+          <div class="brand-actions">
+            <button
+              class="lang-toggle"
+              type="button"
+              :aria-label="t('nav.switchLocale')"
+              :title="t('nav.switchLocale')"
+              @click="toggleLocale"
+            >
+              {{ isZh ? 'EN' : '中' }}
+            </button>
+            <button
+              class="theme-toggle"
+              type="button"
+              :aria-label="theme === 'dark' ? t('nav.switchToLight') : t('nav.switchToDark')"
+              :title="theme === 'dark' ? t('nav.switchToLight') : t('nav.switchToDark')"
+              @click="toggleTheme"
+            >
+              <svg v-if="theme === 'dark'" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke-linecap="round"/></svg>
+              <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M13.8 10.1A5.8 5.8 0 0 1 5.9 2.2a5.8 5.8 0 1 0 7.9 7.9Z" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
         </div>
 
         <div class="sidebar-section">
-          <div class="sidebar-section-title"><span>Library</span></div>
+          <div class="sidebar-section-title"><span>{{ isZh ? '资料库' : 'Library' }}</span></div>
           <button
             class="sidebar-item"
             :class="{ active: currentRouteType === 'sessions' && state.projectFilter === 'all' }"
@@ -304,7 +321,7 @@ function setSourceFilter(id) {
               <path d="M3 4h10v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4z" stroke-linejoin="round"/>
               <path d="M5.5 7h5M5.5 9.5h3" stroke-linecap="round"/>
             </svg>
-            <span class="label">Sessions</span>
+            <span class="label">{{ t('nav.sessions') }}</span>
             <span class="badge">{{ sessionCount }}</span>
           </button>
           <button
@@ -316,7 +333,7 @@ function setSourceFilter(id) {
               <rect x="2.5" y="2.5" width="11" height="11" rx="2"/>
               <path d="M5 8h6M5 5.5h6M5 10.5h4" stroke-linecap="round"/>
             </svg>
-            <span class="label">Memory</span>
+            <span class="label">{{ t('nav.memory') }}</span>
             <span class="badge">{{ totalMemoryCount }}</span>
           </button>
           <button
@@ -327,7 +344,7 @@ function setSourceFilter(id) {
             <svg class="icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
               <circle cx="6" cy="6" r="2" fill="currentColor"/>
             </svg>
-            <span class="label">Active</span>
+            <span class="label">{{ t('memory.active') }}</span>
             <span class="badge">{{ activeCount }}</span>
           </button>
           <button
@@ -338,13 +355,13 @@ function setSourceFilter(id) {
             <svg class="icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
               <circle cx="6" cy="6" r="2"/>
             </svg>
-            <span class="label">Archived</span>
+            <span class="label">{{ t('memory.archived') }}</span>
             <span class="badge">{{ archivedCount }}</span>
           </button>
         </div>
 
         <div class="sidebar-section">
-          <div class="sidebar-section-title"><span>Stats</span></div>
+          <div class="sidebar-section-title"><span>{{ isZh ? '统计' : 'Stats' }}</span></div>
           <button
             class="sidebar-item"
             :class="{ active: route.name === 'Activity' }"
@@ -355,18 +372,18 @@ function setSourceFilter(id) {
               <rect x="6" y="6" width="2.5" height="8"/>
               <rect x="10" y="3" width="2.5" height="11"/>
             </svg>
-            <span class="label">Activity</span>
+            <span class="label">{{ t('nav.activity') }}</span>
           </button>
         </div>
 
         <div class="sidebar-section projects" v-if="currentRouteType === 'sessions' || currentRouteType === 'memory'">
           <div class="sidebar-section-title">
-            <span>Projects</span>
+            <span>{{ isZh ? '项目' : 'Projects' }}</span>
             <button v-if="noiseProjects.length" class="filter-toggle" :class="{ active: showNoiseProjects }" @click.stop="showNoiseProjects = !showNoiseProjects">
               <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                 <path d="M2 6h8M2 3h8M2 9h5"/>
               </svg>
-              {{ showNoiseProjects ? 'hide noise' : 'show all' }}
+              {{ showNoiseProjects ? (isZh ? '隐藏静默' : 'hide noise') : (isZh ? '显示全部' : 'show all') }}
             </button>
           </div>
           <div class="sidebar-search" v-if="totalProjectCount >= 6">
@@ -376,7 +393,7 @@ function setSourceFilter(id) {
             </svg>
             <input
               type="text"
-              placeholder="Filter projects…"
+              :placeholder="t('nav.filterProjects')"
               autocomplete="off"
               :value="state.projectSearch"
               @input="handleProjectSearch"
@@ -400,7 +417,7 @@ function setSourceFilter(id) {
             <!-- Noise projects fold -->
             <button v-if="noiseProjects.length" class="project-fold" :class="{ expanded: showNoiseProjects }" @click="showNoiseProjects = !showNoiseProjects">
               <svg class="chev" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 2.5l3 3.5-3 3.5"/></svg>
-              <span class="label">{{ noiseProjects.length }} test projects hidden</span>
+              <span class="label">{{ isZh ? `已隐藏 ${noiseProjects.length} 个测试项目` : `${noiseProjects.length} test projects hidden` }}</span>
               <span class="count">{{ noiseProjects.length }}</span>
             </button>
             <template v-if="showNoiseProjects">
@@ -435,7 +452,7 @@ function setSourceFilter(id) {
               <circle cx="5.5" cy="8" r="1.7" fill="var(--bg)"/>
               <circle cx="11" cy="12" r="1.7" fill="var(--bg)"/>
             </svg>
-            <span class="label">Settings</span>
+            <span class="label">{{ t('nav.settings') }}</span>
           </button>
         </div>
       </aside>
@@ -446,7 +463,7 @@ function setSourceFilter(id) {
             <template v-if="showToolbar">
               <template v-if="state.projectFilter !== 'all'">
                 <button class="crumb" @click="handleClearProject">
-                  {{ currentRouteType === 'sessions' ? 'Sessions' : 'Memory' }}
+                  {{ currentRouteType === 'sessions' ? t('nav.sessions') : t('nav.memory') }}
                 </button>
                 <span class="crumb-sep">/</span>
                 <span
@@ -458,13 +475,13 @@ function setSourceFilter(id) {
               </template>
               <template v-else>
                 <span class="crumb terminal">
-                  {{ currentRouteType === 'sessions' ? 'Sessions' : 'Memory' }}
+                  {{ currentRouteType === 'sessions' ? t('nav.sessions') : t('nav.memory') }}
                 </span>
               </template>
             </template>
             <template v-else>
               <router-link class="crumb" to="/sessions" v-if="route.name === 'SessionDetail' || route.name === 'SubagentDetail'">
-                Sessions
+                {{ t('nav.sessions') }}
               </router-link>
               <template v-if="route.name === 'SubagentDetail'">
                 <span class="crumb-sep">/</span>
@@ -483,7 +500,7 @@ function setSourceFilter(id) {
                 <span class="crumb terminal">{{ route.params.agentId }}</span>
               </template>
               <router-link class="crumb" to="/memory" v-if="route.name === 'MemoryDetail'">
-                Memory
+                {{ t('nav.memory') }}
               </router-link>
               <template v-if="route.name === 'MemoryDetail'">
                 <span class="crumb-sep">/</span>
@@ -491,8 +508,8 @@ function setSourceFilter(id) {
                   {{ (state.memories.find(m => m.id === route.params.id)?.path || '').split('/').pop() }}
                 </span>
               </template>
-              <span v-if="route.name === 'Activity'" class="crumb terminal">Activity</span>
-              <span v-if="route.name === 'Settings'" class="crumb terminal">Settings</span>
+              <span v-if="route.name === 'Activity'" class="crumb terminal">{{ t('nav.activity') }}</span>
+              <span v-if="route.name === 'Settings'" class="crumb terminal">{{ t('nav.settings') }}</span>
             </template>
           </div>
           <div class="toolbar-spacer"></div>
@@ -525,7 +542,7 @@ function setSourceFilter(id) {
                 <div class="fd-check">
                   <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6l2.5 2.5 4.5-5"/></svg>
                 </div>
-                <span class="fd-name" style="color: var(--accent-2);">All sources</span>
+                <span class="fd-name" style="color: var(--accent-2);">{{ t('toolbar.allSources') }}</span>
               </div>
             </div>
           </div>
@@ -539,7 +556,7 @@ function setSourceFilter(id) {
               ref="searchInputRef"
               id="search"
               type="text"
-              placeholder="Search…"
+              :placeholder="isZh ? '搜索…' : 'Search…'"
               autocomplete="off"
               :value="state.query"
               @input="handleSearch"
@@ -552,9 +569,9 @@ function setSourceFilter(id) {
             :class="{ desc: state.sortDesc, asc: !state.sortDesc }"
             @click="handleToggleSort"
             id="sort-toggle"
-            title="Toggle sort (S)"
+            :title="t('toolbar.sortTitle')"
           >
-            <span class="label" id="sort-label">{{ state.sortDesc ? 'newest' : 'oldest' }}</span>
+            <span class="label" id="sort-label">{{ state.sortDesc ? t('toolbar.newest').toLowerCase() : t('toolbar.oldest').toLowerCase() }}</span>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path class="arrow-up"   d="M5 6l3-3 3 3"/>
               <path class="arrow-down" d="M5 10l3 3 3-3"/>

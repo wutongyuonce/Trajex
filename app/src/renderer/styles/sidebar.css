@@ -17,7 +17,17 @@
 }
 .sidebar-brand img { width: 22px; height: 22px; }
 .sidebar-brand .name { font-size: 16px; font-weight: 600; color: var(--fg-2); }
-.theme-toggle { width: 24px; height: 24px; margin-left: auto; display: grid; place-items: center; border: 1px solid var(--hairline); border-radius: 4px; color: var(--muted); transition: background 0.1s, color 0.1s; }
+.brand-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.lang-toggle {
+  height: 24px; min-width: 28px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--hairline); border-radius: 4px;
+  color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+  transition: background 0.1s, color 0.1s;
+}
+.lang-toggle:hover { background: var(--surface-strong); color: var(--fg); }
+.lang-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-toggle { width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--hairline); border-radius: 4px; color: var(--muted); transition: background 0.1s, color 0.1s; }
 .theme-toggle:hover { background: var(--surface-strong); color: var(--fg); }
 .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .theme-toggle svg { width: 13px; height: 13px; }

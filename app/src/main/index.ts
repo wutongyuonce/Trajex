@@ -223,6 +223,31 @@ function appendWhere(sql, params, clause) {
   return `${sql}${sql.includes(' WHERE ') ? ' AND ' : ' WHERE '}${clause}`;
 }
 
+let lastAutoSyncAt = 0;
+const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+
+async function maybeAutoSyncFolder(paths: ReturnType<typeof getRuntimePaths>, { force = false } = {}) {
+  if (typeof indexerWorker?.call !== 'function') return;
+  const persisted = loadPersistedSettings();
+  const syncDir = typeof persisted.syncDir === 'string' ? persisted.syncDir.trim() : '';
+  if (!syncDir) return;
+  const now = Date.now();
+  if (!force && now - lastAutoSyncAt < AUTO_SYNC_INTERVAL_MS) return;
+  lastAutoSyncAt = now;
+  try {
+    const identity = ensureDeviceIdentity(persisted);
+    const syncResult = await indexerWorker.call('sync-folder', {
+      dbPath: paths.dbPath,
+      ...snapshotOptions(persisted, paths.dbPath),
+      syncDir,
+      deviceId: identity.deviceId,
+      deviceName: identity.deviceName,
+      writerLeaseWaitMs: 1000,
+    });
+    if (syncResult?.importedSessions > 0) notifyIndexUpdated();
+  } catch { /* 后台自动同步失败不阻塞主流程 */ }
+}
+
 function startIndexerService({ buildOnStart = false } = {}) {
   if (indexerService) return indexerService;
   const paths = getRuntimePaths();
@@ -246,6 +271,7 @@ function startIndexerService({ buildOnStart = false } = {}) {
       } else {
         openDb(paths.dbPath);
         notifyIndexUpdated(result);
+        void maybeAutoSyncFolder(paths, { force: Boolean(result?.files) || reason === 'startup' });
       }
       return result;
     },

@@ -7,6 +7,7 @@ import { ref, reactive, shallowRef, computed, onMounted, onUnmounted } from 'vue
 import { useRouter } from 'vue-router';
 import { state } from '../store.js';
 import { fmtTokens, fmtDuration, fmtTooltipDate, positionTooltip, escapeHTML, formatProjectLabel } from '../utils.js';
+import { isZh, t } from '../i18n.js';
 import ActivityLedger from '../components/ActivityLedger.vue';
 
 defineOptions({ name: 'Activity' });
@@ -391,23 +392,23 @@ onUnmounted(() => stopUsageUpdates());
     <div class="detail-wide">
       <!-- Header with tabs -->
       <div class="usage-header">
-        <span class="usage-title">Token activity</span>
+        <span class="usage-title">{{ isZh ? 'Token 活动趋势' : 'Token activity' }}</span>
         <div class="usage-view-tabs">
           <button
             class="usage-tab"
             :class="{ active: activeTab === 'daily' }"
             @click="switchTab('daily')"
-          >Daily</button>
+          >{{ isZh ? '每日' : 'Daily' }}</button>
           <button
             class="usage-tab"
             :class="{ active: activeTab === 'weekly' }"
             @click="switchTab('weekly')"
-          >Weekly</button>
+          >{{ isZh ? '每周' : 'Weekly' }}</button>
           <button
             class="usage-tab"
             :class="{ active: activeTab === 'cumulative' }"
             @click="switchTab('cumulative')"
-          >Cumulative</button>
+          >{{ isZh ? '累计' : 'Cumulative' }}</button>
         </div>
       </div>
 
@@ -415,23 +416,23 @@ onUnmounted(() => stopUsageUpdates());
       <div class="usage-stats">
         <div class="usage-stat">
           <span class="usage-stat-value">{{ fmtTokens(usageData.totalTokens) }}</span>
-          <span class="usage-stat-label">Lifetime tokens</span>
+          <span class="usage-stat-label">{{ isZh ? '累计 Token' : 'Lifetime tokens' }}</span>
         </div>
         <div class="usage-stat">
           <span class="usage-stat-value">{{ usageData.peakDay ? fmtTokens(usageData.peakDay.tokens) : '—' }}</span>
-          <span class="usage-stat-label">Peak tokens</span>
+          <span class="usage-stat-label">{{ isZh ? '单日峰值' : 'Peak tokens' }}</span>
         </div>
         <div class="usage-stat">
           <span class="usage-stat-value">{{ usageData.longestTurn ? fmtDuration(usageData.longestTurn.turn_duration_ms) : '—' }}</span>
-          <span class="usage-stat-label">Longest task</span>
+          <span class="usage-stat-label">{{ isZh ? '最长单轮' : 'Longest task' }}</span>
         </div>
         <div class="usage-stat">
           <span class="usage-stat-value">{{ currentStreak }}d</span>
-          <span class="usage-stat-label">Current streak</span>
+          <span class="usage-stat-label">{{ isZh ? '当前连续活跃' : 'Current streak' }}</span>
         </div>
         <div class="usage-stat">
           <span class="usage-stat-value">{{ longestStreak }}d</span>
-          <span class="usage-stat-label">Longest streak</span>
+          <span class="usage-stat-label">{{ isZh ? '最长连续活跃' : 'Longest streak' }}</span>
         </div>
       </div>
 
@@ -466,7 +467,7 @@ onUnmounted(() => stopUsageUpdates());
           >{{ ml.label }}</text>
         </svg>
         <div class="heatmap-legend">
-          <span class="heatmap-legend-label">Less</span>
+          <span class="heatmap-legend-label">{{ t('activity.less') }}</span>
           <svg width="70" height="11">
             <rect x="0" width="11" height="11" rx="2" class="heatmap-cell level-0"/>
             <rect x="14" width="11" height="11" rx="2" class="heatmap-cell level-1"/>
@@ -474,7 +475,7 @@ onUnmounted(() => stopUsageUpdates());
             <rect x="42" width="11" height="11" rx="2" class="heatmap-cell level-3"/>
             <rect x="56" width="11" height="11" rx="2" class="heatmap-cell level-4"/>
           </svg>
-          <span class="heatmap-legend-label">More</span>
+          <span class="heatmap-legend-label">{{ t('activity.more') }}</span>
         </div>
       </div>
 
@@ -546,7 +547,7 @@ onUnmounted(() => stopUsageUpdates());
         <div class="activity-month-heading">
           <h2>{{ daySessionsSplit.header }}</h2>
           <span class="activity-month-rule"></span>
-          <span class="activity-month-count">{{ daySessionsSplit.sessionTotal }} session{{ daySessionsSplit.sessionTotal === 1 ? '' : 's' }}</span>
+          <span class="activity-month-count">{{ isZh ? `${daySessionsSplit.sessionTotal} 个会话` : `${daySessionsSplit.sessionTotal} session${daySessionsSplit.sessionTotal === 1 ? '' : 's'}` }}</span>
         </div>
         <ActivityLedger
           v-if="!daySessionsSplit.isEmpty"
@@ -554,11 +555,11 @@ onUnmounted(() => stopUsageUpdates());
           :event-date="daySessionsSplit.eventDate"
           @open-session="goToSession"
         />
-        <div v-else class="activity-empty">No sessions on {{ daySessionsSplit.eventDate }}.</div>
+        <div v-else class="activity-empty">{{ isZh ? `${daySessionsSplit.eventDate} 无会话记录。` : `No sessions on ${daySessionsSplit.eventDate}.` }}</div>
         <div v-if="daySessionsSplit.sessionTotal > 200" class="activity-pages">
-          <button :disabled="!daySessionsSplit.offset" @click="changeActivityPage(daySessionsSplit.from, daySessionsSplit.to, daySessionsSplit.offset - 200)">Previous</button>
-          <span>{{ daySessionsSplit.offset + 1 }}–{{ Math.min(daySessionsSplit.offset + 200, daySessionsSplit.sessionTotal) }} of {{ daySessionsSplit.sessionTotal }}</span>
-          <button :disabled="daySessionsSplit.offset + 200 >= daySessionsSplit.sessionTotal" @click="changeActivityPage(daySessionsSplit.from, daySessionsSplit.to, daySessionsSplit.offset + 200)">Next</button>
+          <button :disabled="!daySessionsSplit.offset" @click="changeActivityPage(daySessionsSplit.from, daySessionsSplit.to, daySessionsSplit.offset - 200)">{{ isZh ? '上一页' : 'Previous' }}</button>
+          <span>{{ daySessionsSplit.offset + 1 }}–{{ Math.min(daySessionsSplit.offset + 200, daySessionsSplit.sessionTotal) }} / {{ daySessionsSplit.sessionTotal }}</span>
+          <button :disabled="daySessionsSplit.offset + 200 >= daySessionsSplit.sessionTotal" @click="changeActivityPage(daySessionsSplit.from, daySessionsSplit.to, daySessionsSplit.offset + 200)">{{ isZh ? '下一页' : 'Next' }}</button>
         </div>
       </section>
 
@@ -571,22 +572,22 @@ onUnmounted(() => stopUsageUpdates());
           <div class="activity-month-heading">
             <h2>{{ block.header }}</h2>
             <span class="activity-month-rule"></span>
-            <span class="activity-month-count">{{ block.sessionTotal }} session{{ block.sessionTotal === 1 ? '' : 's' }}</span>
+            <span class="activity-month-count">{{ isZh ? `${block.sessionTotal} 个会话` : `${block.sessionTotal} session${block.sessionTotal === 1 ? '' : 's'}` }}</span>
           </div>
           <ActivityLedger
             v-if="!block.isEmpty"
             :block="block"
             @open-session="goToSession"
           />
-          <div v-else class="activity-empty">No sessions this month.</div>
+          <div v-else class="activity-empty">{{ isZh ? '本月无会话记录。' : 'No sessions this month.' }}</div>
           <div v-if="block.sessionTotal > 200" class="activity-pages">
-            <button :disabled="!block.offset" @click="changeActivityPage(block.from, block.to, block.offset - 200)">Previous</button>
-            <span>{{ block.offset + 1 }}–{{ Math.min(block.offset + 200, block.sessionTotal) }} of {{ block.sessionTotal }}</span>
-            <button :disabled="block.offset + 200 >= block.sessionTotal" @click="changeActivityPage(block.from, block.to, block.offset + 200)">Next</button>
+            <button :disabled="!block.offset" @click="changeActivityPage(block.from, block.to, block.offset - 200)">{{ isZh ? '上一页' : 'Previous' }}</button>
+            <span>{{ block.offset + 1 }}–{{ Math.min(block.offset + 200, block.sessionTotal) }} / {{ block.sessionTotal }}</span>
+            <button :disabled="block.offset + 200 >= block.sessionTotal" @click="changeActivityPage(block.from, block.to, block.offset + 200)">{{ isZh ? '下一页' : 'Next' }}</button>
           </div>
         </section>
-        <button class="show-more-btn" @click="showNextMonth">Show more activity</button>
-        <button v-if="loadedMonths > 6" class="show-more-btn" @click="loadedMonths = 0; showNextMonth()">Back to recent activity</button>
+        <button class="show-more-btn" @click="showNextMonth">{{ isZh ? '加载更早月份' : 'Show more activity' }}</button>
+        <button v-if="loadedMonths > 6" class="show-more-btn" @click="loadedMonths = 0; showNextMonth()">{{ isZh ? '返回最近月份' : 'Back to recent activity' }}</button>
       </section>
 
       <!-- Tooltip -->

@@ -9,6 +9,7 @@ import { state, FOLDER_SVG, setSelection, clearSelection } from '../store.js';
 import { highlightPlain, escapeHTML, formatProjectLabel, fmtListTime, fmtRelative, renderMarkdown } from '../utils.js';
 import { loadMemoryMarkdown, archiveMemory, restoreMemory } from '../data.js';
 import { resolveMemoryShortcut } from '../keyboard-shortcuts.mjs';
+import { isZh, t } from '../i18n.js';
 
 defineOptions({ name: 'MemoryList' });
 const props = defineProps({ id: String });
@@ -321,7 +322,7 @@ onUnmounted(() => {
         <div class="detail-eyebrow">
           <span class="project-icon" v-html="FOLDER_SVG"></span>
           <span class="project-name">{{ formatProjectLabel(detailMemory.project) }}</span>
-          <span v-if="detailMemory.archived" class="archived-tag">archived</span>
+          <span v-if="detailMemory.archived" class="archived-tag">{{ isZh ? '已归档' : 'archived' }}</span>
         </div>
         <div class="detail-path">{{ relativePath(detailMemory) }}</div>
         <div class="detail-summary">{{ detailMemory.summary }}</div>
@@ -350,20 +351,20 @@ onUnmounted(() => {
 
       <div class="markdown-section">
         <div class="markdown-toolbar">
-          <span class="markdown-toolbar-label">Body</span>
+          <span class="markdown-toolbar-label">{{ isZh ? '正文' : 'Body' }}</span>
           <button
             class="source-toggle"
             :class="{ active: showSource }"
             :disabled="detailMarkdown == null"
             @click="toggleSourceView"
           >
-            {{ showSource ? 'Show rendered' : 'Show source' }}
+            {{ showSource ? (isZh ? '显示渲染视图' : 'Show rendered') : (isZh ? '显示源码' : 'Show source') }}
           </button>
         </div>
 
-        <div v-if="loadingMarkdown" class="markdown-loading">Loading...</div>
+        <div v-if="loadingMarkdown" class="markdown-loading">{{ isZh ? '正在加载…' : 'Loading...' }}</div>
         <div v-else-if="detailMarkdown == null" class="markdown-empty">
-          File not found or empty.
+          {{ isZh ? '文件不存在或为空。' : 'File not found or empty.' }}
         </div>
         <pre v-else-if="showSource" class="markdown-source">{{ detailMarkdown }}</pre>
         <div v-else class="markdown-body" v-html="renderedMarkdown"></div>
@@ -371,25 +372,25 @@ onUnmounted(() => {
 
       <div class="detail-actions">
         <button class="btn" @click="closeDetail">
-          Back<span class="kbd">Esc</span>
+          {{ isZh ? '返回' : 'Back' }}<span class="kbd">Esc</span>
         </button>
         <button
           class="btn"
           :class="detailMemory.archived ? 'primary' : 'danger'"
           @click="detailArchiveRestore"
         >
-          {{ detailMemory.archived ? 'Restore' : 'Archive' }}<span class="kbd">D</span>
+          {{ detailMemory.archived ? (isZh ? '恢复' : 'Restore') : (isZh ? '归档' : 'Archive') }}<span class="kbd">D</span>
         </button>
       </div>
     </div>
-    <div v-else class="empty">{{ state.loaded ? 'Memory not found.' : 'Loading...' }}</div>
+    <div v-else class="empty">{{ state.loaded ? (isZh ? '未找到该记忆。' : 'Memory not found.') : (isZh ? '正在加载…' : 'Loading...') }}</div>
   </div>
 
   <!-- List panel -->
   <div v-else ref="listWrapRef" class="list-wrap">
     <div v-if="!visibleMemories.length" class="empty">
-      No memories{{ state.view === 'archived' ? ' archived' : '' }} here.
-      <span class="hint">{{ state.query ? 'Try a different search term.' : 'Press / to search.' }}</span>
+      {{ isZh ? (state.view === 'archived' ? '暂无已归档记忆。' : '暂无记忆记录。') : `No memories${state.view === 'archived' ? ' archived' : ''} here.` }}
+      <span class="hint">{{ state.query ? t('list.emptyQueryHint') : t('list.emptyDefaultHint') }}</span>
     </div>
 
     <div v-else class="memory-list">
@@ -442,14 +443,14 @@ onUnmounted(() => {
               class="row-action restore"
               @click.stop="doRestore([m.id])"
             >
-              Restore<span class="kbd">D</span>
+              {{ isZh ? '恢复' : 'Restore' }}<span class="kbd">D</span>
             </button>
             <button
               v-else
               class="row-action danger"
               @click.stop="doArchive([m.id])"
             >
-              Archive<span class="kbd">D</span>
+              {{ isZh ? '归档' : 'Archive' }}<span class="kbd">D</span>
             </button>
           </div>
         </div>
@@ -459,9 +460,10 @@ onUnmounted(() => {
     <!-- Undo toast -->
     <Transition name="undo-fade">
       <div v-if="undoSnapshot" class="undo-toast" @click="undoAction">
-        {{ undoSnapshot.action === 'archive' ? 'Archived' : 'Restored' }}
-        {{ undoSnapshot.ids.length }} memory{{ undoSnapshot.ids.length > 1 ? 'ies' : '' }}.
-        <button class="undo-btn">Undo ({{ undoCountdown }}s)</button>
+        {{ isZh
+          ? `${undoSnapshot.action === 'archive' ? '已归档' : '已恢复'} ${undoSnapshot.ids.length} 条记忆。`
+          : `${undoSnapshot.action === 'archive' ? 'Archived' : 'Restored'} ${undoSnapshot.ids.length} memory${undoSnapshot.ids.length > 1 ? 'ies' : ''}.` }}
+        <button class="undo-btn">{{ isZh ? `撤销 (${undoCountdown}s)` : `Undo (${undoCountdown}s)` }}</button>
       </div>
     </Transition>
   </div>

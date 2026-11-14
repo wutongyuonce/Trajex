@@ -377,9 +377,10 @@ main/index.ts: notifyIndexUpdated(affectedSessionIds)
 
 | Provider | `tree` 递归目录 | `file` 精确文件 |
 | --- | --- | --- |
-| Claude | `projects/` | `history.jsonl` |
+| Claude | `projects/` | 无 |
 | Codex | `sessions/`、`archived_sessions/` | `session_index.jsonl` |
 | Pi | 配置的最终 session directory | 无 |
+| DeepSeek Harness | 配置的 sessions 目录 | 无 |
 
 `packages/adaptive-watcher` 只负责把文件系统状态变成 invalidation：`tree` 交给 `@parcel/watcher`，精确文件通过 `{dev, ino, size, mtimeMs}` signature 轮询。macOS 默认另外轮询最近活跃的最多 64 个 transcript，并用 LRU 限制数量。最近完成的 build 会把 `watchHints` 反馈给 watcher；因此 macOS 上长时间保持打开并持续追加的 transcript 不完全依赖目录事件。
 

@@ -52,3 +52,22 @@ test('a read-only index fails once with the index path instead of blaming each t
   const recovered = runCli(['--build'], { home });
   assert.equal(recovered.status, 0, recovered.stderr || recovered.stdout);
 });
+
+test('a forced CLI rebuild keeps provider version markers, so the next build does not replay again', () => {
+  const home = makeTempDir('trajex-force-markers-');
+  const project = join(home, '.claude', 'projects', '-tmp-force');
+  mkdirSync(project, { recursive: true });
+  copyFileSync(new URL('./fixtures/claude/custom-title-session.jsonl', import.meta.url), join(project, 'a.jsonl'));
+  // The first build writes pending markers after cleanup; the second forced build starts with them present.
+  assert.equal(runCli(['--build'], { home }).status, 0);
+  assert.equal(runCli(['--build'], { home }).status, 0);
+  const db = new DatabaseSync(join(home, '.trajex', 'trajex.sqlite'));
+  try {
+    const markers = db.prepare("SELECT jsonl_path FROM index_state WHERE jsonl_path LIKE '\\_\\_%canonical%' ESCAPE '\\'").all()
+      .map(row => row.jsonl_path).sort();
+    assert.ok(markers.includes('__claude_canonical_transcript_v1.1__'), markers.join(','));
+    assert.equal(markers.length, 4, 'every built-in provider marker survives the force cleanup');
+  } finally {
+    db.close();
+  }
+});

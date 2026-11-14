@@ -112,7 +112,6 @@ test('skipped units do not block version markers; stop and inventory issues do',
 
   writeProviderIndexMarkers(db, plan, {
     committed: [],
-    failedProviders: new Set(['claude']),
     failedItems: [],
   });
   const present = new Set(
@@ -125,10 +124,31 @@ test('skipped units do not block version markers; stop and inventory issues do',
   db.exec('DELETE FROM index_state');
   writeProviderIndexMarkers(db, plan, {
     committed: [],
-    failedProviders: new Set(),
     failedItems: [],
     stopped: { item: { provider: { name: 'claude' }, unit: { key: '/x' }, cursor: null }, error: new Error('busy') },
   });
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM index_state').get().c, 0);
+  db.close();
+});
+
+test('a tombstone never retracts an identity another unit republishes in the same plan', () => {
+  const moved = { key: '/codex/archived_sessions/r.jsonl', sessionId: 'codex:x' };
+  const tombstone = { key: '/codex/sessions/r.jsonl', sessionId: 'codex:x', retractSessionIds: ['codex:x'] };
+  const gone = { key: '/codex/sessions/gone.jsonl', sessionId: 'codex:y', retractSessionIds: ['codex:y'] };
+  const db = memoryPlanDb();
+  const plan = createProviderIndexPlan(db, createProviderRegistry([
+    fakeProvider('codex', { units: [moved, tombstone, gone] }),
+  ]));
+  assert.deepEqual(plan.items.map(item => item.unit.key), [moved.key, gone.key]);
+  db.close();
+});
+
+test('a provider whose discovery throws keeps its snapshot without stopping other providers', () => {
+  const db = memoryPlanDb({ sessions: [{ id: 'broken-1', path: '/broken/a.jsonl', source: 'broken' }] });
+  const broken = { ...fakeProvider('broken'), discover() { throw new Error('EACCES: permission denied'); } };
+  const healthy = fakeProvider('healthy', { units: [{ key: '/healthy/a.jsonl', sessionId: 'h1' }] });
+  const plan = createProviderIndexPlan(db, createProviderRegistry([broken, healthy]));
+  assert.deepEqual(plan.items.map(item => item.unit.key), ['/healthy/a.jsonl']);
+  assert.deepEqual(plan.inventoryIssues, [{ provider: 'broken', path: '/broken', error: 'EACCES: permission denied' }]);
   db.close();
 });

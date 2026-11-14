@@ -58,7 +58,7 @@ Codex 只索引根 thread 为普通 Trajex session。带有 `parent_thread_id`�
 
 DeepSeek Harness 以根会话树为单位索引：根会话与通过 `parentSession` 归属它的子代理/fork 会话合并为一个 Trajex session，子会话消息带 `agent_id` 并生成 `subagents` 记录；任一成员变化都会全量重放整棵树。每个会话目录只读取支持的最高 generation（v0–v4），默认的多帧 Zstandard 日志用 Node 内建 zstd 逐帧解码（需要 Node.js 22.15+）。被 compaction 替换的历史与 fork 继承前缀保留为 `inactive` 证据，摘要进入 `summaries`。详见 [ADR-0013](docs/adr/0013-deepseek-harness-session-trees.md)。
 
-为了支持 app 实时刷新，Trajex 会按 provider 声明的 typed targets 监听目录和精确文件：目录交给 `@parcel/watcher`，精确文件用有上限的 stat 轮询；macOS 还会轮询最近活跃的最多 64 个 transcript。App 每 5 分钟再做一次完整清点。Claude 的目标包括 `~/.claude/projects` 与 `history.jsonl`，Codex 包括 `~/.codex/sessions`、`archived_sessions` 与 `session_index.jsonl`，Pi 默认是 `~/.pi/agent/sessions`，DeepSeek Harness 默认是 `~/.dsh/sessions`。App Settings 中 Claude 与 Codex 配置的是各自的 provider root（默认 `~/.claude` / `~/.codex`），Pi 与 DeepSeek Harness 配置最终 session directory。未配置时 DeepSeek Harness 按 harness 自身规则解析 `$DSH_HOME`；macOS 从 Dock 启动的 App 通常继承不到 shell 环境变量，此时请在 Settings 中指定目录。如果某个已有快照的来源根暂时不可用，daemon 会保留旧快照并重试；目录恢复后会立即重新清点。
+为了支持 app 实时刷新，Trajex 会按 provider 声明的 typed targets 监听目录和精确文件：目录交给 `@parcel/watcher`，精确文件用有上限的 stat 轮询；macOS 还会轮询最近活跃的最多 64 个 transcript。App 每 5 分钟再做一次完整清点。Claude 的目标是 `~/.claude/projects`，Codex 包括 `~/.codex/sessions`、`archived_sessions` 与 `session_index.jsonl`，Pi 默认是 `~/.pi/agent/sessions`，DeepSeek Harness 默认是 `~/.dsh/sessions`。App Settings 中 Claude 与 Codex 配置的是各自的 provider root（默认 `~/.claude` / `~/.codex`），Pi 与 DeepSeek Harness 配置最终 session directory。未配置时 DeepSeek Harness 按 harness 自身规则解析 `$DSH_HOME`；macOS 从 Dock 启动的 App 通常继承不到 shell 环境变量，此时请在 Settings 中指定目录。如果某个已有快照的来源根暂时不可用，daemon 会保留旧快照并重试；目录恢复后会立即重新清点。
 
 ## App 与 CLI 的关系
 

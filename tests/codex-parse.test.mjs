@@ -14,6 +14,10 @@ import { appendFileSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync 
 import { join } from 'node:path';
 
 import { createCodexProvider, parse } from '../packages/core/src/providers/codex.ts';
+import { createProviderRegistry } from '../packages/core/src/providers/registry.ts';
+import { createProviderIndexPlan } from '../packages/core/src/provider-indexing.ts';
+import { DatabaseSync } from 'node:sqlite';
+import { readFileSync, renameSync } from 'node:fs';
 
 function writeFixture(lines) {
   const dir = makeTempDir('trajex-codex-parse-');
@@ -272,7 +276,7 @@ test('codex provider discovers, watches, and reads archived sessions', () => {
   const provider = createCodexProvider({ rootDir: root });
   const units = provider.discover({ lastCursor: () => '9999999999999:1', changedPaths: [path] });
   assert.deepEqual(units.map(unit => unit.key), [path]);
-  assert.deepEqual(provider.watchTargets(root), [
+  assert.deepEqual(provider.watchTargets(), [
     { kind: 'tree', path: join(root, 'sessions') },
     { kind: 'tree', path: archiveDir },
     { kind: 'file', path: join(root, 'session_index.jsonl') },
@@ -316,4 +320,64 @@ test('codex discovery keeps the last snapshot when its sessions root is missing'
     changedPaths: [path],
     indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'codex' }],
   }), []);
+});
+
+test('codex full replay consumes non-object JSON lines', () => {
+  const path = writeFixture([{ type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: META }]);
+  appendFileSync(path, ['null', '7', JSON.stringify({ type: 'event_msg', timestamp: '2026-06-10T10:00:02Z', payload: { type: 'user_message', message: 'after non-object' } })].join('\n') + '\n');
+  const { values, ret } = drain(parse({ key: path, sessionId: '' }, null));
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.text), ['after non-object']);
+  assert.equal(ret.split(':')[1], '4');
+});
+
+test('archiving a rollout moves its session instead of tombstoning the new projection', () => {
+  const root = makeTempDir('trajex-codex-archive-move-');
+  const sessionsDir = join(root, 'sessions', '2026', '06', '10');
+  mkdirSync(sessionsDir, { recursive: true });
+  mkdirSync(join(root, 'archived_sessions'));
+  const live = join(sessionsDir, `rollout-${META.id}.jsonl`);
+  writeFileSync(live, `${JSON.stringify({ type: 'session_meta', payload: META })}\n`);
+  const provider = createCodexProvider({ rootDir: root });
+  const [indexed] = provider.discover({ lastCursor: () => null });
+  const archived = join(root, 'archived_sessions', `rollout-${META.id}.jsonl`);
+  renameSync(live, archived);
+
+  const db = new DatabaseSync(':memory:');
+  db.exec(readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8'));
+  db.prepare("INSERT INTO sessions (id, jsonl_path, source) VALUES (?, ?, 'codex')").run(indexed.sessionId, live);
+  const plan = createProviderIndexPlan(db, createProviderRegistry([provider]), { changedPaths: [live, archived] });
+  assert.deepEqual(plan.items.map(item => item.unit.key), [archived]);
+  db.close();
+});
+
+test('codex keeps archived snapshots when an indexed archived_sessions root disappears', () => {
+  const root = makeTempDir('trajex-codex-archive-missing-');
+  mkdirSync(join(root, 'sessions'));
+  const archived = join(root, 'archived_sessions', 'rollout-a.jsonl');
+  mkdirSync(join(root, 'archived_sessions'));
+  writeFileSync(archived, `${JSON.stringify({ type: 'session_meta', payload: META })}\n`);
+  const provider = createCodexProvider({ rootDir: root });
+  const [indexed] = provider.discover({ lastCursor: () => null });
+  rmSync(join(root, 'archived_sessions'), { recursive: true });
+  const issues = [];
+  assert.deepEqual(provider.discover({
+    lastCursor: () => null,
+    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: archived, source: 'codex' }],
+    reportUnavailableRoot: issue => issues.push(issue),
+  }), []);
+  assert.equal(issues.length, 1);
+  assert.deepEqual(createCodexProvider({ rootDir: makeTempDir('trajex-codex-no-archive-') })
+    .discover({ lastCursor: () => null, reportUnavailableRoot: issue => issues.push(issue) }), []);
+  assert.equal(issues.length, 2, 'a never-indexed missing archive dir is not an issue; only sessions/ is reported');
+});
+
+test('codex raw lookup returns text_elements event text like the index does', () => {
+  const path = writeFixture([
+    { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: META },
+    { type: 'event_msg', timestamp: '2026-06-10T10:00:01Z', payload: { type: 'user_message', text_elements: [{ text: 'element text' }] } },
+  ]);
+  const raw = createCodexProvider({ rootDir: makeTempDir('trajex-codex-raw-') }).raw({
+    messageUuid: `codex:${META.id}:000002`, agentId: null, session: { jsonl_path: path }, source: 'codex',
+  });
+  assert.equal(raw.messageText, 'element text');
 });

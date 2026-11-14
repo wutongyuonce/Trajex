@@ -307,6 +307,43 @@ test('a seeded root without a durable end-seed marker keeps every event inactive
   assert.equal(byKind(values, 'session')[0].message_count, 0);
 });
 
+test('a tool call logged before its assistant message hangs off the emitted step anchor', () => {
+  const dir = makeTempDir('trajex-dsh-');
+  writeSession(dir, 's', 'session.v4.jsonl', header('s'), [
+    user(0, 'u1', 'go'),
+    { type: 'tool/call', seq: 1, time: 1001, data: { turn: 1, step: 2, callId: 'c1', name: 'read', arguments: '{"path":"/a"}' } },
+    { ...assistant(2, 'm1', [{ type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' }]), data: { ...assistant(2, 'm1', [{ type: 'tool-call', id: 'c1', name: 'read', arguments: '{}' }]).data, step: 2 } },
+  ]);
+  const [{ values }] = parseAll(dir);
+  const [call] = byKind(values, 'tool_call');
+  const anchors = byKind(values, 'message').filter(message => message.content_type === 'tool_use');
+  assert.deepEqual(anchors.map(message => message.uuid), [call.message_uuid], 'exactly one anchor, and it is the call target');
+});
+
+test('an unreadable header only freezes trees that already have a snapshot', () => {
+  const dir = makeTempDir('trajex-dsh-');
+  const old = writeSession(dir, 'old', 'session.v4.jsonl', header('old'), [user(0, 'o1', 'indexed before')]);
+  writeSession(dir, 'fresh', 'session.v4.jsonl', header('fresh'), [user(0, 'f1', 'brand new')]);
+  mkdirSync(join(dir, '--work--', 'broken'), { recursive: true });
+  writeFileSync(join(dir, '--work--', 'broken', 'session.v4.jsonl'), '');
+  const units = discover(dir, { indexedSessions: () => [{ sessionId: deepseekSessionId('old', CWD), jsonlPath: old, source: 'deepseek' }] }).units;
+  assert.deepEqual(units.map(unit => unit.sessionId), [deepseekSessionId('fresh', CWD)]);
+});
+
+test('duplicate events keep distinct uuids and an out-of-range time becomes null', () => {
+  const dir = makeTempDir('trajex-dsh-');
+  const duplicate = user(1, 'same', 'copy');
+  writeSession(dir, 's', 'session.v4.jsonl', header('s', { createdAt: 1e300 }), [duplicate, duplicate, duplicate]);
+  const [{ unit, values }] = parseAll(dir);
+  const messages = byKind(values, 'message');
+  assert.equal(new Set(messages.map(message => message.uuid)).size, 3);
+  assert.equal(byKind(values, 'session')[0].started_at, null);
+  const raw = createDeepseekProvider({ rootDir: dir }).raw({
+    source: 'deepseek', messageUuid: messages[2].uuid, session: { id: unit.sessionId, jsonl_path: unit.key }, agentId: null,
+  });
+  assert.equal(raw.messageText, 'copy');
+});
+
 test('raw lookup resolves a de-duplicated uuid to the event with that seq', () => {
   const dir = makeTempDir('trajex-dsh-');
   writeSession(dir, 's', 'session.v4.jsonl', header('s'), [user(0, 'same', 'first copy'), user(1, 'same', 'second copy')]);

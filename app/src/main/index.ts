@@ -252,7 +252,7 @@ function startIndexerService({ buildOnStart = false } = {}) {
   const paths = getRuntimePaths();
   const service = createIndexerService({
     projectsDir: paths.projectsDir,
-    watchTargets: paths.providerRegistry.watchTargets(paths.providerRoots),
+    watchTargets: paths.providerRegistry.watchTargets(),
     buildIndex: async ({ reason, changedPaths, retrySessionIds }) => {
       const result = await indexerWorker.buildIndex({
         reason,

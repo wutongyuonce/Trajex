@@ -270,7 +270,9 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
       try {
         if (providerPlan.fullRebuild) {
           runRetryableWriteTransaction(txDb, () => {
-            db.prepare("DELETE FROM index_state WHERE jsonl_path != '__last_build__'").run();
+            // 系统 marker（`__` 前缀，含各 Provider 的版本 marker）不是来源进度；删掉它们会让下一次
+            // 普通 build 把刚重建的索引当作旧语义再全量重放一次。
+            db.prepare("DELETE FROM index_state WHERE substr(jsonl_path, 1, 2) != '__'").run();
             // Clearing index_state alone re-indexes existing files but leaves rows for
             // files that no longer exist on disk (stale sessions accumulate). A force
             // build is a clean rebuild: drop every derived table, then re-index from the

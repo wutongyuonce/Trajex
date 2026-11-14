@@ -5,7 +5,7 @@
 import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createPiProvider, PI_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/pi.ts';
 import { assembleSessionDetail } from '../packages/core/src/session-detail.ts';
@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v1__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v1.1__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -161,7 +161,50 @@ test('Pi skips a malformed physical line and keeps later valid messages', () => 
   let step = generator.next();
   while (!step.done) { records.push(step.value); step = generator.next(); }
   assert.deepEqual(records.filter(record => record.kind === 'message').map(record => record.text), ['must index', 'must also index']);
-  assert.equal(step.value.split(':')[1], '4');
+  assert.deepEqual(provider.discover({ lastCursor: () => step.value }), [], 'the returned cursor covers the whole file');
+  const after = records.find(record => record.kind === 'message' && record.text === 'must also index');
+  const session = records.find(record => record.kind === 'session');
+  assert.equal(provider.raw({ source: 'pi', messageUuid: after.uuid, session: { id: session.id, jsonl_path: path }, agentId: null }).messageText,
+    'must also index', 'raw lookup tolerates the same malformed line as parse');
+});
+
+test('Pi discovery skips an unreadable session file without failing the others', { skip: process.getuid?.() === 0 || process.platform === 'win32' }, () => {
+  const root = makeTempDir('trajex-pi-unreadable-');
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  const good = join(dir, 'good.jsonl');
+  const locked = join(dir, 'locked.jsonl');
+  writeFileSync(good, `${JSON.stringify({ type: 'session', version: 3, id: 'good' })}\n`);
+  writeFileSync(locked, `${JSON.stringify({ type: 'session', version: 3, id: 'locked' })}\n`);
+  chmodSync(locked, 0o000);
+  try {
+    const units = createPiProvider({ sessionDir: dir }).discover({
+      lastCursor: () => null,
+      indexedSessions: () => [{ sessionId: 'pi:locked:x', jsonlPath: locked, source: 'pi' }],
+    });
+    assert.deepEqual(units.map(unit => unit.key), [good], 'the unreadable file is neither indexed nor tombstoned');
+  } finally {
+    chmodSync(locked, 0o644);
+  }
+});
+
+test('Pi keeps zero input usage and normalizes timestamps like the other providers', () => {
+  const root = makeTempDir('trajex-pi-usage-');
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'u.jsonl'), [
+    JSON.stringify({ type: 'session', version: 3, id: 'u', timestamp: '2026-06-10T18:00:00+08:00' }),
+    JSON.stringify({ type: 'message', id: 'q', parentId: null, timestamp: '2026-06-10T10:00:01Z', message: { role: 'user', content: 'q' } }),
+    JSON.stringify({ type: 'message', id: 'a', parentId: 'q', timestamp: 1781085602000, message: { role: 'assistant', content: [{ type: 'text', text: 'a' }], usage: { input: 0, output: 3 } } }),
+  ].join('\n') + '\n');
+  const provider = createPiProvider({ sessionDir: dir });
+  const generator = provider.parse(provider.discover({ lastCursor: () => null })[0], null);
+  const records = [];
+  for (let step = generator.next(); !step.done; step = generator.next()) records.push(step.value);
+  const [question, answer] = records.filter(record => record.kind === 'message');
+  assert.equal(question.timestamp, '2026-06-10T10:00:01.000Z');
+  assert.equal(answer.input_tokens, 0);
+  assert.equal(records.find(record => record.kind === 'session').started_at, '2026-06-10T10:00:00.000Z');
 });
 
 test('Pi rejects a structurally malformed message instead of indexing a partial session', () => {

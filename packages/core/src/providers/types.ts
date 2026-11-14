@@ -14,8 +14,9 @@
  * - RawLookup / RawRecord：外部 UI/桌面端查询原始消息行时使用的分页查询协议
  *
  * 调用链：
- *   indexer.ts / buildIndex()
+ *   provider-indexing.ts / createProviderIndexPlan()
  *     → adapter.discover()        → 返回 IndexUnit[]
+ *   provider-indexing.ts / indexProviderPlan()
  *     → adapter.parse(unit, cursor) → Generator<TranscriptRecord>
  *     → persist.ts 消费 TranscriptRecord 写入 SQLite
  *
@@ -218,8 +219,7 @@ export interface SubagentRecord {
 
 /**
  * 工作流运行记录。对应 schema 的 workflows 表。
- * `agent_count` 是可选的展示元数据；persist 仍会计算权威聚合值，
- * 因为代理可能在其他运行中到齐。
+ * `agent_count` 是 adapter 给出的展示元数据，persist 原样写入。
  */
 export interface WorkflowRecord {
   kind: 'workflow';
@@ -294,8 +294,8 @@ export interface DeleteSessionRecord {
  * 会话级聚合记录。单元记录产出后由 adapter 发出一次，因为
  * started_at/ended_at/message_count 需要跨整个流计算。
  * title/ended_at 可由 adapter 从来源特有记录或辅助文件
- * （例如 transcript 的 ai-title、codex session_index.jsonl）补充；persist 使用 COALESCE upsert，
- * 确保不会覆盖已有的值。
+ * （例如 transcript 的 ai-title、codex session_index.jsonl）补充；persist 合并时新值优先，
+ * 新值为空时保留已有值。
  *
  * project_path 不在此设置——调度层在 session 首次创建或路径仍未解析时，
  * 通过 refreshSessionProjectPaths 从持久化的消息 cwd 推导。普通增量索引
@@ -386,7 +386,7 @@ export interface ProviderAdapter extends Provider {
   readonly descriptor: ProviderDescriptor;
   /** 索引语义版本标记；缺失时触发一次 provider 自有的全量重放。 */
   readonly indexVersionMarker?: string;
-  /** 监视目标相对构造时的 defaultRoot；参数保留兼容，内建 adapter 忽略它。 */
-  watchTargets(configuredRoot?: string): WatchTarget[];
+  /** 监视目标相对构造时配置的根目录。 */
+  watchTargets(): WatchTarget[];
   raw(input: RawLookup): RawRecord | null;
 }

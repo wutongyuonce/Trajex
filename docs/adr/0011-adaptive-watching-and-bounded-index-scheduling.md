@@ -37,9 +37,10 @@ Current targets are:
 
 | Provider | Tree targets | Exact-file targets |
 | --- | --- | --- |
-| Claude | `projects/` | `history.jsonl` |
+| Claude | `projects/` | none |
 | Codex | `sessions/`, `archived_sessions/` | `session_index.jsonl` |
 | Pi | configured final session directory | none |
+| DeepSeek Harness | configured sessions directory | none |
 
 ### One adaptive watcher combines three bounded signals
 

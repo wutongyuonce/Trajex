@@ -18,10 +18,10 @@ function fakeProvider(id, root) {
       defaultRoot: root,
       color: '#123456',
     },
-    watchTargets(configuredRoot) {
+    watchTargets() {
       return [
-        { kind: 'tree', path: `${configuredRoot}/sessions` },
-        { kind: 'file', path: `${configuredRoot}/session-index` },
+        { kind: 'tree', path: `${root}/sessions` },
+        { kind: 'file', path: `${root}/session-index` },
       ];
     },
     discover() {
@@ -47,8 +47,7 @@ test('provider registry drives source catalog, typed watch targets, and raw look
     { id: 'alpha', name: 'alpha display', vendor: 'alpha vendor', defaultRoot: '/default/alpha', color: '#123456' },
     { id: 'beta', name: 'beta display', vendor: 'beta vendor', defaultRoot: '/default/beta', color: '#123456' },
   ]);
-  // Root overrides are ignored: watch/discover/raw all use constructor defaultRoot.
-  assert.deepEqual(registry.watchTargets({ alpha: '/custom/alpha' }), [
+  assert.deepEqual(registry.watchTargets(), [
     { kind: 'tree', path: '/default/alpha/sessions' },
     { kind: 'file', path: '/default/alpha/session-index' },
     { kind: 'tree', path: '/default/beta/sessions' },
@@ -80,7 +79,6 @@ test('built-in provider registry exposes every source without caller-side branch
   ]);
   assert.deepEqual(registry.watchTargets(), [
     { kind: 'tree', path: '/sources/claude/projects' },
-    { kind: 'file', path: '/sources/claude/history.jsonl' },
     { kind: 'tree', path: '/sources/codex/sessions' },
     { kind: 'tree', path: '/sources/codex/archived_sessions' },
     { kind: 'file', path: '/sources/codex/session_index.jsonl' },

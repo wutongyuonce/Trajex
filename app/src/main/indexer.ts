@@ -291,25 +291,8 @@ function buildIndex({
         changedPaths,
         priorSessions,
       });
-      if (!force && providerPlan.fullRebuild && providerPlan.inventoryIssues.length > 0) {
-        return {
-          files: providerPlan.items.length,
-          latestSourceMtime: 0,
-          affectedSessionIds: [],
-          ftsRebuilt: false,
-          skipped: 0,
-          skippedFiles: [],
-          inventoryIssues: providerPlan.inventoryIssues,
-          deferred: false,
-          watchHints: readRecentTranscriptHints(db),
-        };
-      }
       assertRebuildRootsAvailable(providerPlan);
       let latestSourceMtime = providerPlan.items.reduce((latest, { unit }) => {
-        const providerCursor = (unit.meta as { currentCursor?: unknown } | undefined)?.currentCursor;
-        if (typeof providerCursor === 'string') {
-          return Math.max(latest, Number(providerCursor.split(':')[0]) || 0);
-        }
         try {
           return Math.max(latest, fs.statSync(unit.key).mtimeMs);
         } catch {
@@ -322,6 +305,8 @@ function buildIndex({
           runRetryableWriteTransaction(txDb, () => {
             dropMessageFtsTriggers(db);
             db.prepare("DELETE FROM index_state WHERE substr(jsonl_path, 1, 2) != '__'").run();
+            // 触发器已删；若本次 build 中途停止，下一次 build 必须重建 FTS，而不是信任旧的就绪标记。
+            db.prepare("DELETE FROM index_state WHERE jsonl_path = '__fts_triggers_ready__'").run();
             db.prepare("DELETE FROM messages").run();
             db.prepare("DELETE FROM tool_calls").run();
             db.prepare("DELETE FROM tool_results").run();

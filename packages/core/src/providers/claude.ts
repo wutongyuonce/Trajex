@@ -3,20 +3,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Claude Code Provider adapter。
+ * Claude Code Provider adapter（见 docs/adr/0001、0002）。
  *
- * 模块定位：发现 ~/.claude 下的主会话、subagent 与 workflow 文件，并把 Claude
- * 私有 JSONL/JSON 语义投影为 TranscriptRecord。它不访问 Trajex SQLite。
+ * 模块定位：发现 ~/.claude/projects 下的主会话、subagent 与 workflow 文件，并把 Claude
+ * 私有 JSONL/JSON 语义投影为 TranscriptRecord。它不访问 Trajex SQLite。主会话按行增量解析：
+ * 这里的 session 聚合只反映本次解析的部分，由 persist 与已有行合并。
  */
-// Claude Code provider adapter in Core (see docs/adr/0001).
-//
-// Pure: discovers Claude transcript files and parses one into a record stream.
-// It never touches the Trajex database. The per-line logic mirrors the original
-// indexJsonl exactly, but yields canonical TranscriptRecords instead of writing rows; the shared
-// persist layer consumes them. Session aggregates here reflect only THIS chunk
-// (started_at/ended_at/message_count); persist merges them with any existing row.
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
 
@@ -25,7 +19,7 @@ import {
   filePath, truncJson, truncToolResult, toolResultPreview, readLines, discoverJsonlFiles, isDir,
   normalizeTranscriptTimestamp,
 } from '../parsing.ts';
-import { cursorMatchesSnapshot, fileSnapshot, snapshotCursor } from './file-snapshot.ts';
+import { cursorMatchesSnapshot, fileSnapshot, snapshotCursor, type FileSnapshot } from './file-snapshot.ts';
 
 import type {
   Cursor,
@@ -37,24 +31,16 @@ import type {
   RawRecord,
 } from './types.ts';
 
-// Claude cursor encodes the file mtime and the number of lines already indexed:
-// "<mtimeMs>:<linesProcessed>". mtime lets discovery detect change; lines lets
-// parse resume without reprocessing.
-function cursorToSkip(cursor: Cursor): number {
+/**
+ * 按 cursor（`mtime:lines:size:ctime:inode`，ADR-0002）计算可跳过的行数。文件被同路径替换（inode
+ * 变化）或缩短时从头解析，否则新文件的前若干行会被当作已索引而丢失。旧的两段 cursor 照常续读。
+ */
+function cursorToSkip(cursor: Cursor, snapshot: FileSnapshot): number {
   if (!cursor) return 0;
-  const n = Number(cursor.split(':')[1]);
-  return Number.isFinite(n) ? n : 0;
-}
-
-/** mtime 可能在同一毫秒内不变；完整签名还能识别 append 和原路径替换。 */
-function cursorSignatureDiffers(cursor: string, filePath: string): boolean {
-  const stats = statSync(filePath);
   const parts = cursor.split(':');
-  if (parts.length < 5) return Number(parts[0]) < stats.mtimeMs;
-  return Number(parts[0]) !== stats.mtimeMs
-    || Number(parts[2]) !== stats.size
-    || Number(parts[3]) !== stats.ctimeMs
-    || Number(parts[4]) !== stats.ino;
+  if (parts.length >= 5 && (Number(parts[4]) !== snapshot.ino || Number(parts[2]) > snapshot.size)) return 0;
+  const n = Number(parts[1]);
+  return Number.isFinite(n) ? n : 0;
 }
 
 export const name = 'claude';
@@ -128,9 +114,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     const normalizedPath = normalize(file.path);
     if (ctx.changedPaths !== undefined && !changedTranscriptPaths.has(normalizedPath)) return false;
     const cursor = ctx.lastCursor(file.path);
-    return forcedPaths.has(normalizedPath)
-      || cursor === null
-      || cursorSignatureDiffers(cursor, file.path);
+    return forcedPaths.has(normalizedPath) || !cursorMatchesSnapshot(cursor, fileSnapshot(file.path));
   }).map((f: any) => ({
     key: f.path,
     sessionId: f.sessionId,
@@ -296,12 +280,10 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
   if (kind === 'workflow') {
     return yield* parseWorkflow(unit);
   }
-  const skip = cursorToSkip(cursor);
-  const stats = statSync(unit.key);
-  const mtime = stats.mtimeMs;
+  const snapshot = fileSnapshot(unit.key);
+  const skip = cursorToSkip(cursor, snapshot);
   const isSubagent = unit.isSubagent === true;
   const records: TranscriptRecord[] = [];
-  const historyTitle = ((unit.meta as { historyTitle?: string } | undefined)?.historyTitle ?? null) as string | null;
   let aiTitle: string | null = null;
   let customTitle: string | null = null;
   const sm = {
@@ -322,12 +304,13 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
   readLines(unit.key, (line: string, terminated: boolean) => {
     lineNum++;
     let obj: any;
-    try { obj = JSON.parse(line); } catch {
-      // A terminated malformed record cannot become valid in an append-only
-      // transcript, so consume it and continue. An unterminated tail may still
-      // be growing; leave the cursor before it and retry on the next change.
-      if (lineNum <= skip) { processedLineCount = lineNum; return; }
-      if (terminated) { processedLineCount = lineNum; return; }
+    try { obj = JSON.parse(line); } catch { obj = undefined; }
+    if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+      // A terminated malformed record (including valid JSON that is not an
+      // object) cannot become valid in an append-only transcript, so consume it
+      // and continue. An unterminated tail may still be growing; leave the
+      // cursor before it and retry on the next change.
+      if (lineNum <= skip || terminated) { processedLineCount = lineNum; return; }
       return false;
     }
     processedLineCount = lineNum;
@@ -377,12 +360,9 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
 
     const rawContentType = extractContentType(msg.content);
     const toolResults: Array<{ block: any; content: string }> = obj.type === 'user' && Array.isArray(msg.content)
-      ? msg.content.flatMap((block: any) => {
-          if (block.type !== 'tool_result' || !block.tool_use_id) return [];
-          const content = typeof block.content === 'string' ? block.content
-            : Array.isArray(block.content) ? block.content.map((item: any) => item.text || '').join('\n') : '';
-          return [{ block, content }];
-        })
+      ? msg.content.flatMap((block: any) => (
+          block?.type === 'tool_result' && block.tool_use_id ? [{ block, content: toolResultText(block.content) }] : []
+        ))
       : [];
     const text = rawContentType === 'tool_result'
       ? toolResultPreview(toolResults.map(({ content }) => content).join('\n'))
@@ -405,7 +385,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
 
     if (obj.type === 'assistant' && Array.isArray(msg.content)) {
       for (const b of msg.content) {
-        if (b.type === 'tool_use' && b.id)
+        if (b?.type === 'tool_use' && b.id)
           records.push({ kind: 'tool_call', id: b.id, message_uuid: obj.uuid, session_id: sid, name: b.name, input_json: truncJson(b.input || {}) as string, file_path: filePath(b.name, b.input) });
       }
     }
@@ -453,10 +433,10 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     }
   }
 
-  // Subagent transcripts do not own a session row (matches indexJsonl).
+  // Subagent transcripts do not own a session row.
   if (!isSubagent) {
     records.push({
-      kind: 'session', id: unit.sessionId, title: customTitle ?? aiTitle ?? historyTitle, project: unit.project || null,
+      kind: 'session', id: unit.sessionId, title: customTitle ?? aiTitle, project: unit.project || null,
       started_at: sm.started_at, ended_at: sm.ended_at, git_branch: sm.git_branch,
       version: sm.version, message_count: sm.n, countMode: skip > 0 ? 'delta' : 'total',
       jsonl_path: unit.key, source: 'claude',
@@ -464,7 +444,7 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
   }
 
   yield* records;
-  return `${mtime}:${processedLineCount}:${stats.size}:${stats.ctimeMs}:${stats.ino}`;
+  return snapshotCursor(snapshot, processedLineCount);
 }
 
 /** 按原生 message UUID 在主会话、subagent 或 workflow-agent 文件中回查原始行。 */
@@ -512,10 +492,7 @@ export function createClaudeProvider({ rootDir = join(homedir(), '.claude') }: {
     name,
     descriptor: { id: name, name: 'Claude Code', vendor: 'Anthropic', defaultRoot: rootDir, color: '#d97757' },
     indexVersionMarker: CLAUDE_CANONICAL_TRANSCRIPT_MARKER,
-    watchTargets: () => [
-      { kind: 'tree', path: join(rootDir, 'projects') },
-      { kind: 'file', path: join(rootDir, 'history.jsonl') },
-    ],
+    watchTargets: () => [{ kind: 'tree', path: join(rootDir, 'projects') }],
     discover: (ctx) => discoverAt(rootDir, ctx),
     parse,
     raw: rawClaude,

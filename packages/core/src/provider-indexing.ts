@@ -77,10 +77,9 @@ export function readRecentTranscriptHints(db: SqliteDb, limit = 64): string[] {
   return hints;
 }
 
-/** 执行结果：已提交项、失败 Provider 集合；stopped 表示数据库忙等原因中途停止的位置。 */
+/** 执行结果：已提交项、失败项；stopped 表示数据库忙等原因中途停止的位置。 */
 export interface ProviderIndexResult {
   readonly committed: ProviderIndexItem[];
-  readonly failedProviders: ReadonlySet<string>;
   readonly failedItems: ProviderIndexItem[];
   readonly stopped?: { item: ProviderIndexItem; error: unknown };
 }
@@ -150,16 +149,31 @@ export function createProviderIndexPlan(
         ...new Set(providerSessions.map(session => session.jsonlPath)),
       ]);
     }
-    const units = provider.discover({
-      lastCursor: fullReindex ? () => null : (key) => storedProviderCursor(db, key),
-      changedPaths: fullReindex ? undefined : changedPaths,
-      indexedSessions,
-      reportUnavailableRoot: (issue) => {
-        // 没有旧快照的内建 Provider 是可选来源，不阻断 force rebuild。
-        if (indexedSessions().length === 0) return;
-        inventoryIssues.push({ provider: provider.name, ...issue });
-      },
-    });
+    const reportIssue = (issue: InventoryRootIssue) => {
+      // 没有旧快照的内建 Provider 是可选来源，不阻断 force rebuild。
+      if (indexedSessions().length === 0) return;
+      inventoryIssues.push({ provider: provider.name, ...issue });
+    };
+    let units: IndexUnit[];
+    try {
+      units = provider.discover({
+        lastCursor: fullReindex ? () => null : (key) => storedProviderCursor(db, key),
+        changedPaths: fullReindex ? undefined : changedPaths,
+        indexedSessions,
+        reportUnavailableRoot: reportIssue,
+      });
+    } catch (error) {
+      // 一个 Provider 的发现异常只阻断它自己：保留其上次快照，其他 Provider 照常索引。
+      const message = error instanceof Error ? error.message : String(error);
+      process.emitWarning(`${provider.name} discovery failed: ${message}`, { code: 'TRAJEX_PROVIDER_DISCOVERY' });
+      reportIssue({ path: provider.descriptor.defaultRoot, error: message });
+      units = [];
+    }
+    // tombstone 以自身身份为撤回目标。同一轮里另一个单元重新发布了这个身份（文件移动、
+    // 归档），来源并未消失，并且 tombstone 排在后面会删掉刚写入的投影。
+    const isTombstone = (unit: IndexUnit) => unit.retractSessionIds?.includes(unit.sessionId) === true;
+    const republished = new Set(units.filter(unit => !isTombstone(unit)).map(unit => unit.sessionId));
+    units = units.filter(unit => !isTombstone(unit) || !republished.has(unit.sessionId));
     for (const unit of units) {
       items.push({
         provider,
@@ -199,10 +213,9 @@ export function indexProviderPlan({
   onError: (error: unknown, item: ProviderIndexItem) => 'skip' | 'stop';
 }): ProviderIndexResult {
   const committed: ProviderIndexItem[] = [];
-  const failedProviders = new Set<string>();
   const failedItems: ProviderIndexItem[] = [];
   const blocked = new Set(plan.inventoryIssues.map(issue => issue.provider));
-  let replayScheduleCommitted = plan.pendingMarkers.size === 0 && (plan.replayKeys?.size ?? 0) === 0;
+  let replayScheduleCommitted = plan.pendingMarkers.size === 0 && plan.replayKeys.size === 0;
   for (const item of plan.items) {
     try {
       const cursor = runTransaction(`provider:${item.provider.name}:${item.unit.key}`, () => {
@@ -215,7 +228,7 @@ export function indexProviderPlan({
               .filter(({ provider }) => plan.pendingMarkers.has(provider.name) && !blocked.has(provider.name))
               .map(({ unit }) => unit.key),
           );
-          for (const [provider, keys] of plan.replayKeys ?? []) {
+          for (const [provider, keys] of plan.replayKeys) {
             if (blocked.has(provider)) continue;
             for (const key of keys) keysToReplay.add(key);
           }
@@ -230,14 +243,13 @@ export function indexProviderPlan({
       committed.push(item);
       onCommitted(item, cursor);
     } catch (error) {
-      failedProviders.add(item.provider.name);
       failedItems.push(item);
       if (onError(error, item) === 'stop') {
-        return { committed, failedProviders, failedItems, stopped: { item, error } };
+        return { committed, failedItems, stopped: { item, error } };
       }
     }
   }
-  return { committed, failedProviders, failedItems };
+  return { committed, failedItems };
 }
 
 /** Write every pending version marker, so the first-unit transaction and finalize share one marker row shape. */
@@ -269,13 +281,13 @@ export function writeProviderIndexMarkers(
   const committed = new Set(result.committed.map(
     (item) => `${item.provider.name}\0${item.unit.key}`,
   ));
-  for (const [provider, keys] of plan.replayKeys ?? []) {
+  for (const [provider, keys] of plan.replayKeys) {
     if (blocked.has(provider)) continue;
     for (const key of keys) {
       if (!committed.has(`${provider}\0${key}`)) retry.run(key);
     }
   }
-  for (const item of result.failedItems ?? []) {
+  for (const item of result.failedItems) {
     if (plan.pendingMarkers.has(item.provider.name) && !blocked.has(item.provider.name)) {
       retry.run(item.unit.key);
     }

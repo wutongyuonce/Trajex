@@ -269,7 +269,6 @@ test('main process watches every root declared by the built-in provider registry
     assert.equal(serviceOptions.length, 1);
     assert.deepEqual(serviceOptions[0].watchTargets, [
       { kind: 'tree', path: join(claudeDir, 'projects') },
-      { kind: 'file', path: join(claudeDir, 'history.jsonl') },
       { kind: 'tree', path: join(codexDir, 'sessions') },
       { kind: 'tree', path: join(codexDir, 'archived_sessions') },
       { kind: 'file', path: join(codexDir, 'session_index.jsonl') },

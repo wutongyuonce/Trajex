@@ -48,8 +48,9 @@ A session directory with no readable supported generation freezes the tree it
 belongs to, so replaying that tree cannot delete the member's last snapshot.
 Membership is taken from the blocked header when it is still readable. Trees
 whose root names the blocked session as parent are frozen too, so they are not
-published as separate roots. If the header itself is unreadable, every tree with
-a member in that project directory is frozen.
+published as separate roots. If the header itself is unreadable, every already
+indexed tree with a member in that project directory is frozen; trees that were
+never indexed have no snapshot to lose and are still published.
 
 Any member change fully replays the tree: the unit emits `delete-session` for
 the root, then every member. This follows ADR-0002's full-replay rule instead of

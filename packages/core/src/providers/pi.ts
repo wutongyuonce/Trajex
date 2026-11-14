@@ -8,7 +8,9 @@ import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize, relative } from 'node:path';
 
-import { projectSlugFromPath, trunc, truncJson, truncToolResult, toolResultPreview, readLines } from '../parsing.ts';
+import {
+  normalizeTranscriptTimestamp, projectSlugFromPath, trunc, truncJson, truncToolResult, toolResultPreview, readLines,
+} from '../parsing.ts';
 import { cursorMatchesSnapshot, fileSnapshot, sameSnapshot, snapshotCursor } from './file-snapshot.ts';
 import type {
   Cursor, DiscoverContext, IndexUnit, IndexedSession, MessageRecord, ProviderAdapter,
@@ -16,7 +18,8 @@ import type {
 } from './types.ts';
 
 export const name = 'pi';
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v1__';
+// v1.1：一次性重放旧投影，把消息、摘要与 session 边界时间戳规范为 UTC 毫秒形态。
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v1.1__';
 
 type PiEntry = Record<string, any>;
 type PiToolOccurrence = {
@@ -100,13 +103,15 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
 
   const units = files.flatMap((path) => {
     if (ctx.changedPaths !== undefined && !changed.has(path) && !changedRoot) return [];
-    const snapshot = fileSnapshot(path);
-    const cursor = ctx.lastCursor(path);
-    if (cursorMatchesSnapshot(cursor, snapshot)) return [];
-    const headerLine = firstJsonlLine(path);
     let header: PiEntry | null = null;
-    if (headerLine) {
-      try { header = JSON.parse(headerLine) as PiEntry; } catch { header = null; }
+    try {
+      if (cursorMatchesSnapshot(ctx.lastCursor(path), fileSnapshot(path))) return [];
+      const headerLine = firstJsonlLine(path);
+      if (headerLine) header = JSON.parse(headerLine) as PiEntry;
+    } catch {
+      // 枚举后被删除、暂时不可读或 header 损坏：只跳过这个文件。它仍在 inventory 中，
+      // 不会被 tombstone，下一轮重试。
+      return [];
     }
     if (!header || header.type !== 'session' || header.version !== 3 || typeof header.id !== 'string') return [];
     const project = projectSlugFromPath(header.cwd);
@@ -174,16 +179,22 @@ function physicalUserTitle(message: unknown): string | null {
     .trim() || null;
 }
 
+/** Pi 使用 ISO 字符串或毫秒时间戳；统一为与其他 Provider 相同的规范形态，无效值为 null。 */
 function timestamp(value: unknown): string | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return new Date(value).toISOString();
-  return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
+  if (typeof value === 'number') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+  return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? normalizeTranscriptTimestamp(value) : null;
 }
 
 function usageFields(value: unknown): { inputTokens: number | null; outputTokens: number | null } {
   const usage = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  const inputTokens = ['input', 'cacheRead', 'cacheWrite']
-    .reduce((total, key) => total + (Number.isFinite(usage[key]) ? Number(usage[key]) : 0), 0) || null;
-  return { inputTokens, outputTokens: Number.isFinite(usage.output) ? Number(usage.output) : null };
+  const inputs = ['input', 'cacheRead', 'cacheWrite'].map(key => usage[key]).filter(Number.isFinite).map(Number);
+  return {
+    inputTokens: inputs.length ? inputs.reduce((total, part) => total + part, 0) : null,
+    outputTokens: Number.isFinite(usage.output) ? Number(usage.output) : null,
+  };
 }
 
 function toolFilePath(name: unknown, input: unknown): string | null {
@@ -461,8 +472,8 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     .find(value => value !== null) ?? null;
   let latestName: string | null = null;
   let count = 0;
-  let startedAt: string | null = header.timestamp ?? null;
-  let endedAt: string | null = header.timestamp ?? null;
+  let startedAt: string | null = timestamp(header.timestamp);
+  let endedAt: string | null = startedAt;
   const addMessage = (entry: PiEntry, role: string, text: string | null, contentType: string, parentUuid: string | null, suffix = '', visibility: 'visible' | 'inactive' | 'hidden' = 'visible', inputTokens: number | null = null, outputTokens: number | null = null, isMeta: 0 | 1 = 0) => {
     const entryTimestamp = timestamp(entry.timestamp ?? entry.message?.timestamp);
     const uuid = piId(sessionId, entry.id, suffix);
@@ -488,7 +499,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
         const usage = usageFields(entry.usage);
         records.push({
           kind: 'summary', id: piId(sessionId, entry.id), session_id: sessionId,
-          timestamp: entry.timestamp ?? null, source: entry.type, content: entry.summary,
+          timestamp: timestamp(entry.timestamp), source: entry.type, content: entry.summary,
           visibility: entryVisibility, input_tokens: usage.inputTokens, output_tokens: usage.outputTokens,
         });
       }
@@ -510,7 +521,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     ) {
       records.push({
         kind: 'summary', id: piId(sessionId, entry.id), session_id: sessionId,
-        timestamp: entry.timestamp ?? null,
+        timestamp: timestamp(entry.timestamp),
         source: message.role === 'branchSummary' ? 'branch_summary' : 'compaction',
         content: message.summary, visibility: entryVisibility, input_tokens: null, output_tokens: null,
       });
@@ -612,9 +623,11 @@ function rawPi(sessionDir: string, input: RawLookup): RawRecord | null {
     if (!input.messageUuid.startsWith(prefix)) return null;
 
     const entries: PiEntry[] = [];
-    for (const line of readFileSync(normalizedPath, 'utf8').split('\n')) {
+    // 与 parse() 同一容错规则：跳过损坏行，其后的已索引消息仍能回查。
+    for (const rawLine of readFileSync(normalizedPath, 'utf8').split('\n')) {
+      const line = rawLine.replace(/\r$/, '');
       if (!line) continue;
-      try { entries.push(JSON.parse(line)); } catch { break; }
+      try { entries.push(JSON.parse(line)); } catch { continue; }
     }
     const header = entries.find(entry => entry?.type === 'session' && typeof entry.id === 'string');
     if (!header || piSessionId(header.id, header.cwd) !== sessionId) return null;

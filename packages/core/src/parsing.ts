@@ -9,24 +9,16 @@
  * CLI 与桌面 App 均可复用；Provider adapter 在其上实现各自的日志语义。
  *
  * 函数分类导览（按归属分区，见下方区块标题）：
- *   1. 跨 Provider 共享 —— 无前缀、不绑定线协议格式，claude / codex / pi 通用
- *   2. Claude 专用 —— 绑定 Claude JSONL 的 content 块结构、工具名与目录布局
+ *   1. 跨 Provider 共享 —— 无前缀、不绑定线协议格式
+ *   2. Claude 格式 —— 绑定 Claude JSONL 的 content 块结构、工具名与目录布局
  *   3. Codex 专用 —— 前缀 codex，绑定 Codex rollout 的 thread / meta / payload 语义
  *   4. 索引收尾层 —— inferProjectPath，被 buildIndex 收尾回填 project_path，非 Provider 内调用
+ * 只依赖 node:fs/path，不依赖 node:sqlite，App（better-sqlite3）与 CLI 共用。
  */
-// Core's pure parse/discover helpers — node:sqlite-free by construction, so the compiled
-// providers can be consumed by the app (better-sqlite3 / a Node without
-// node:sqlite). Originally extracted verbatim from db/indexer; it now exposes a
-// typed seam while remaining limited to node:fs/path/os.
 import { closeSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { isAbsolute, join, normalize } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
-const CLAUDE_DIR = join(homedir(), '.claude');
-const CODEX_DIR = join(homedir(), '.codex');
-const PROJECTS_DIR = join(CLAUDE_DIR, 'projects');
-const CODEX_SESSIONS_DIR = join(CODEX_DIR, 'sessions');
 const TEXT_LIMIT = 10000;
 const TOOL_RESULT_PREVIEW_CHARS = 1000;
 
@@ -67,7 +59,7 @@ interface CodexLineRecord {
 }
 
 // ================= 跨 Provider 共享 =================
-// 无前缀、不绑定线协议格式：claude / codex / pi 通用。
+// 无前缀、不绑定线协议格式。
 
 /** 截断超长字符串到 TEXT_LIMIT，避免把超长消息整体写入索引。 */
 function trunc(s: any): any {
@@ -183,8 +175,9 @@ function isSkillInstructions(text: unknown): boolean {
   return typeof text === 'string' && SKILL_INSTRUCTIONS_RE.test(text);
 }
 
-// ================= Claude 专用 =================
-// 绑定 Claude JSONL 的 content 块结构、工具名与项目目录布局；仅 claude.ts 使用。
+// ================= Claude 格式 =================
+// 绑定 Claude JSONL 的 content 块结构、工具名与项目目录布局。主要由 claude.ts 使用；
+// codex.ts 复用 extractText / extractMessageIsMeta，deepseek.ts 复用 filePath。
 
 /** 从 content block 数组提取 text/thinking 纯文本；字符串直接截断返回，无内容返回 null。 */
 function extractText(content: JsonValue): string | null {
@@ -192,8 +185,8 @@ function extractText(content: JsonValue): string | null {
   if (!Array.isArray(content)) return null;
   const parts: string[] = [];
   for (const b of content) {
-    if (b.type === 'text' && b.text) parts.push(b.text);
-    else if (b.type === 'thinking' && b.thinking) parts.push(b.thinking);
+    if (b?.type === 'text' && b.text) parts.push(b.text);
+    else if (b?.type === 'thinking' && b.thinking) parts.push(b.thinking);
   }
   return parts.length ? trunc(parts.join('\n')) : null;
 }
@@ -229,7 +222,7 @@ function legacyProjectPathFromSlug(project: string | null | undefined): string |
 
 /** 枚举 Claude 主会话、subagent 与 workflow-agent JSONL 的文件级元数据。 */
 function discoverJsonlFiles(
-  projectsDir = PROJECTS_DIR,
+  projectsDir: string,
   reportUnavailableRoot?: InventoryRootIssueReporter,
 ): ClaudeJsonlFile[] {
   const files: ClaudeJsonlFile[] = [];
@@ -303,7 +296,7 @@ function inferProjectPath(project: string | null | undefined, observedCwds: unkn
 
 /** 递归枚举 Codex 按日期分层保存的 rollout JSONL。 */
 function discoverCodexJsonlFiles(
-  sessionsDir = CODEX_SESSIONS_DIR,
+  sessionsDir: string,
   reportUnavailableRoot?: InventoryRootIssueReporter,
 ): CodexJsonlFile[] {
   const files: CodexJsonlFile[] = [];
@@ -469,11 +462,9 @@ function codexToolOutput(payload: JsonRecord): string | null {
 }
 
 export {
-  CLAUDE_DIR, CODEX_DIR, PROJECTS_DIR, CODEX_SESSIONS_DIR, TEXT_LIMIT, TOOL_RESULT_PREVIEW_CHARS,
   trunc, truncToolResult, toolResultPreview, truncJson, extractText, extractContentType, extractMessageIsMeta, isSkillInstructions, filePath, isDir, readLines,
-  legacyProjectPathFromSlug, normalizeObservedCwd, normalizeTranscriptTimestamp, projectSlugFromPath, inferProjectPath,
+  normalizeObservedCwd, normalizeTranscriptTimestamp, projectSlugFromPath, inferProjectPath,
   discoverJsonlFiles, discoverCodexJsonlFiles,
-  codexDbId, codexRawId, codexLineUuid, codexCallId, codexParentThreadId, codexIsChildThread, codexIsGuardianThread,
-  parseCodexJsonInput,
+  codexDbId, codexRawId, codexLineUuid, codexCallId, codexIsChildThread, codexIsGuardianThread,
   codexUsage, codexEventText, codexMessagePayloadText, codexVisibleMessageKey, codexToolInput, codexToolOutput,
 };

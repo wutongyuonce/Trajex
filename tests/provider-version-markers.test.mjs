@@ -19,7 +19,7 @@ test('transcript provider projection markers are explicit', () => {
   ], [
     '__claude_canonical_transcript_v1.1__',
     '__codex_canonical_transcript_v1.1__',
-    '__pi_canonical_transcript_v1__',
+    '__pi_canonical_transcript_v1.1__',
     '__deepseek_canonical_transcript_v1__',
   ]);
 });

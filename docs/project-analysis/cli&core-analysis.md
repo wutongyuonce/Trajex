@@ -933,8 +933,8 @@ Provider adapter 是 Trajex 的适配层。**每个 provider 自己负责理解�
 | 索引单位       | 主/子代理 JSONL 与 workflow JSON      | 一个 rollout JSONL                        | 一个 v3 session JSONL                   |
 | cursor/策略    | mtime、行数、size、ctime、inode；流式续读 | mtime 判断变化；全文件重放，lines 仅记录 | mtime 判断变化；全文件重放，lines 仅记录 |
 | 必须全量的原因 | 不需要；仅续读新增行                  | event_msg 与 response_item 双向去重       | 树状分支与 compaction 需要重算可见上下文 |
-| 特殊关系       | history 标题、Workflow、subagent meta | root-thread 筛选、父/子 thread、collab spawn | durable leaf、branch、compaction、hidden/inactive |
-| App watch targets | `projects/` tree + `history.jsonl` file | `sessions/`、`archived_sessions/` tree + `session_index.jsonl` file | 配置的 session directory tree |
+| 特殊关系       | custom/AI 标题、Workflow、subagent meta | root-thread 筛选、父/子 thread、collab spawn | durable leaf、branch、compaction、hidden/inactive |
+| App watch targets | `projects/` tree | `sessions/`、`archived_sessions/` tree + `session_index.jsonl` file | 配置的 session directory tree |
 | raw 定位       | session/subagent JSONL 内 UUID        | `codex:<thread>:<line>`                   | `pi:<session-scope>:<entry>`            |
 
 它负责：
@@ -2205,7 +2205,7 @@ jsonl_path = "__app_heartbeat__"
               ↑ 不是路径，而是状态 key
 
 Provider Adapter 版本标记：
-jsonl_path = "__claude_canonical_transcript_v1__" / "__codex_canonical_transcript_v1__" / "__pi_canonical_transcript_v1__"
+jsonl_path = "__claude_canonical_transcript_v1.1__" / "__codex_canonical_transcript_v1.1__" / "__pi_canonical_transcript_v1.1__" / "__deepseek_canonical_transcript_v1__"
               ↑ 不是路径，而是状态 key
 
 一次性派生数据状态：

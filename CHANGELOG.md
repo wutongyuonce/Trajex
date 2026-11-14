@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- 核心解析与调度层审查修复：归档或移动来源文件时不再被同一轮的旧路径 tombstone 误删；单个 Provider 的 `discover()` 抛错只隔离它自己并保留旧快照；`trajex --build` 强制重建不再删掉 Provider 版本 marker（避免下一次普通构建再全量重放一遍），App 强制重建同时清除 FTS 就绪标记；Claude/Codex 遇到非对象 JSON 行或 `null` 内容块时跳过而非失败，Claude 同路径替换文件时从首行重新解析，并不再监听未使用的 `history.jsonl`；Codex 保护已索引的 `archived_sessions` 根目录，raw 回查复用与索引一致的文本规则；Pi 跳过不可读文件、raw 回查跳过损坏行、保留为 0 的 input token 并与 Claude/Codex 共享规范时间戳（marker 升至 `v1.1`）。
 - 桌面端不再把无法解析的 `settings.json` 当作空设置后直接覆盖：保存前先将其移至 `settings.json.corrupt-<时间戳>`（rename 失败时复制），并在设置页提示保留位置；两者都失败时拒绝保存并显示原因。
 - CLI 在索引不可写（如只读沙箱）时先用一次空写事务探测，在发现来源前就以指明索引路径的错误结束，不再把每个 transcript 报为索引失败；单元级只读错误会先复探 writer 再归因，并保留原始错误。
 - Claude 与 Codex 的消息时间戳、workflow 时间与 session 边界入库时统一为 `YYYY-MM-DDTHH:mm:ss.sssZ`（仅转换带时区的 ISO 值，无时区值原样保留），session 合并按同一表示比较；两者 canonical marker 升至 `v1.1`，现有索引会在下次 build 时一次性重放（同时补齐已同步的 Claude `custom-title` 标题）。

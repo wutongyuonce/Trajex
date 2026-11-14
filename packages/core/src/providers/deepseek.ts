@@ -36,9 +36,9 @@ export const name = 'deepseek';
 export const DEEPSEEK_CANONICAL_TRANSCRIPT_MARKER = '__deepseek_canonical_transcript_v1__';
 
 /** DSH 规范 artifact 文件名；`session.v0.*`、`session.lock`、`*.tmp` 都不匹配。 */
-export const SESSION_FILE_RE = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/;
-export const MIN_FORMAT_VERSION = 0;
-export const MAX_FORMAT_VERSION = 4;
+const SESSION_FILE_RE = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/;
+/** 支持的最高格式 generation；文件名规则只产生 0 或 ≥1，因此下限不必单独检查。 */
+const MAX_FORMAT_VERSION = 4;
 const CURSOR_TAG = 'dsh-tree-v1';
 const HEADER_PROBE_BYTES = 64 * 1024;
 const SUBAGENT_RESULT_RE = /started\s+subagent\s+(\S+)/;
@@ -98,7 +98,7 @@ function isRecord(value: unknown): value is Json {
 // ──────────────────────────────────────────────
 
 /** 项目作用域：同一原生 session id 在不同 cwd 下不得互相覆盖（与 Pi 的方案一致）。 */
-export function deepseekProjectScope(cwd: unknown): string {
+function deepseekProjectScope(cwd: unknown): string {
   const normalizedCwd = typeof cwd === 'string' && cwd.trim() ? normalize(cwd) : '';
   return createHash('sha256').update('deepseek-cwd-v1\0').update(normalizedCwd).digest('hex');
 }
@@ -291,14 +291,16 @@ function inventory(root: string, rootEntries: readonly Dirent[]) {
   const protectedDirs = new Set<string>();
   const blocked: BlockedSession[] = [];
   const seen = new Set<string>();
+  const seenArtifacts = new Set<string>();
   for (const project of listDirs(root, rootEntries)) {
     const projectDir = join(root, project.name);
     for (const sessionEntry of listDirs(projectDir)) {
       const sessionDir = normalize(join(projectDir, sessionEntry.name));
       const artifacts = artifactsIn(sessionDir);
+      for (const artifact of artifacts) seenArtifacts.add(artifact.path);
       let found: DiscoveredSession | null = null;
       for (const artifact of artifacts) {
-        if (artifact.version < MIN_FORMAT_VERSION || artifact.version > MAX_FORMAT_VERSION) continue;
+        if (artifact.version > MAX_FORMAT_VERSION) continue;
         const header = cachedHeader(artifact);
         if (header === null) continue;
         const scope = deepseekProjectScope(header.cwd);
@@ -321,6 +323,10 @@ function inventory(root: string, rootEntries: readonly Dirent[]) {
       seen.add(found.memberId);
       sessions.push(found);
     }
+  }
+  // 长期运行的 App 里，已删除或被替代的 generation 不应一直留在 header 缓存中。
+  for (const path of headerCache.keys()) {
+    if (inside(root, path) && !seenArtifacts.has(path)) headerCache.delete(path);
   }
   return {
     sessions: sessions.sort((a, b) => a.artifact.path.localeCompare(b.artifact.path)),
@@ -408,8 +414,9 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
   const byKey = new Map(sessions.map(session => [`${session.scope}\0${session.rawId}`, session]));
 
   // 受保护的会话目录不能参与重放，但它可能属于某棵树：重放那棵树会把它上次的快照一并删除。
-  // header 仍可读时冻结它所属的树；header 完全不可读时无法判断归属，冻结同项目目录下的树。
-  // 以受保护会话为父的树同样冻结，否则子会话会被重复发布为独立根。
+  // header 仍可读时冻结它所属的树；header 完全不可读时无法判断归属，冻结同项目目录下
+  // 已有快照的树（尚未索引的树没有可丢失的证据）。以受保护会话为父的树同样冻结，
+  // 否则子会话会被重复发布为独立根。
   const frozenRoots = new Set<string>();
   const frozenProjects = new Set<string>();
   const blockedKeys = new Set<string>();
@@ -431,7 +438,7 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
     liveRootIds.add(rootSession.memberId);
     if (frozenRoots.has(rootSession.memberId)
       || blockedKeys.has(`${rootSession.scope}\0${rootSession.header.parentSession}`)
-      || members.some(member => frozenProjects.has(dirname(member.sessionDir)))) continue;
+      || (indexedById.has(rootSession.memberId) && members.some(member => frozenProjects.has(dirname(member.sessionDir))))) continue;
     const key = rootSession.artifact.path;
     // 这棵树现在拥有的旧身份：曾作为独立根索引的成员，或同目录下已被替换的旧 session。
     const retractSessionIds = new Set<string>();
@@ -501,7 +508,9 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
 // ──────────────────────────────────────────────
 
 function timestampOf(ms: unknown): string | null {
-  return typeof ms === 'number' && Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  if (typeof ms !== 'number') return null;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function joinBlocks(content: unknown, type: string): string | null {
@@ -655,14 +664,23 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
       replaced.has(seq) || (isRoot && seq < inheritedBefore) ? 'inactive' : 'visible'
     );
 
-    const stepsWithToolCallParts = new Set<string>();
+    const memberPrefix = member.memberId;
+    // 同一 (turn, step) 在真实日志中可以重复；有原生消息 id 时以它为稳定身份。
+    const assistantBase = (data: Json) => {
+      const message = isRecord(data.message) ? data.message : {};
+      return typeof message.id === 'string' && message.id
+        ? `${memberPrefix}:a${encodeURIComponent(message.id)}`
+        : `${memberPrefix}:t${data.turn}:s${data.step}`;
+    };
+    // 预先记录每个带 tool-call 的 step 将使用的锚点，让排在 assistant/message 之前的 tool/call 也能挂上。
+    const stepToolAnchors = new Map<string, string>();
     const durableCallIds = new Set<string>();
     for (const event of events) {
       if (event.type === 'tool/call' && typeof event.data.callId === 'string') durableCallIds.add(event.data.callId);
       if (event.type !== 'assistant/message') continue;
       const content = isRecord(event.data.message) ? event.data.message.content : null;
       if (Array.isArray(content) && content.some(part => isRecord(part) && part.type === 'tool-call')) {
-        stepsWithToolCallParts.add(`${event.data.turn}:${event.data.step}`);
+        stepToolAnchors.set(`${event.data.turn}:${event.data.step}`, `${assistantBase(event.data)}:tool_use`);
       }
     }
 
@@ -672,18 +690,15 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
     let lastTime: number | null = null;
     const callAnchors = new Map<string, string>();
     const callFiles = new Map<string, string | null>();
-    const ptcAnchors = new Map<string, string>();
     const toolCallIds = new Set<string>();
-    const memberPrefix = member.memberId;
     const callKey = (nativeCallId: string) => `${memberPrefix}:call:${encodeURIComponent(nativeCallId)}`;
-    const stepAnchor = (turn: unknown, step: unknown) => `${memberPrefix}:t${turn}:s${step}:tool_use`;
 
     const pushMessage = (
       baseUuid: string, seq: number, time: number | null, role: string, text: string | null, contentType: string,
       fields: { isMeta?: 0 | 1; model?: string | null; input?: number | null; output?: number | null } = {},
     ): string => {
       let uuid = baseUuid;
-      if (emitted.has(uuid)) uuid = `${baseUuid}#${seq}`;
+      for (let n = 0; emitted.has(uuid); n++) uuid = n === 0 ? `${baseUuid}#${seq}` : `${baseUuid}#${seq}.${n}`;
       emitted.add(uuid);
       const visibility = visibilityOf(seq);
       const timestamp = timestampOf(time);
@@ -701,6 +716,16 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
     const ensureAnchor = (anchor: string, seq: number, time: number | null) => {
       if (emitted.has(anchor)) return;
       pushMessage(anchor, seq, time, 'assistant', null, 'tool_use', { model: currentModel });
+    };
+    /** 一个原生调用挂在哪个 tool_use 锚点：已知调用 > 同 step 的 assistant 锚点 > 补一个无文本锚点。 */
+    const anchorFor = (nativeCallId: string, data: Json, seq: number, time: number | null) => {
+      let anchor = callAnchors.get(nativeCallId) ?? stepToolAnchors.get(`${data.turn}:${data.step}`);
+      if (!anchor) {
+        anchor = `${memberPrefix}:t${data.turn}:s${data.step}:tool_use`;
+        ensureAnchor(anchor, seq, time);
+      }
+      callAnchors.set(nativeCallId, anchor);
+      return anchor;
     };
     const pushToolCall = (id: string, anchor: string, toolName: string, args: unknown) => {
       if (toolCallIds.has(id)) return;
@@ -749,10 +774,7 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
             : [];
           const model = isRecord(message.source) && typeof message.source.model === 'string' ? message.source.model : currentModel;
           const { input, output } = usageTokens(data.usage);
-          // 同一 (turn, step) 在真实日志中可以重复；有原生消息 id 时以它为稳定身份。
-          const base = typeof message.id === 'string' && message.id
-            ? `${memberPrefix}:a${encodeURIComponent(message.id)}`
-            : `${memberPrefix}:t${data.turn}:s${data.step}`;
+          const base = assistantBase(data);
           const anchor = toolParts.length ? `${base}:tool_use` : null;
           // 一个 step 没有可投影内容时仍产出无文本消息，避免丢失 usage。
           const needsText = visible !== null || (reasoning === null && anchor === null);
@@ -785,13 +807,7 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
         case 'tool/call': {
           const nativeCallId = typeof data.callId === 'string' && data.callId ? data.callId : null;
           if (nativeCallId === null) break;
-          let anchor = callAnchors.get(nativeCallId);
-          if (!anchor) {
-            anchor = stepAnchor(data.turn, data.step);
-            if (!stepsWithToolCallParts.has(`${data.turn}:${data.step}`)) ensureAnchor(anchor, event.seq, event.time);
-            callAnchors.set(nativeCallId, anchor);
-          }
-          ptcAnchors.set(nativeCallId, anchor);
+          const anchor = anchorFor(nativeCallId, data, event.seq, event.time);
           const toolName = typeof data.name === 'string' ? data.name : 'tool';
           const args = parseArguments(data.arguments);
           callFiles.set(nativeCallId, toolFilePath(toolName, args));
@@ -804,19 +820,13 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
           const nativeCallId = typeof source.callId === 'string' && source.callId ? source.callId
             : typeof message.toolCallId === 'string' && message.toolCallId ? message.toolCallId : null;
           if (nativeCallId === null) break;
-          let anchor = callAnchors.get(nativeCallId);
-          if (!anchor) {
-            anchor = stepAnchor(data.turn, data.step);
-            ensureAnchor(anchor, event.seq, event.time);
-            callAnchors.set(nativeCallId, anchor);
-          }
+          const anchor = anchorFor(nativeCallId, data, event.seq, event.time);
           const text = toolResultText(message.content);
           records.push({
             kind: 'tool_result', tool_use_id: callKey(nativeCallId), message_uuid: anchor, session_id: sessionId,
             content: truncToolResult(text), file_path: callFiles.get(nativeCallId) ?? null,
             is_error: toolResultIsError(data, message, version),
           });
-          ptcAnchors.delete(nativeCallId);
           const spawned = SUBAGENT_RESULT_RE.exec(text);
           if (spawned?.[1]) subagentParents.set(memberIdFor(spawned[1], rootScope), callKey(nativeCallId));
           break;
@@ -827,12 +837,12 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
           const subCallId = typeof data.subCallId === 'string' && data.subCallId ? data.subCallId : null;
           const parentCallId = typeof data.parentCallId === 'string' && data.parentCallId ? data.parentCallId : null;
           if (subCallId === null || parentCallId === null) break;
-          let anchor = ptcAnchors.get(parentCallId) ?? callAnchors.get(parentCallId);
+          let anchor = callAnchors.get(parentCallId);
           if (!anchor) {
             anchor = `${memberPrefix}:ptc:${encodeURIComponent(parentCallId)}`;
             ensureAnchor(anchor, event.seq, event.time);
           }
-          ptcAnchors.set(subCallId, anchor);
+          callAnchors.set(subCallId, anchor);
           const toolName = typeof data.name === 'string' ? data.name : 'tool';
           const id = callKey(subCallId);
           pushToolCall(id, anchor, toolName, data.arguments);
@@ -909,7 +919,7 @@ function rawDeepseek(root: string, input: RawLookup): RawRecord | null {
     const match = MEMBER_PREFIX_RE.exec(input.messageUuid);
     if (!match) return null;
     const memberId = match[1]!;
-    const duplicate = /#(-?\d+)$/.exec(match[2]!);
+    const duplicate = /#(-?\d+)(?:\.\d+)?$/.exec(match[2]!);
     const location = duplicate ? match[2]!.slice(0, duplicate.index) : match[2]!;
     const seqMatches = (candidate: DshEvent) => !duplicate || candidate.seq === Number(duplicate[1]);
     const sessionPath = typeof input.session?.jsonl_path === 'string' ? normalize(input.session.jsonl_path) : null;

@@ -159,7 +159,7 @@ test('claude parse() resumes from a cursor, skipping already-indexed lines', () 
   assert.equal(values.find(r => r.kind === 'session').title, 'My Session');
 });
 
-test('claude parse() prefers the latest custom title over AI and history titles', () => {
+test('claude parse() prefers the latest custom title over AI titles', () => {
   const dir = makeTempDir('trajex-claude-custom-title-');
   const path = join(dir, 'sid-title.jsonl');
   const lines = [
@@ -179,7 +179,6 @@ test('claude parse() prefers the latest custom title over AI and history titles'
     key: path,
     sessionId: 'sid-title',
     project: 'quiet-zero',
-    meta: { historyTitle: 'History title' },
   };
   const full = drain(parse(unit, null));
   assert.equal(full.values.find(record => record.kind === 'session').title, 'Current app title');
@@ -225,6 +224,38 @@ test('claude incremental parse skips a newline-terminated malformed line', () =>
     'u-after-corruption',
   ]);
   assert.equal(ret.split(':')[1], '9');
+});
+
+test('claude parse consumes non-object JSON lines and null content blocks instead of failing the file', () => {
+  const path = writeFixture();
+  appendFileSync(path, [
+    'null',
+    '[1,2]',
+    JSON.stringify({ uuid: 'u-null-block', type: 'user', message: { role: 'user', content: [null, { type: 'text', text: 'survives' }] } }),
+    JSON.stringify({ uuid: 'a-null-block', type: 'assistant', message: { role: 'assistant', content: [null, { type: 'text', text: 'ok' }] } }),
+  ].join('\n') + '\n');
+
+  const { values, ret } = drain(parse({ key: path, sessionId: 'sid-x', project: 'quiet-zero' }, '0:6'));
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.uuid), ['u-null-block', 'a-null-block']);
+  assert.equal(values.find(record => record.uuid === 'u-null-block').text, 'survives');
+  assert.equal(ret.split(':')[1], '10');
+});
+
+test('claude parse restarts from the first line when the file is replaced at the same path', () => {
+  const path = writeFixture();
+  const { ret } = drain(parse({ key: path, sessionId: 'sid-x', project: 'quiet-zero' }, null));
+  const replacement = `${path}.new`;
+  writeFileSync(replacement, Array.from({ length: 8 }, (_, i) => JSON.stringify({
+    uuid: `r${i}`, type: 'user', message: { role: 'user', content: `replacement ${i}` },
+  })).join('\n') + '\n');
+  rmSync(path);
+  writeFileSync(path, readFileSync(replacement));
+  rmSync(replacement);
+
+  const { values } = drain(parse({ key: path, sessionId: 'sid-x', project: 'quiet-zero' }, ret));
+  assert.deepEqual(values.filter(record => record.kind === 'message').map(record => record.uuid),
+    ['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7']);
+  assert.equal(values.find(record => record.kind === 'session').countMode, 'total');
 });
 
 test('claude incremental parse leaves an unterminated malformed tail unconsumed', () => {

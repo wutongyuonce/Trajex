@@ -3,20 +3,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Codex Provider adapter。
+ * Codex Provider adapter（见 docs/adr/0001、0002）。
  *
  * 模块定位：发现 ~/.codex session rollout 文件，执行全量重放和 event_msg/
  * response_item 去重，再输出规范 TranscriptRecord；它不访问 Trajex SQLite。
+ * 去重需要整文件的双向信息（两种镜像可能以任意顺序相邻出现），因此每次全量重放，
+ * session 使用 countMode 'total'。
  */
-// Codex provider adapter in Core (see docs/adr/0001).
-//
-// Pure: discovers Codex rollout files and parses one into a record stream. It
-// never touches the Trajex database. Unlike claude, codex is a FULL-REPARSE
-// adapter: it buffers every line and re-emits every record on each run, because
-// the event_msg ↔ response_item dedup needs whole-file (bidirectional) knowledge
-// (the matching pair sits ±1 line apart but in either order). Hence the session
-// record uses countMode 'total' (persist replaces the count, never accumulates).
-// The per-line logic mirrors the original indexCodexJsonl.
 
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -113,8 +106,15 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
       inventoryComplete = false;
       ctx.reportUnavailableRoot?.(issue);
     }),
-    // archived_sessions is optional on older/new installations.
-    ...discoverCodexJsonlFiles(archivedSessionsDir),
+    // archived_sessions 是可选目录：从未存在且没有索引过其中的会话时不算来源缺失；
+    // 否则与 sessions 一样，不可读时保留上次快照（ADR-0004）。
+    ...discoverCodexJsonlFiles(archivedSessionsDir, (issue) => {
+      const indexedHere = (ctx.indexedSessions?.() ?? [])
+        .some(session => pathWithin(normalize(archivedSessionsDir), normalize(session.jsonlPath)));
+      if (!existsSync(archivedSessionsDir) && !indexedHere) return;
+      inventoryComplete = false;
+      ctx.reportUnavailableRoot?.(issue);
+    }),
   ];
   const currentFiles = new Set(discoveredFiles.map(file => normalize(file.path)));
   const units = discoveredFiles.flatMap((file) => {
@@ -176,12 +176,16 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   let processedLineCount = 0;
   readLines(unit.key, (line: string, terminated: boolean) => {
     lineNum++;
-    try { records.push({ lineNum, obj: JSON.parse(line) }); } catch {
-      // Permanent terminated garbage must not hide later rollout records. An
-      // unterminated tail may still be growing, so leave it for the next replay.
+    let obj: any;
+    try { obj = JSON.parse(line); } catch { obj = undefined; }
+    if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
+      // Permanent terminated garbage (including valid JSON that is not an
+      // object) must not hide later rollout records. An unterminated tail may
+      // still be growing, so leave it for the next replay.
       if (terminated) { processedLineCount = lineNum; return; }
       return false;
     }
+    records.push({ lineNum, obj });
     processedLineCount = lineNum;
   });
   const after = fileSnapshot(unit.key);
@@ -215,8 +219,6 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     n: 0,
     lastMessageUuid: null as string | null,
     lastTextAssistantUuid: null as string | null,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
   };
 
   let currentCwd = normalizeObservedCwd(meta.cwd);
@@ -304,8 +306,6 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
       }
       if (payload.type === 'token_count') {
         const usage = codexUsage(payload);
-        if (usage.inputTokens != null) sm.totalInputTokens = usage.inputTokens;
-        if (usage.outputTokens != null) sm.totalOutputTokens = usage.outputTokens;
         if (sm.lastTextAssistantUuid && (usage.inputTokens != null || usage.outputTokens != null)) {
           const rec = msgByUuid.get(sm.lastTextAssistantUuid);
           if (rec) { rec.input_tokens = usage.inputTokens; rec.output_tokens = usage.outputTokens; }
@@ -391,11 +391,7 @@ function rawCodex(rootDir: string, input: RawLookup): RawRecord | null {
       const obj = JSON.parse(raw);
       const payload = obj?.payload ?? {};
       if (obj?.type === 'event_msg') {
-        messageText = typeof payload.message === 'string'
-          ? payload.message
-          : typeof payload.text === 'string'
-            ? payload.text
-            : null;
+        messageText = codexEventText(payload);
       } else if (obj?.type === 'response_item' && payload.type === 'message' && Array.isArray(payload.content)) {
         messageText = codexMessagePayloadText(payload);
       }

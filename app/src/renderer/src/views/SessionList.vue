@@ -8,6 +8,7 @@ import { useVirtualizer } from '@tanstack/vue-virtual';
 import { useRouter } from 'vue-router';
 import { state } from '../store.js';
 import { highlightPlain, escapeHTML, formatProjectLabel, fmtListTime, fmtRelative } from '../utils.js';
+import { t } from '../i18n.js';
 
 defineOptions({ name: 'SessionList' });
 
@@ -96,10 +97,10 @@ const itemCount = computed(() => totals.value.normal + (totals.value.quiet ? 1 +
 const virtualizer = useVirtualizer(computed(() => ({
   count: itemCount.value,
   getScrollElement: () => scrollElement.value,
-  estimateSize: index => index < totals.value.normal ? 72
-    : index === totals.value.normal ? 56
+  estimateSize: index => index < totals.value.normal ? 60
+    : index === totals.value.normal ? 48
       : index === totals.value.normal + 1 ? 28
-        : index === itemCount.value - 1 ? 40 : 64,
+        : index === itemCount.value - 1 ? 40 : 60,
   getItemKey: index => index,
   overscan: 8,
 })));
@@ -129,7 +130,7 @@ watch(virtualRows, rows => {
 }, { immediate: true });
 
 function titleHTML(session) {
-  return highlightPlain(session.title || '(untitled)', state.query.trim());
+  return highlightPlain(session.title || t('list.untitled'), state.query.trim());
 }
 
 function projectLabel(session) {
@@ -158,7 +159,7 @@ function openSession(session) {
 function trajexStyle(session) {
   const created = new Date(session.started_at || 0).getTime();
   const days = Math.max(0, (Date.now() - created) / 86400000);
-  const height = Math.min(1, Math.log(1 + days) / Math.log(1 + 365));
+  const ratio = Math.min(1, Math.log(1 + days) / Math.log(1 + 365));
 
   let color;
   if (days < 7) color = '#a855f7';
@@ -167,10 +168,8 @@ function trajexStyle(session) {
   else color = '#475569';
 
   const glow = days < 7 ? `0 0 4px ${color}` : 'none';
-  const maxHeight = 36; // px, roughly the row height minus padding
-
   return {
-    height: `${Math.max(4, Math.round(height * maxHeight))}px`,
+    height: `${Math.round(20 + ratio * 14)}px`,
     background: color,
     boxShadow: glow,
   };

@@ -11,6 +11,7 @@ import { commitInitialData, fetchInitialData } from './data.js';
 import { noteSessionUpdated, sessionLiveState } from './session-live.mjs';
 import { createGlobalDataRefreshCoordinator } from './session-global-refresh.mjs';
 import { installLocalMarkdownLinkHandlers } from './local-markdown-links.js';
+import { t } from './i18n.js';
 
 // Import shared renderer CSS globally
 import '../styles/base.css';
@@ -20,6 +21,7 @@ import '../styles/list.css';
 import '../styles/detail.css';
 
 const app = createApp(App);
+app.config.globalProperties.t = t;
 
 app.use(router);
 

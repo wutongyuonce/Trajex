@@ -26,6 +26,7 @@ import { formatProjectLabel } from './utils.js';
 import { buildSidebarProjects } from './sidebar-projects.mjs';
 import { resolveGlobalShortcut } from './keyboard-shortcuts.mjs';
 import { sourceLabel } from './source-catalog.mjs';
+import { isZh, t, toggleLocale } from './i18n.js';
 import trajexIcon from './assets/trajex-icon.svg';
 
 const router = useRouter();
@@ -109,25 +110,25 @@ const windowTitle = computed(() => {
   const appName = 'Trajex';
   let scopeText = '';
   if (route.name === 'Activity') {
-    scopeText = 'Activity';
+    scopeText = t('nav.activity');
   } else if (route.name === 'Settings') {
-    scopeText = 'Settings';
+    scopeText = t('nav.settings');
   } else if (route.name?.startsWith('Session')) {
     if (route.name === 'SessionDetail' || route.name === 'SubagentDetail') {
       const s = routeSession.value;
-      scopeText = s ? `Sessions · ${s.title}` : 'Sessions';
+      scopeText = s ? `${t('nav.sessions')} · ${s.title}` : t('nav.sessions');
     } else {
       const proj = state.projectFilter !== 'all' ? ` · ${formatProjectLabel(state.projectFilter)}` : '';
-      scopeText = `Sessions${proj}`;
+      scopeText = `${t('nav.sessions')}${proj}`;
     }
   } else {
     if (route.name === 'MemoryDetail') {
       const m = state.memories.find(x => x.id === route.params.id);
-      scopeText = m ? `Memory · ${m.path.split('/').pop()}` : 'Memory';
+      scopeText = m ? `${t('nav.memory')} · ${m.path.split('/').pop()}` : t('nav.memory');
     } else {
-      const viewLabel = state.view === 'archived' ? 'Archived' : 'Active';
+      const viewLabel = state.view === 'archived' ? t('memory.archived') : t('memory.active');
       const proj = state.projectFilter !== 'all' ? ` · ${formatProjectLabel(state.projectFilter)}` : '';
-      scopeText = `Memory · ${viewLabel}${proj}`;
+      scopeText = `${t('nav.memory')} · ${viewLabel}${proj}`;
     }
   }
   return { appName, scopeText };
@@ -246,7 +247,7 @@ const showSourceFilter = ref(false);
 const sourceFilterWrapRef = ref(null);
 const sourceFilterActive = computed(() => state.sourceFilter !== 'all' && state.sourceFilter !== undefined);
 const sourceFilterLabel = computed(() => {
-  if (!state.sourceFilter || state.sourceFilter === 'all') return 'All sources';
+  if (!state.sourceFilter || state.sourceFilter === 'all') return t('toolbar.allSources');
   return sourceLabel(state.sourceFilter, state.sources);
 });
 function handleDocumentPointerDown(event) {

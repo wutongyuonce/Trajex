@@ -171,7 +171,7 @@ async function loadDetail(memory) {
   detailMarkdown.value = null;
   loadingMarkdown.value = Boolean(memory);
 
-  if (memory?.markdown == null && memory.path) {
+  if (memory && memory.markdown == null && memory.path) {
     memory.markdown = await loadMemoryMarkdown(memory.path);
   }
   if (version !== detailLoadVersion) return;

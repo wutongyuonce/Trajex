@@ -22,7 +22,7 @@
 | Trajex / CLI / App | 0.3.0 |
 | Node.js | CLI ≥ 22.13；读取 DeepSeek 压缩日志需 ≥ 22.15 |
 | 索引位置 | `$TRAJEX_DIR/trajex.sqlite`，默认 `~/.trajex/trajex.sqlite` |
-| Provider 投影 marker | `__claude_canonical_transcript_v1.1__`、`__codex_canonical_transcript_v1.1__`、`__pi_canonical_transcript_v1.1__`、`__deepseek_canonical_transcript_v1__` |
+| Provider 投影 marker | `__claude_canonical_transcript_v1.1__`、`__codex_canonical_transcript_v1.2__`、`__pi_canonical_transcript_v1.1__`、`__deepseek_canonical_transcript_v1__` |
 | 来源格式 | Claude Code 2.1.x（观测）；Codex rollout（观测，CLI 0.94–0.130 / Desktop 0.146–0.147）；Pi session v3；DeepSeek Harness session v0–v4 |
 
 Claude Code 与 Codex 没有公开稳定的 transcript schema，对应格式文档是观测性说明；Pi 与 DeepSeek Harness 文档以上游公开规范为准。

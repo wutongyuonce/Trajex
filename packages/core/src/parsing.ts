@@ -294,7 +294,12 @@ function inferProjectPath(project: string | null | undefined, observedCwds: unkn
 // ================= Codex 专用 =================
 // 前缀 codex，绑定 Codex rollout 的 thread / meta / payload 语义；仅 codex.ts 使用。
 
-/** 递归枚举 Codex 按日期分层保存的 rollout JSONL。 */
+/** Codex rollout 文件名：活动会话是 `.jsonl`，Codex 压缩后的冷会话是 `.jsonl.zst`。 */
+function isCodexRolloutPath(path: string): boolean {
+  return path.endsWith('.jsonl') || path.endsWith('.jsonl.zst');
+}
+
+/** 递归枚举 Codex 按日期分层保存的 rollout（`.jsonl` 与 `.jsonl.zst`）。 */
 function discoverCodexJsonlFiles(
   sessionsDir: string,
   reportUnavailableRoot?: InventoryRootIssueReporter,
@@ -312,7 +317,7 @@ function discoverCodexJsonlFiles(
       const fp = join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(fp);
-      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      } else if (entry.isFile() && isCodexRolloutPath(entry.name)) {
         files.push({ path: fp, source: 'codex' });
       }
     }
@@ -464,7 +469,7 @@ function codexToolOutput(payload: JsonRecord): string | null {
 export {
   trunc, truncToolResult, toolResultPreview, truncJson, extractText, extractContentType, extractMessageIsMeta, isSkillInstructions, filePath, isDir, readLines,
   normalizeObservedCwd, normalizeTranscriptTimestamp, projectSlugFromPath, inferProjectPath,
-  discoverJsonlFiles, discoverCodexJsonlFiles,
+  discoverJsonlFiles, discoverCodexJsonlFiles, isCodexRolloutPath,
   codexDbId, codexRawId, codexLineUuid, codexCallId, codexIsChildThread, codexIsGuardianThread,
   codexUsage, codexEventText, codexMessagePayloadText, codexVisibleMessageKey, codexToolInput, codexToolOutput,
 };

@@ -52,7 +52,7 @@ Trajex 会把每个 provider 都索引到同一个 SQLite schema 中，而不是
 
 内置 Provider 的解析边界不同：Claude 用包含 mtime、行数、文件大小、ctime 和 inode 的 cursor 从上次位置增量读取；Codex 为了在 `event_msg` 与 `response_item` 之间去重会对变更文件全量重放。两者都跳过已换行结束的坏 JSON 记录，但会把未换行的残缺尾行留给下次重试。Pi 为了重算树状分支、durable leaf 和 compaction 也会全量重放；多次 compaction 以最近的 `retainedTail` checkpoint 为最早有效边界，更早物理消息保留为 inactive 证据。Pi 当前仍在 JSON 语法损坏行前提交有效前缀，但已成功解析出的树若存在重复 ID、循环、非法 leaf 或 compaction 结构，则整份 session 不提交；缺失父节点仍按官方 orphan root 处理。Pi 原文回查会按 UUID 还原具体 assistant block 或 `retainedTail` 消息，详情页可展开完整文本，且不会连带返回同一 checkpoint 的其他 retained 消息。对删除，Provider 的来源根目录是唯一回退边界：根目录缺失或根层无法枚举时，普通 build 保留该 Provider 的上一次快照；根层可枚举后，本次清单即有权威性，缺失或不可读的子目录按空子树处理并清理对应旧索引。清理只作用于可重新生成的 transcript 派生数据，`memories` 不会被删除。
 
-Codex 只索引根 thread 为普通 Trajex session。带有 `parent_thread_id`、`forked_from_id` 或其他 parent-thread metadata 的 child/fork/subagent thread（包括 guardian/auto-review thread）全部忽略，不挂接到 `subagents` 表。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。Codex 和 Pi 一样对变更文件做全量重放：先删除该 session 的旧派生投影，再从当前 JSONL 全量重建。
+Codex 只索引根 thread 为普通 Trajex session，同时读取普通 `.jsonl` 与 Codex 压缩后的 `.jsonl.zst`（需要 Node.js 22.15+），长会话的多个分段合并为一个会话。带有 `parent_thread_id`、`forked_from_id` 或其他 parent-thread metadata 的 child/fork/subagent thread（包括 guardian/auto-review thread）全部忽略，不挂接到 `subagents` 表。Codex 不会产生 Claude 风格的 workflow metadata，因此只有 Codex 历史时，workflow 相关表可能为空。Codex 和 Pi 一样对变更文件做全量重放：先删除该 session 的旧派生投影，再从当前 JSONL 全量重建。
 
 每个 Pi 官方 v3 session JSONL 文件会成为一个 Trajex session。Pi 的会话条目是树状的，Trajex 会根据 durable leaf 和 compaction（包括 retained tail）计算当前上下文：当前记录为 `visible`，已被取代但保留的分支证据为 `inactive`，来源明确隐藏的 transport context 为 `hidden`。工具调用使用每次消息 occurrence 的 canonical ID，结果只关联同一 `parentId` 分支内最近的原始 `toolCallId`，避免分叉复用 ID 时串线。详情页默认只展示 visible 记录，其他分支可显式展开。
 

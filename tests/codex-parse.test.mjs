@@ -11,13 +11,14 @@ import { makeTempDir } from './temp-dirs.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { createCodexProvider, parse } from '../packages/core/src/providers/codex.ts';
 import { createProviderRegistry } from '../packages/core/src/providers/registry.ts';
 import { createProviderIndexPlan } from '../packages/core/src/provider-indexing.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, renameSync } from 'node:fs';
+import zlib from 'node:zlib';
 
 function writeFixture(lines) {
   const dir = makeTempDir('trajex-codex-parse-');
@@ -369,6 +370,114 @@ test('codex keeps archived snapshots when an indexed archived_sessions root disa
   assert.deepEqual(createCodexProvider({ rootDir: makeTempDir('trajex-codex-no-archive-') })
     .discover({ lastCursor: () => null, reportUnavailableRoot: issue => issues.push(issue) }), []);
   assert.equal(issues.length, 2, 'a never-indexed missing archive dir is not an issue; only sessions/ is reported');
+});
+
+const skipWithoutZstd = { skip: typeof zlib.zstdCompressSync !== 'function' ? 'node:zlib zstd needs Node.js 22.15+' : false };
+const ROLLOUT = [
+  { type: 'session_meta', timestamp: '2026-06-10T10:00:00Z', payload: META },
+  { type: 'event_msg', timestamp: '2026-06-10T10:00:01Z', payload: { type: 'user_message', message: 'compressed question' } },
+  { type: 'event_msg', timestamp: '2026-06-10T10:00:02Z', payload: { type: 'agent_message', message: 'compressed answer' } },
+];
+const rolloutText = () => ROLLOUT.map(line => JSON.stringify(line)).join('\n') + '\n';
+
+/** 把一个已有的 `.jsonl` 按 Codex 的方式压缩成 `.jsonl.zst` 并删除原文件。 */
+function compressRollout(path) {
+  writeFileSync(`${path}.zst`, zlib.zstdCompressSync(readFileSync(path)));
+  rmSync(path);
+  return `${path}.zst`;
+}
+
+function codexHome() {
+  const root = makeTempDir('trajex-codex-zst-');
+  const dir = join(root, 'sessions', '2026', '06', '10');
+  mkdirSync(dir, { recursive: true });
+  const plain = join(dir, `rollout-2026-06-10T10-00-00-${META.id}.jsonl`);
+  writeFileSync(plain, rolloutText());
+  return { root, plain };
+}
+
+function planKeys(provider, indexed, changedPaths) {
+  const db = new DatabaseSync(':memory:');
+  db.exec(readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8'));
+  db.prepare("INSERT INTO sessions (id, jsonl_path, source) VALUES (?, ?, 'codex')").run(indexed.sessionId, indexed.key);
+  const plan = createProviderIndexPlan(db, createProviderRegistry([provider]), changedPaths ? { changedPaths } : {});
+  db.close();
+  return plan.items.map(item => [item.unit.key, item.unit.meta?.kind ?? 'rollout']);
+}
+
+test('compressed rollouts are discovered, parsed and raw-read like plain ones', skipWithoutZstd, () => {
+  const { root, plain } = codexHome();
+  const provider = createCodexProvider({ rootDir: root });
+  const expected = drain(parse({ key: plain, sessionId: '' }, null)).values;
+  const zst = compressRollout(plain);
+  const [unit] = provider.discover({ lastCursor: () => null });
+  assert.equal(unit.key, zst);
+  const { values, ret } = drain(parse(unit, null));
+  const project = records => records.map(record => (record.kind === 'session' ? { ...record, jsonl_path: null } : record));
+  assert.deepEqual(project(values), project(expected), 'the compressed rollout projects exactly like the plain one');
+  assert.deepEqual(provider.discover({ lastCursor: () => ret }), [], 'an unchanged compressed rollout is skipped by its cursor');
+  const answer = values.find(record => record.kind === 'message' && record.text === 'compressed answer');
+  const raw = provider.raw({ messageUuid: answer.uuid, agentId: null, session: { jsonl_path: plain }, source: 'codex' });
+  assert.equal(raw.messageText, 'compressed answer', 'raw lookup follows an indexed .jsonl path to its .zst sibling');
+});
+
+test('compressing an indexed rollout republishes it instead of deleting it', skipWithoutZstd, () => {
+  const { root, plain } = codexHome();
+  const provider = createCodexProvider({ rootDir: root });
+  const [indexed] = provider.discover({ lastCursor: () => null });
+  const zst = compressRollout(plain);
+  for (const changedPaths of [undefined, [plain], [zst], [plain, zst]]) {
+    assert.deepEqual(planKeys(provider, indexed, changedPaths), [[zst, 'rollout']], `changedPaths=${JSON.stringify(changedPaths)}`);
+  }
+});
+
+test('while both forms exist only the plain rollout is indexed', skipWithoutZstd, () => {
+  const { root, plain } = codexHome();
+  writeFileSync(`${plain}.zst`, zlib.zstdCompressSync(readFileSync(plain)));
+  const keys = createCodexProvider({ rootDir: root }).discover({ lastCursor: () => null }).map(unit => unit.key);
+  assert.deepEqual(keys, [plain]);
+});
+
+test('an incomplete compressed rollout is skipped without being treated as deleted', skipWithoutZstd, () => {
+  const { root, plain } = codexHome();
+  const provider = createCodexProvider({ rootDir: root });
+  const [indexed] = provider.discover({ lastCursor: () => null });
+  const zst = compressRollout(plain);
+  const full = readFileSync(zst);
+  writeFileSync(zst, full.subarray(0, full.length - 5));
+  assert.deepEqual(provider.discover({
+    lastCursor: () => null,
+    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: zst, source: 'codex' }],
+  }), []);
+  assert.throws(() => drain(parse({ key: zst, sessionId: indexed.sessionId }, null)), /incomplete/);
+});
+
+test('a long thread split into segments indexes as one session in segment order', skipWithoutZstd, () => {
+  const { root, plain } = codexHome();
+  const segment = plain.replace('.jsonl', '_99999999-9999-4999-8999-999999999999.jsonl');
+  writeFileSync(segment, [
+    { type: 'session_meta', timestamp: '2026-06-10T11:00:00Z', payload: { ...META, timestamp: '2026-06-10T11:00:00Z' } },
+    { type: 'event_msg', timestamp: '2026-06-10T11:00:01Z', payload: { type: 'user_message', message: 'second segment question' } },
+  ].map(line => JSON.stringify(line)).join('\n') + '\n');
+  const first = compressRollout(plain);
+  // An identical copy left in archived_sessions must not be read twice.
+  mkdirSync(join(root, 'archived_sessions'), { recursive: true });
+  writeFileSync(join(root, 'archived_sessions', basename(first)), readFileSync(first));
+  const provider = createCodexProvider({ rootDir: root });
+  const units = provider.discover({ lastCursor: () => null });
+  assert.equal(units.length, 1, 'every segment of one thread forms one unit');
+  assert.equal(basename(units[0].key), basename(first), 'the thread is keyed by its first segment');
+  const { values, ret } = drain(parse(units[0], null));
+  const texts = values.filter(record => record.kind === 'message').map(record => record.text);
+  assert.deepEqual(texts, ['compressed question', 'compressed answer', 'second segment question']);
+  assert.equal(new Set(values.filter(record => record.kind === 'message').map(record => record.uuid)).size, texts.length);
+  assert.equal(values.filter(record => record.kind === 'session').length, 1);
+  assert.deepEqual(provider.discover({ lastCursor: () => ret }), [], 'an unchanged segmented thread is skipped');
+  appendFileSync(segment, `${JSON.stringify({ type: 'event_msg', timestamp: '2026-06-10T11:00:02Z', payload: { type: 'agent_message', message: 'late answer' } })}\n`);
+  assert.equal(provider.discover({ lastCursor: () => ret }).length, 1, 'a change to any segment replays the thread');
+  const later = values.find(record => record.text === 'second segment question');
+  const raw = provider.raw({ messageUuid: later.uuid, agentId: null, session: { jsonl_path: units[0].key }, source: 'codex' });
+  assert.equal(raw.messageText, 'second segment question', 'raw lookup continues line numbers across segments');
 });
 
 test('codex raw lookup returns text_elements event text like the index does', () => {

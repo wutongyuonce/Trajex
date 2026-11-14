@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Codex 新版会把不再活动的会话压缩成 `rollout-*.jsonl.zst`，此前 Trajex 只认 `.jsonl`，这类会话不会被索引，已索引的会话被压缩后还会被当作删除。现在发现、解析与原文回查都支持 `.jsonl.zst`（用 Node 内建 zstd 解压，需要 Node.js 22.15+），压缩时会话换到新路径而不被删除；长会话拆成的多个分段（`<thread>_<分段>.jsonl[.zst]`）以及重复副本合并为一个会话，不再互相覆盖。Codex marker 升至 `v1.2`，现有索引会在下次 build 时一次性重放 Codex。
+
 ## [0.3.0]
 
 ### Added

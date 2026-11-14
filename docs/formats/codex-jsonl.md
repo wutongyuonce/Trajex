@@ -16,8 +16,9 @@ Codex 把一个线程（thread）保存为一个 **rollout JSONL 文件**：一�
 └── session_index.jsonl                                         # 线程名索引，不是 transcript
 ```
 
-- 文件名：`rollout-<UTC时间戳>-<uuid片段>.jsonl`，天然可排序。
-- 日期目录按 `YYYY/MM/DD` 分层；Trajex 的 `discoverCodexJsonlFiles()` 递归枚举 `sessions/` 和可选 `archived_sessions/` 下的全部 `*.jsonl`，并监听这两个目录及 `session_index.jsonl`。
+- 文件名：`rollout-<时间戳>-<thread id>.jsonl`，天然可排序。长会话会拆成多个分段，后续分段是 `rollout-<时间戳>-<thread id>_<分段 id>.jsonl`，每段都以自己的 `session_meta` 开头。
+- 压缩：新版 Codex 把不再活动的 rollout 压缩成 Zstandard，并把 `x.jsonl` 换成 `x.jsonl.zst`（内容解压后与原文件一致）。读取需要 Node.js 22.15+，更早的运行时跳过 `.jsonl.zst` 并给出一次警告。
+- 日期目录按 `YYYY/MM/DD` 分层；Trajex 的 `discoverCodexJsonlFiles()` 递归枚举 `sessions/` 和可选 `archived_sessions/` 下的全部 `*.jsonl` 与 `*.jsonl.zst`，并监听这两个目录及 `session_index.jsonl`。
 - `session_index.jsonl` 每行是 `{"id":"<thread-id>","thread_name":"…","updated_at":"…"}`，提供标题与最后更新时间；它不是 transcript。Trajex 用它给 session 提供 `title` 和 `ended_at`。
 - 可用环境变量 `CODEX_SESSIONS_DIR` 覆盖默认位置（Trajex 的默认根目录是 `~/.codex`）。
 
@@ -281,7 +282,7 @@ event_msg
 ### 9.1 发现（discover）
 
 - 读取 `session_index.jsonl`，构建 `Map<rawId, {title, updatedAt}>`；每行解析为 `{id, thread_name, updated_at}`。
-- 递归枚举 `sessions/` 和 `archived_sessions/` 下全部 `*.jsonl`。有 `changedPaths` 时只检查 watcher 指出的路径；否则用存储 cursor 与文件快照（`mtime:lines:size:ctime:inode`）跳过未变更文件。
+- 递归枚举 `sessions/` 和 `archived_sessions/` 下全部 `*.jsonl` 与 `*.jsonl.zst`，按文件名里的 thread id 分组：一个 thread 的全部分段是一个单元，按文件名顺序连续读取，行号跨分段连续编号。同一分段的多个副本（压缩过渡时的 `.jsonl` 与 `.jsonl.zst`，或 `sessions/` 与 `archived_sessions/` 各一份）只读一份：优先仍在写入的 `.jsonl`，其次修改时间较新的副本。有 `changedPaths` 时只检查 watcher 指出的路径（`.jsonl` 与对应 `.jsonl.zst` 视为同一个变化）；否则用存储 cursor 与分段快照跳过未变更的 thread。
 - 对每个候选文件读首行 `session_meta`；**有父 ID 的 rollout 一律不索引**（`discoverAt` 直接跳过，与 Claude 把子代理转录也索引的做法不同）。
 - 产出 `IndexUnit`：`sessionId = codex:<rawId>`，携带 `indexedTitle` / `indexedUpdatedAt`。
 - 发现阶段同时读取已索引的 session 路径清单。只有当 `sessions/`（以及已存在或曾索引过会话的 `archived_sessions/`）可读，且旧路径从当前清单中明确消失时，才产出带 `retractSessionIds` 的 tombstone unit；根目录暂时不存在或不可读时不产出 tombstone，保留上一次快照。rollout 从 `sessions/` 归档到 `archived_sessions/` 时，同一轮会在新路径重新发布该会话，旧路径的 tombstone 被丢弃，不会删除它。
@@ -314,4 +315,4 @@ event_msg
 
 ### 9.4 raw 回源
 
-`codex:<threadId>:<lineNum>` 格式的合成 uuid 可还原：优先用 `sessions.jsonl_path`，否则递归搜索以 `<threadId>.jsonl` 结尾的文件，按行号取回原始 JSON，并额外投影 `messageText`（event_msg 取 `message` / `text`，response_item.message 取拼接文本）。
+`codex:<threadId>:<lineNum>` 格式的合成 uuid 可还原：找到该 thread 的全部分段（包括 `sessions.jsonl_path` 及其压缩后的 `.jsonl.zst`），按与索引相同的顺序和连续行号取回原始 JSON，并额外投影 `messageText`（event_msg 与索引一致用 `codexEventText`，response_item.message 取拼接文本）。

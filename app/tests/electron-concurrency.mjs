@@ -2,7 +2,7 @@
 // Copyright (C) 2026 wutongyuonce and contributors.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Real Electron/better-sqlite3 concurrency test (docs/adr/0006 Phase 2).
+// Real Electron/better-sqlite3 concurrency test (docs/adr/0003).
 // Run: cd app && npx electron tests/electron-concurrency.mjs
 //
 // Exercises actual dual-connection contention against a WAL database using the

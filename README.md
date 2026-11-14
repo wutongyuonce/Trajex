@@ -330,7 +330,7 @@ app/                          # Electron desktop app（electron-vite + Vue）
 
 install.sh                    # POSIX CLI-only installer
 CONTEXT.md                    # Project glossary
-docs/adr/                     # Architecture decision records（0001–0006）
+docs/                         # 文档索引、架构总览、ADR（0001–0013）与各 Agent 格式说明
 ```
 
 ### 生成的构建产物

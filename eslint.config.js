@@ -5,7 +5,7 @@
 // Flat ESLint config for the Trajex root (Core + CLI + packaging + tests).
 // Scope: the root ESM/TS sources, including packages/core/src/ and
 // packages/cli/src/. The Electron app has its own package and toolchain and is
-// intentionally excluded (see docs/adr/0003).
+// intentionally excluded (see docs/adr/0010).
 
 import js from '@eslint/js';
 import globals from 'globals';

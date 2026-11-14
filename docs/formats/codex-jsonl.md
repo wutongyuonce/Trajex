@@ -281,10 +281,10 @@ event_msg
 ### 9.1 发现（discover）
 
 - 读取 `session_index.jsonl`，构建 `Map<rawId, {title, updatedAt}>`；每行解析为 `{id, thread_name, updated_at}`。
-- 递归枚举 `sessions/` 和 `archived_sessions/` 下全部 `*.jsonl`。有 `changedPaths` 时只检查 watcher 指出的路径；否则用存储 cursor 与文件 mtime 跳过未变更文件。
+- 递归枚举 `sessions/` 和 `archived_sessions/` 下全部 `*.jsonl`。有 `changedPaths` 时只检查 watcher 指出的路径；否则用存储 cursor 与文件快照（`mtime:lines:size:ctime:inode`）跳过未变更文件。
 - 对每个候选文件读首行 `session_meta`；**有父 ID 的 rollout 一律不索引**（`discoverAt` 直接跳过，与 Claude 把子代理转录也索引的做法不同）。
 - 产出 `IndexUnit`：`sessionId = codex:<rawId>`，携带 `indexedTitle` / `indexedUpdatedAt`。
-- 发现阶段同时读取已索引的 session 路径清单。只有当 `sessions/` 本身可读，且旧路径从当前清单中明确消失时，才产出带 `retractSessionIds` 的 tombstone unit；如果根目录暂时不存在或不可读，则不产出 tombstone，保留上一次快照。
+- 发现阶段同时读取已索引的 session 路径清单。只有当 `sessions/`（以及已存在或曾索引过会话的 `archived_sessions/`）可读，且旧路径从当前清单中明确消失时，才产出带 `retractSessionIds` 的 tombstone unit；根目录暂时不存在或不可读时不产出 tombstone，保留上一次快照。rollout 从 `sessions/` 归档到 `archived_sessions/` 时，同一轮会在新路径重新发布该会话，旧路径的 tombstone 被丢弃，不会删除它。
 
 ### 9.2 全量重放（parse）
 

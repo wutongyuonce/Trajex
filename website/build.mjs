@@ -4,20 +4,18 @@ import { join, relative, resolve } from 'node:path';
 const root = resolve(import.meta.dirname, '..');
 const site = resolve(import.meta.dirname);
 const dist = join(site, 'dist');
-const sourceDir = join(root, 'docs', 'project-analysis');
+const sourceDir = join(root, 'docs');
 const assetDir = join(root, '.github', 'assets');
 const assets = ['trajex-wordmark-d.svg', 'trajex-wordmark-l.svg', 'sql_schema.png', 'boron.sh.png', 'sessionlist_light.png', 'sessionlist_dark.png', 'session_light.png', 'session_dark.png'];
 
 const docs = [
-  { slug: 'cli-core', file: 'cli&core-analysis.md', title: 'CLI & Core', kicker: '主线教程', description: '从 provider 到 canonical record，再到 SQLite 与查询层。' },
-  { slug: 'app', file: 'app-analysis.md', title: 'App Architecture', kicker: '主线教程', description: 'Electron 主进程、IPC、索引服务与 Session Detail 的完整链路。' },
-  { slug: 'jsonl', file: null, title: 'JSONL Field Notes', kicker: '参考文档', description: 'Claude、Codex、Pi 三种 transcript 格式的并排观察。', children: [
-    { slug: 'codex-jsonl', file: 'codex-jsonl.md', title: 'Codex JSONL' },
-    { slug: 'claude-jsonl', file: 'claude-code-jsonl.md', title: 'Claude JSONL' },
-    { slug: 'pi-jsonl', file: 'pi-jsonl.md', title: 'Pi JSONL' }
-  ] },
-  { slug: 'skill', file: 'SKILL-analysis.md', title: 'Skill Layer', kicker: '参考文档', description: 'Trajex skill 如何把检索能力交给 agent。' },
-  { slug: 'sqlite', file: 'sqlite-入门.md', title: 'SQLite Primer', kicker: '参考文档', description: '索引、FTS5、事务和查询边界。' }
+  { slug: 'architecture', file: 'architecture.md', title: 'Architecture', kicker: '主线教程', description: '从来源文件到 Provider、SQLite 与查询层，以及 CLI 与 App 的写入分工。' },
+  { slug: 'jsonl', file: null, title: 'Session Formats', kicker: '参考文档', description: 'Claude Code、Codex、Pi、DeepSeek Harness 四种会话格式与 Trajex 的投影规则。', children: [
+    { slug: 'claude-jsonl', file: 'formats/claude-code-jsonl.md', title: 'Claude Code' },
+    { slug: 'codex-jsonl', file: 'formats/codex-jsonl.md', title: 'Codex' },
+    { slug: 'pi-jsonl', file: 'formats/pi-jsonl.md', title: 'Pi' },
+    { slug: 'deepseek-jsonl', file: 'formats/deepseek-harness-jsonl.md', title: 'DeepSeek Harness' }
+  ] }
 ];
 
 const existingDist = await readdir(dist).catch(() => []);

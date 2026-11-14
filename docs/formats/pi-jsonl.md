@@ -201,7 +201,7 @@ Trajex 不从 message 文本猜分支关系，也不把时间顺序当作当前�
 
 ## 7. 相关实现位置
 
-- Provider 解析：[packages/core/src/providers/pi.ts](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/packages/core/src/providers/pi.ts)
-- Provider 测试：[tests/pi-parse.test.mjs](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/tests/pi-parse.test.mjs)
-- Canonical session detail：[packages/core/src/session-detail.ts](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/packages/core/src/session-detail.ts)
-- Pi v3 compaction ADR：[docs/adr/0006-pi-v3-context-projection-and-visibility.md](/Users/a/Desktop/WorkSpace/ALL/我的Github项目/Trajex/docs/adr/0006-pi-v3-context-projection-and-visibility.md)
+- Provider 解析：[packages/core/src/providers/pi.ts](../../packages/core/src/providers/pi.ts)
+- Provider 测试：[tests/pi-parse.test.mjs](../../tests/pi-parse.test.mjs)
+- Canonical session detail：[packages/core/src/session-detail.ts](../../packages/core/src/session-detail.ts)
+- Pi v3 compaction ADR：[ADR-0006](../adr/0006-pi-v3-context-projection-and-visibility.md)

@@ -343,7 +343,7 @@ app/                          # Electron desktop app (electron-vite + Vue)
 
 install.sh                    # POSIX CLI-only installer
 CONTEXT.md                    # Project glossary
-docs/adr/                     # Architecture decision records (0001–0006)
+docs/                         # Docs index, architecture overview, ADRs (0001–0013), and agent format notes
 ```
 
 ### Build Artifacts

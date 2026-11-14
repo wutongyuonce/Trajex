@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { makeTempDir } from './temp-dirs.mjs';
-// Tier 2 contract golden tests (see docs/adr/0002-two-tier-runtime-contract.md).
+// Tier 2 contract golden tests (see docs/adr/0007-two-tier-runtime-contract.md).
 //
 // These lock the *composite return shapes* that agents parse and that
 // references/api-reference.md documents explicitly, so the upcoming TypeScript /

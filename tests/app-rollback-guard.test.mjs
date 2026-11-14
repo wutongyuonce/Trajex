@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { makeTempDir } from './temp-dirs.mjs';
-// Regression tests for the write-transaction runner (docs/adr/0006):
+// Regression tests for the write-transaction runner (docs/adr/0003):
 //  - a transient BUSY (auto-rolled-back txn) is retried and recovers;
 //  - a persistent BUSY exhausts retries, and that file is SKIPPED, not fatal;
 //  - the guarded rollback never masks the real error ("cannot rollback ...").

@@ -59,7 +59,7 @@ subagents/workflows/<run-id>/<agent-id>.jsonl
 
 Trajex 对主 transcript 使用 `mtime:lines:size:ctime:inode` cursor：行数用来跳过已成功消费的前缀，size、ctime 和 inode 用来补足单靠 mtime 无法区分的同毫秒追加和原路径文件替换。旧数据库中的 `mtime:lines` cursor 仍可读取。文件被同路径替换（inode 变化）、变短，或 cursor 行数超过当前文件时，解析器从第一行重新建立该文件的投影。无法解析的行（包括 `null` 这类合法但非对象的 JSON）、content 数组里的 `null` 块不会让整个文件失败：已换行结束的完整坏记录会被消费并跳过，后续合法消息继续解析；未换行的文件尾可能仍在写入，因此不推进 cursor，等待下次文件变化后重试。
 
-删除清理以 `projects/` 为来源根边界：如果它不存在或根层枚举失败，discover 不生成 tombstone，普通 build 保留 Claude 的上一次快照；一旦根层枚举成功，本次清单就有权威性，缺失或不可读的项目、subagent、workflow 子目录按空子树处理。已索引的主 transcript 路径从权威清单中消失时，discover 生成 tombstone unit，由共享 persist 撤回该 session 的可重建派生投影。普通子代理和 workflow 文件仍按各自 unit 解析；当前 session 删除清理的主键来自 `sessions.jsonl_path`。
+保留与缺失标记以 `projects/` 为来源根边界（ADR-0004、ADR-0014）：如果它不存在或根层枚举失败，discover 不报告缺失，普通 build 保留 Claude 的上一次状态；一旦根层枚举成功，本次清单就有权威性。主 transcript、子代理（`subagents/agent-*.jsonl`）与 workflow JSON 都在 `sources` 中各自登记为一个来源：某个已知文件从权威清单中消失时，discover 产出 `missing: true` 单元，只将该来源标为 `missing`，它拥有的消息与会话原样保留（主文件消失而子代理仍在时会话标为 `partial`）；子代理先于主文件出现时自动补一个占位会话行。只有显式清理（Purge）才会删除已缺失的来源。
 
 ## 3. `user` 与 `assistant` 消息
 

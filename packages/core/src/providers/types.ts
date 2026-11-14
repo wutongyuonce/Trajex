@@ -70,17 +70,22 @@ export interface IndexUnit {
   /** 为子代理 transcript 设置，使其消息携带 agent_id。 */
   isSubagent?: boolean;
   agentId?: string;
-  /** Provider 在发现阶段确认已失效、需要先级联撤回的旧 session。 */
-  retractSessionIds?: readonly string[];
+  /**
+   * 缺失单元：`key` 是一个已知来源路径，权威 inventory 证明它已不存在。调度层只把
+   * 该路径上的来源标记为 missing（ADR-0014），不调用 parse，也不删除任何行。
+   */
+  missing?: true;
   /** adapter 私有负载，对调度层完全不透明。 */
   meta?: unknown;
 }
 
-/** 已持久化的 session 身份，用于 Provider 发现 identity replacement/retraction。 */
-export interface IndexedSession {
-  sessionId: string;
-  jsonlPath: string;
-  source?: string;
+/** 来源清单中该 Provider 的已知来源（不含 transcript 内容）。 */
+export interface KnownSource {
+  readonly path: string;
+  readonly sessionId: string;
+  /** '' 为会话自身的来源；其余为子代理 / 子会话 id 或 `workflow:<文件名>`。 */
+  readonly member: string;
+  readonly status: 'present' | 'missing';
 }
 
 /** Provider 明确声明监听目标是递归目录还是精确文件。 */
@@ -103,8 +108,8 @@ export interface DiscoverContext {
   lastCursor(key: string): Cursor;
   /** 当 daemon 处于 changed-path 模式时，限制在此路径集合内发现变更。 */
   changedPaths?: string[];
-  /** 查询该 Provider 之前写入的 session 身份；Provider 不直接访问 SQLite。 */
-  indexedSessions?: () => readonly IndexedSession[];
+  /** 该 Provider 已知的来源；Provider 据此报告缺失路径，不直接访问 SQLite。 */
+  knownSources?: () => readonly KnownSource[];
   /** 报告来源根缺失或根层枚举失败；后代目录失败不使用此通道。 */
   reportUnavailableRoot?: (issue: InventoryRootIssue) => void;
 }
@@ -117,9 +122,11 @@ export interface DiscoverContext {
  * 所有 provider adapter 产出的统一规范记录流。persist.ts 消费它写入数据库，
  * session-detail 层面直接消费它用于展示。
  *
- * 大多数 record 种类映射到一个 schema 表；update/retraction 类记录编码标准的状态转换。
+ * 大多数 record 种类映射到一个 schema 表。SourceRecord 声明其后记录的所有者，
+ * 每个数据记录之前必须至少有一条。
  */
 export type TranscriptRecord =
+  | SourceRecord
   | SessionRecord
   | MessageRecord
   | ToolCallRecord
@@ -128,8 +135,7 @@ export type TranscriptRecord =
   | SubagentRecord
   | WorkflowRecord
   | WorkflowAgentRecord
-  | MessageTurnDurationRecord
-  | DeleteSessionRecord;
+  | MessageTurnDurationRecord;
 
 export type MessageVisibility = 'visible' | 'inactive' | 'hidden';
 
@@ -278,12 +284,20 @@ export interface MessageTurnDurationRecord {
 }
 
 /**
- * 会话替换操作记录（不对应表）。全量重放 adapter 在写入当前快照前发出此记录；
- * persist 清理该会话的 transcript 派生表，但保留 durable memories。
+ * 来源声明（ADR-0014）。之后的记录都归该来源所有，直到下一条 source 记录。
+ *
+ * - `member`：'' 为会话自身的来源（它也拥有 sessions 行），其余为子代理 / 子会话 id
+ *   或 `workflow:<文件名>`；同一 `(session_id, member)` 换了路径即为移动。
+ * - `replace`：本次解析从头开始。persist 先删除该来源拥有的行（member '' 时连同
+ *   sessions 行，保留已解析的 project_path），再写入新记录；增量续读时为 false。
  */
-export interface DeleteSessionRecord {
-  kind: 'delete-session';
-  sessionId: string;
+export interface SourceRecord {
+  kind: 'source';
+  provider?: string;
+  session_id: string;
+  member: string;
+  path: string;
+  replace: boolean;
 }
 
 // ──────────────────────────────────────────────

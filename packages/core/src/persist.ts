@@ -3,30 +3,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * 统一 TranscriptRecord 持久化层。
+ * 统一 TranscriptRecord 持久化层（见 docs/adr/0001、0014）。
  *
- * 模块定位：唯一直接认识 SQLite schema 的写库代码。Provider adapter 只产出规范
- * 记录流；本模块完成 upsert、session 合并、工具关联、撤回删除和 cursor 持久化。
+ * 模块定位：唯一把规范记录写进投影表的代码。Provider 只产出记录流；本模块按来源
+ * 声明归属每一行（source_id）、合并 session、补占位会话并写回 cursor。来源清单的
+ * 状态迁移在 sources.ts。
+ *
+ * 写入语义：
+ * - `source` 记录切换“当前来源”；replace 时先删除该来源的非消息派生行，messages
+ *   则原地 upsert 以保持 rowid 稳定，流结束后只删掉本次未再产出的旧 message。
+ * - messages / subagents / workflow_agents 按主键 upsert；合并行归最后写入者。
+ * - sessions 与已有行合并：started_at 取早、ended_at 取晚、message_count 按 countMode
+ *   累加或替换，其余字段新值优先、为空时保留旧值。
+ * - 写入了行却没有 sessions 行的会话（例如主 transcript 尚未出现）补一个占位行。
  */
-// Shared Core persist layer (see docs/adr/0001).
-//
-// Provider-agnostic and binding-agnostic: it consumes the TranscriptRecord stream
-// from any adapter's parse() and writes rows into the injected database handle
-// (node:sqlite for the CLI, better-sqlite3 for the app — they share the
-// prepare/run/get API). It is the only layer that maps TranscriptRecord kinds
-// onto schema writes. Query, attune, migrations, and finalize touch SQLite for
-// other reasons. Adapters stay pure.
-//
-// Write semantics are the canonical ones reconciled from the drift: messages
-// upsert via ON CONFLICT; sessions merge with any existing row (started_at MIN,
-// ended_at MAX, message_count reset-or-accumulate, fill-if-null for the rest);
-// turn-duration is a targeted UPDATE; delete-session replaces transcript-derived
-// rows but preserves durable memories. The generator's
-// return value is the new cursor, persisted verbatim into index_state.
-
 import type { Cursor, TranscriptRecord, IndexUnit } from './providers/types.ts';
 import type { SqliteDb } from './sqlite-types.ts';
 import { normalizeTranscriptTimestamp } from './parsing.ts';
+import { OWNED_TABLES, SESSION_MEMBER, declareSource, refreshSessionSourceStatus } from './sources.ts';
 
 // session 合并时时间字段取 MIN/MAX：started_at 取更早、ended_at 取更晚（单边为 null 时取对方）。
 const minStr = (a: string | null, b: string | null) => (a == null ? b : b == null ? a : a < b ? a : b);
@@ -40,15 +34,23 @@ const priorTimestampForMerge = (prior: string | null | undefined, incoming: stri
     : prior ?? null
 );
 
-/**
- * 为一次 persist 预编译 SQL。语句名与 TranscriptRecord.kind 对应，使 write()
- * 只做语义分发，不散落 SQL 字符串。
- */
+// messages 保 rowid 稳定，subagents / workflow_agents 跨多个来源 COALESCE 合并，因此
+// replace 时不在流开始前整表删除，而是原地 upsert，流结束后只删掉本次未再产出的主键。
+const UPFRONT_REPLACE_TABLES = ['tool_calls', 'tool_results', 'summaries', 'workflows'] as const;
+const KEPT_REPLACE_TABLES = [
+  ['messages', 'uuid'],
+  ['subagents', 'agent_id'],
+  ['workflow_agents', 'agent_id'],
+] as const;
+
+type KeptKeys = Record<(typeof KEPT_REPLACE_TABLES)[number][0], Set<string>>;
+
+/** 为一次 persist 预编译 SQL。语句名与 TranscriptRecord.kind 对应。 */
 function statements(db: SqliteDb) {
   return {
     msg: db.prepare(`
-      INSERT INTO messages (uuid,session_id,type,parent_uuid,timestamp,role,text,content_type,is_meta,visibility,model,agent_id,input_tokens,output_tokens,cwd,skill,source)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      INSERT INTO messages (uuid,session_id,type,parent_uuid,timestamp,role,text,content_type,is_meta,visibility,model,agent_id,input_tokens,output_tokens,cwd,skill,source,source_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(uuid) DO UPDATE SET
         session_id=excluded.session_id, type=excluded.type, parent_uuid=excluded.parent_uuid,
         timestamp=excluded.timestamp, role=excluded.role, text=excluded.text,
@@ -56,29 +58,30 @@ function statements(db: SqliteDb) {
         visibility=excluded.visibility, model=excluded.model,
         agent_id=excluded.agent_id,
         input_tokens=excluded.input_tokens, output_tokens=excluded.output_tokens,
-        cwd=excluded.cwd, skill=excluded.skill, source=excluded.source`),
-    tc: db.prepare('INSERT OR REPLACE INTO tool_calls (id,message_uuid,session_id,name,input_json,file_path) VALUES (?,?,?,?,?,?)'),
-    tr: db.prepare('INSERT OR REPLACE INTO tool_results (tool_use_id,message_uuid,session_id,content,file_path,is_error) VALUES (?,?,?,?,?,?)'),
-    sum: db.prepare('INSERT OR REPLACE INTO summaries (id,session_id,agent_id,timestamp,source,content,visibility,input_tokens,output_tokens) VALUES (?,?,?,?,?,?,?,?,?)'),
+        cwd=excluded.cwd, skill=excluded.skill, source=excluded.source, source_id=excluded.source_id`),
+    tc: db.prepare('INSERT OR REPLACE INTO tool_calls (id,message_uuid,session_id,name,input_json,file_path,source_id) VALUES (?,?,?,?,?,?,?)'),
+    tr: db.prepare('INSERT OR REPLACE INTO tool_results (tool_use_id,message_uuid,session_id,content,file_path,is_error,source_id) VALUES (?,?,?,?,?,?,?)'),
+    sum: db.prepare('INSERT OR REPLACE INTO summaries (id,session_id,agent_id,timestamp,source,content,visibility,input_tokens,output_tokens,source_id) VALUES (?,?,?,?,?,?,?,?,?,?)'),
     ses: db.prepare('INSERT OR REPLACE INTO sessions (id,title,project,project_path,started_at,ended_at,git_branch,version,message_count,jsonl_path,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)'),
     sub: db.prepare(`
-      INSERT INTO subagents (agent_id,session_id,parent_tool_use_id,agent_type,description,duration_ms,total_tokens)
-      VALUES (?,?,?,?,?,?,?)
+      INSERT INTO subagents (agent_id,session_id,parent_tool_use_id,agent_type,description,duration_ms,total_tokens,source_id)
+      VALUES (?,?,?,?,?,?,?,?)
       ON CONFLICT(agent_id) DO UPDATE SET
         session_id=excluded.session_id,
         parent_tool_use_id=COALESCE(excluded.parent_tool_use_id, subagents.parent_tool_use_id),
         agent_type=COALESCE(excluded.agent_type, subagents.agent_type),
         description=COALESCE(excluded.description, subagents.description),
         duration_ms=COALESCE(excluded.duration_ms, subagents.duration_ms),
-        total_tokens=COALESCE(excluded.total_tokens, subagents.total_tokens)`),
+        total_tokens=COALESCE(excluded.total_tokens, subagents.total_tokens),
+        source_id=excluded.source_id`),
     wf: db.prepare(`
       INSERT OR REPLACE INTO workflows
-        (run_id,session_id,parent_tool_use_id,task_id,script,result_json,timestamp,agent_count,duration_ms,total_tokens,status,workflow_name)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`),
+        (run_id,session_id,parent_tool_use_id,task_id,script,result_json,timestamp,agent_count,duration_ms,total_tokens,status,workflow_name,source_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`),
     wa: db.prepare(`
       INSERT INTO workflow_agents
-        (agent_id,run_id,session_id,agent_type,description,phase,label,model,state,duration_ms,tokens,tool_calls)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        (agent_id,run_id,session_id,agent_type,description,phase,label,model,state,duration_ms,tokens,tool_calls,source_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(agent_id) DO UPDATE SET
         run_id=excluded.run_id, session_id=excluded.session_id,
         agent_type=COALESCE(excluded.agent_type, workflow_agents.agent_type),
@@ -89,83 +92,134 @@ function statements(db: SqliteDb) {
         state=COALESCE(excluded.state, workflow_agents.state),
         duration_ms=COALESCE(excluded.duration_ms, workflow_agents.duration_ms),
         tokens=COALESCE(excluded.tokens, workflow_agents.tokens),
-        tool_calls=COALESCE(excluded.tool_calls, workflow_agents.tool_calls)`),
+        tool_calls=COALESCE(excluded.tool_calls, workflow_agents.tool_calls),
+        source_id=excluded.source_id`),
     turn: db.prepare('UPDATE messages SET turn_duration_ms=? WHERE uuid=?'),
     idx: db.prepare('INSERT OR REPLACE INTO index_state (jsonl_path,mtime,lines_processed,cursor) VALUES (?,?,?,?)'),
     getSession: db.prepare('SELECT * FROM sessions WHERE id=?'),
+    placeholder: db.prepare(`
+      INSERT OR IGNORE INTO sessions (id,project,started_at,ended_at,message_count,jsonl_path,source)
+      SELECT ?, ?, MIN(timestamp), MAX(timestamp), 0, NULL, ? FROM messages WHERE session_id = ?`),
   };
 }
 
-// Replace every transcript-derived row belonging to a session/thread.
-/**
- * 删除 session 的 transcript 派生行，为全量重放腾出干净投影；人工确认的
- * memories 是 durable 层，不随 session replacement 删除。
- */
-function deleteSession(db: SqliteDb, sessionId: string) {
-  db.prepare('DELETE FROM tool_results WHERE session_id=? OR message_uuid IN (SELECT uuid FROM messages WHERE session_id=? OR agent_id=?)').run(sessionId, sessionId, sessionId);
-  db.prepare('DELETE FROM tool_calls WHERE session_id=? OR message_uuid IN (SELECT uuid FROM messages WHERE session_id=? OR agent_id=?)').run(sessionId, sessionId, sessionId);
-  db.prepare('DELETE FROM messages WHERE session_id=? OR agent_id=?').run(sessionId, sessionId);
-  db.prepare('DELETE FROM subagents WHERE agent_id=? OR session_id=?').run(sessionId, sessionId);
-  db.prepare('DELETE FROM workflow_agents WHERE session_id=?').run(sessionId);
-  db.prepare('DELETE FROM workflows WHERE session_id=?').run(sessionId);
-  db.prepare('DELETE FROM summaries WHERE session_id=?').run(sessionId);
-  db.prepare('DELETE FROM sessions WHERE id=?').run(sessionId);
+export interface PersistOptions {
+  provider?: string;
+  now?: number;
+  onSessionIds?: (sessionIds: ReadonlySet<string>) => void;
 }
 
-// Consume one unit's record stream into the database and return the new cursor
-// (also written to index_state). `db` is any SQLite handle sharing prepare/run.
 /**
  * 消费一个 IndexUnit 的规范记录 generator，并返回 adapter 生成的新 cursor。
  *
  * 被谁调用：indexProviderPlan() 的每 unit 事务。cursor 的内容属于 Provider 协议，
  * persist 只将其原样写进 index_state，供下一轮发现和增量恢复。
  */
-export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<TranscriptRecord, Cursor>): Cursor {
+export function persist(
+  db: SqliteDb,
+  unit: IndexUnit,
+  gen: Generator<TranscriptRecord, Cursor>,
+  options: PersistOptions = {},
+): Cursor {
+  const defaultProvider = options.provider ?? 'claude';
+  const now = options.now ?? Date.now();
   const st = statements(db);
-  const replayProjectPaths = new Map<string, string>();
+  const sessionIds = new Set<string>();
+  const sessionsWithRows = new Set<string>();
+  const emittedSessions = new Set<string>();
+  const replacedMainSessions = new Set<string>();
+  const replacedKeys = new Map<number, KeptKeys>();
+  let current: { id: number; sessionId: string } | null = null;
+  let lastProvider = defaultProvider;
 
-  // Provider discovery can prove that an older identity is no longer present
-  // even when the replacement unit emits no transcript records. Retract those
-  // projections before consuming the generator so the whole replacement unit
-  // remains atomic with its subsequent writes.
-  for (const sessionId of unit.retractSessionIds ?? []) deleteSession(db, sessionId);
+  const ensureOwner = (sessionId: string, recordProvider?: string): number => {
+    if (current === null) {
+      const provider = recordProvider || defaultProvider;
+      const declared = declareSource(db, {
+        provider,
+        sessionId: sessionId || unit.sessionId,
+        member: unit.isSubagent ? unit.agentId ?? '' : SESSION_MEMBER,
+        path: unit.key,
+        now,
+      });
+      current = { id: declared.id, sessionId: sessionId || unit.sessionId };
+      lastProvider = provider;
+      sessionIds.add(current.sessionId);
+      for (const id of declared.supersededSessionIds) sessionIds.add(id);
+    }
+    if (sessionId) sessionsWithRows.add(sessionId);
+    return current.id;
+  };
 
   // 未处理的 kind 立即抛错，避免新增规范记录后静默丢失。
   const write = (r: TranscriptRecord) => {
     switch (r.kind) {
-      case 'message':
-        st.msg.run(r.uuid, r.session_id, r.type, r.parent_uuid, r.timestamp, r.role, r.text, r.content_type, r.is_meta, r.visibility, r.model, r.agent_id, r.input_tokens, r.output_tokens, r.cwd, r.skill, r.source);
+      case 'source': {
+        const provider = r.provider || defaultProvider;
+        const declared = declareSource(db, { provider, sessionId: r.session_id, member: r.member, path: r.path, now });
+        current = { id: declared.id, sessionId: r.session_id };
+        lastProvider = provider;
+        sessionIds.add(r.session_id);
+        for (const id of declared.supersededSessionIds) sessionIds.add(id);
+        if (r.replace) {
+          for (const table of UPFRONT_REPLACE_TABLES) {
+            db.prepare(`DELETE FROM ${table} WHERE source_id = ?`).run(declared.id);
+          }
+          if (!replacedKeys.has(declared.id)) {
+            replacedKeys.set(declared.id, {
+              messages: new Set(),
+              subagents: new Set(),
+              workflow_agents: new Set(),
+            });
+          }
+          if (r.member === SESSION_MEMBER) replacedMainSessions.add(r.session_id);
+        }
         break;
+      }
+      case 'message': {
+        const sourceId = ensureOwner(r.session_id, r.source);
+        replacedKeys.get(sourceId)?.messages.add(r.uuid);
+        st.msg.run(r.uuid, r.session_id, r.type, r.parent_uuid, r.timestamp, r.role, r.text, r.content_type, r.is_meta, r.visibility, r.model, r.agent_id, r.input_tokens, r.output_tokens, r.cwd, r.skill, r.source, sourceId);
+        break;
+      }
       case 'tool_call':
-        st.tc.run(r.id, r.message_uuid, r.session_id, r.name, r.input_json, r.file_path);
+        st.tc.run(r.id, r.message_uuid, r.session_id, r.name, r.input_json, r.file_path, ensureOwner(r.session_id));
         break;
       case 'tool_result':
-        st.tr.run(r.tool_use_id, r.message_uuid, r.session_id, r.content, r.file_path, r.is_error);
+        st.tr.run(r.tool_use_id, r.message_uuid, r.session_id, r.content, r.file_path, r.is_error, ensureOwner(r.session_id));
         break;
       case 'summary':
-        st.sum.run(r.id, r.session_id, r.agent_id ?? null, r.timestamp, r.source, r.content, r.visibility ?? 'visible', r.input_tokens ?? null, r.output_tokens ?? null);
+        st.sum.run(r.id, r.session_id, r.agent_id ?? null, r.timestamp, r.source, r.content, r.visibility ?? 'visible', r.input_tokens ?? null, r.output_tokens ?? null, ensureOwner(r.session_id));
         break;
-      case 'subagent':
-        st.sub.run(r.agent_id, r.session_id, r.parent_tool_use_id ?? null, r.agent_type ?? null, r.description ?? null, r.duration_ms ?? null, r.total_tokens ?? null);
+      case 'subagent': {
+        const sourceId = ensureOwner(r.session_id);
+        replacedKeys.get(sourceId)?.subagents.add(r.agent_id);
+        st.sub.run(r.agent_id, r.session_id, r.parent_tool_use_id ?? null, r.agent_type ?? null, r.description ?? null, r.duration_ms ?? null, r.total_tokens ?? null, sourceId);
         break;
+      }
       case 'workflow':
-        st.wf.run(r.run_id, r.session_id, r.parent_tool_use_id ?? null, r.task_id, r.script, r.result_json, r.timestamp, r.agent_count, r.duration_ms, r.total_tokens, r.status, r.workflow_name);
+        st.wf.run(r.run_id, r.session_id, r.parent_tool_use_id ?? null, r.task_id, r.script, r.result_json, r.timestamp, r.agent_count, r.duration_ms, r.total_tokens, r.status, r.workflow_name, ensureOwner(r.session_id));
         break;
-      case 'workflow_agent':
-        st.wa.run(r.agent_id, r.run_id, r.session_id, r.agent_type ?? null, r.description ?? null, r.phase ?? null, r.label ?? null, r.model ?? null, r.state ?? null, r.duration_ms ?? null, r.tokens ?? null, r.tool_calls ?? null);
+      case 'workflow_agent': {
+        const sourceId = ensureOwner(r.session_id);
+        replacedKeys.get(sourceId)?.workflow_agents.add(r.agent_id);
+        st.wa.run(r.agent_id, r.run_id, r.session_id, r.agent_type ?? null, r.description ?? null, r.phase ?? null, r.label ?? null, r.model ?? null, r.state ?? null, r.duration_ms ?? null, r.tokens ?? null, r.tool_calls ?? null, sourceId);
         break;
+      }
       case 'message-turn-duration':
         st.turn.run(r.turn_duration_ms, r.uuid);
         break;
       case 'session': {
+        ensureOwner(r.id, r.source);
+        emittedSessions.add(r.id);
         const prev = st.getSession.get(r.id);
-        // Claude 的增量解析贡献新增条数，故累加；Codex 全量重放，故用本次数覆盖。
+        // Claude 的增量解析贡献新增条数，故累加；全量重放用本次数覆盖。
         const message_count = r.countMode === 'delta' ? (prev?.message_count || 0) + r.message_count : r.message_count;
         st.ses.run(
           r.id,
           r.title ?? prev?.title ?? null,
           r.project ?? prev?.project ?? null,
-          prev?.project_path ?? replayProjectPaths.get(r.id) ?? null,
+          prev?.project_path ?? null,
           minStr(priorTimestampForMerge(prev?.started_at, r.started_at), r.started_at),
           maxStr(priorTimestampForMerge(prev?.ended_at, r.ended_at), r.ended_at),
           r.git_branch ?? prev?.git_branch ?? null,
@@ -174,17 +228,6 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
           r.jsonl_path,
           r.source,
         );
-        break;
-      }
-      case 'delete-session': {
-        const prev = st.getSession.get(r.sessionId);
-        if (typeof prev?.project_path === 'string' && prev.project_path !== '') {
-          // Full-replay providers delete and rebuild one projection atomically.
-          // Keep its stable project identity for the replacement session record;
-          // a delete-only tombstone still leaves no session row behind.
-          replayProjectPaths.set(r.sessionId, prev.project_path);
-        }
-        deleteSession(db, r.sessionId);
         break;
       }
       default:
@@ -197,6 +240,34 @@ export function persist(db: SqliteDb, unit: IndexUnit, gen: Generator<Transcript
   let step = gen.next();
   while (!step.done) { write(step.value); step = gen.next(); }
   const cursor = step.value;
+
+  // replace 的来源只删掉本次未再产出的旧主键，保留其余行的 rowid 与跨来源 COALESCE 字段。
+  for (const [sourceId, kept] of replacedKeys) {
+    for (const [table, keyCol] of KEPT_REPLACE_TABLES) {
+      const keys = kept[table];
+      if (keys.size === 0) {
+        db.prepare(`DELETE FROM ${table} WHERE source_id = ?`).run(sourceId);
+        continue;
+      }
+      const del = db.prepare(`DELETE FROM ${table} WHERE ${keyCol} = ?`);
+      for (const row of db.prepare(`SELECT ${keyCol} FROM ${table} WHERE source_id = ?`).all(sourceId)) {
+        const key = String(row[keyCol]);
+        if (!keys.has(key)) del.run(key);
+      }
+    }
+  }
+  for (const sessionId of replacedMainSessions) {
+    if (emittedSessions.has(sessionId)) continue;
+    const hasRows = OWNED_TABLES.some(table => Boolean(db.prepare(`SELECT 1 FROM ${table} WHERE session_id = ? LIMIT 1`).get(sessionId)));
+    if (!hasRows) db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+  }
+  for (const sessionId of sessionsWithRows) {
+    if (emittedSessions.has(sessionId)) continue;
+    st.placeholder.run(sessionId, unit.project ?? null, lastProvider, sessionId);
+    sessionIds.add(sessionId);
+  }
+  refreshSessionSourceStatus(db, sessionIds);
+  options.onSessionIds?.(sessionIds);
 
   // 保留前两段数值列供 marker/排序使用，同时原样保存 Provider cursor。
   if (cursor != null) {

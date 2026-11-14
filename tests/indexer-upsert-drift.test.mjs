@@ -57,17 +57,29 @@ test('re-indexing upserts messages (stable rowid) and replaces message_count', (
   db.close();
 });
 
-test('delete-session removes transcript projection but preserves memories', () => {
+test('source replace removes un-emitted transcript projection for that source but preserves memories', () => {
   const db = new DatabaseSync(':memory:');
   db.exec(SCHEMA);
-  db.prepare("INSERT INTO sessions (id, source) VALUES ('sid-delete', 'codex')").run();
-  db.prepare("INSERT INTO messages (uuid, session_id, text) VALUES ('msg-delete', 'sid-delete', 'old')").run();
-  db.prepare("INSERT INTO memories (id, session_id, summary, created_at) VALUES ('mem-delete', 'sid-delete', 'keep', '2026-06-10T10:00:00Z')").run();
-
   const unit = { key: 'delete-session.jsonl', sessionId: 'sid-delete' };
   persist(db, unit, (function* () {
-    yield { kind: 'delete-session', sessionId: 'sid-delete' };
+    yield { kind: 'source', provider: 'codex', session_id: 'sid-delete', member: '', path: unit.key, replace: true };
+    yield {
+      kind: 'message', uuid: 'msg-delete', session_id: 'sid-delete', type: 'user', parent_uuid: null,
+      timestamp: '2026-06-10T10:00:00Z', role: 'user', text: 'old', content_type: 'text', is_meta: 0,
+      visibility: 'visible', model: null, agent_id: null, input_tokens: null, output_tokens: null,
+      cwd: null, skill: null, source: 'codex',
+    };
+    yield {
+      kind: 'session', id: 'sid-delete', title: null, project: null, started_at: null, ended_at: null,
+      git_branch: null, version: null, message_count: 1, countMode: 'total', jsonl_path: unit.key, source: 'codex',
+    };
     return '1:1';
+  })());
+  db.prepare("INSERT INTO memories (id, session_id, summary, created_at) VALUES ('mem-delete', 'sid-delete', 'keep', '2026-06-10T10:00:00Z')").run();
+
+  persist(db, unit, (function* () {
+    yield { kind: 'source', provider: 'codex', session_id: 'sid-delete', member: '', path: unit.key, replace: true };
+    return '2:1';
   })());
 
   assert.equal(db.prepare("SELECT COUNT(*) c FROM sessions WHERE id='sid-delete'").get().c, 0);

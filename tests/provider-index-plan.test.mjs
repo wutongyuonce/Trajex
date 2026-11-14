@@ -39,7 +39,20 @@ function memoryPlanDb({ sessions = [], markers = [], cursors = [] } = {}) {
     CREATE TABLE sessions (
       id TEXT PRIMARY KEY,
       jsonl_path TEXT,
-      source TEXT
+      source TEXT,
+      source_status TEXT DEFAULT 'present'
+    );
+    CREATE TABLE sources (
+      id INTEGER PRIMARY KEY,
+      provider TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      member TEXT NOT NULL,
+      path TEXT,
+      status TEXT NOT NULL DEFAULT 'present',
+      first_seen_at INTEGER,
+      last_seen_at INTEGER,
+      missing_since INTEGER,
+      UNIQUE (session_id, member)
     );
   `);
   const insertMarker = db.prepare(
@@ -53,7 +66,13 @@ function memoryPlanDb({ sessions = [], markers = [], cursors = [] } = {}) {
   const insertSession = db.prepare(
     'INSERT INTO sessions (id, jsonl_path, source) VALUES (?, ?, ?)',
   );
-  for (const session of sessions) insertSession.run(session.id, session.path, session.source);
+  const insertSource = db.prepare(
+    "INSERT INTO sources (provider, session_id, member, path, status) VALUES (?, ?, '', ?, 'present')",
+  );
+  for (const session of sessions) {
+    insertSession.run(session.id, session.path, session.source);
+    insertSource.run(session.source, session.id, session.path);
+  }
   return db;
 }
 
@@ -131,15 +150,19 @@ test('skipped units do not block version markers; stop and inventory issues do',
   db.close();
 });
 
-test('a tombstone never retracts an identity another unit republishes in the same plan', () => {
+test('missing units run after active units so a moved source is re-declared before its old path is checked', () => {
+  const missing = { key: '/codex/sessions/r.jsonl', sessionId: 'codex:x', missing: true };
   const moved = { key: '/codex/archived_sessions/r.jsonl', sessionId: 'codex:x' };
-  const tombstone = { key: '/codex/sessions/r.jsonl', sessionId: 'codex:x', retractSessionIds: ['codex:x'] };
-  const gone = { key: '/codex/sessions/gone.jsonl', sessionId: 'codex:y', retractSessionIds: ['codex:y'] };
+  const gone = { key: '/codex/sessions/gone.jsonl', sessionId: 'codex:y', missing: true };
   const db = memoryPlanDb();
   const plan = createProviderIndexPlan(db, createProviderRegistry([
-    fakeProvider('codex', { units: [moved, tombstone, gone] }),
+    fakeProvider('codex', { units: [missing, moved, gone] }),
   ]));
-  assert.deepEqual(plan.items.map(item => item.unit.key), [moved.key, gone.key]);
+  assert.deepEqual(plan.items.map(item => [item.unit.key, Boolean(item.unit.missing)]), [
+    [moved.key, false],
+    [missing.key, true],
+    [gone.key, true],
+  ]);
   db.close();
 });
 

@@ -1,13 +1,13 @@
 # Trajex 文档
 
-本目录只放**当前有效**的文档，适用于 Trajex **0.3.0**（`package.json`、`@trajex-apps/cli`、桌面 App 同版本）。历史改动看 [CHANGELOG](../CHANGELOG.md) 与 git 历史，不在这里保留过程记录。
+本目录只放**当前有效**的文档，适用于 Trajex **0.4.0**（`package.json`、`@trajex-apps/cli`、桌面 App 同版本）。历史改动看 [CHANGELOG](../CHANGELOG.md) 与 git 历史，不在这里保留过程记录。
 
 ## 文档地图
 
 | 文档 | 内容 | 什么时候读 |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | 模块分层、数据流、CLI 与 App 的写入分工、改需求从哪里下手 | 第一次读代码、改动跨模块时 |
-| [adr/](adr/README.md) | 13 份架构决策（ADR-0001–0013）：当前契约、不变量与失败语义 | 改变某条行为之前 |
+| [adr/](adr/README.md) | 14 份架构决策（ADR-0001–0014）：当前契约、不变量与失败语义 | 改变某条行为之前 |
 | [formats/claude-code-jsonl.md](formats/claude-code-jsonl.md) | Claude Code transcript / workflow 格式与 Trajex 的投影 | 改 `providers/claude.ts` |
 | [formats/codex-jsonl.md](formats/codex-jsonl.md) | Codex rollout 格式、去重与线程规则 | 改 `providers/codex.ts` |
 | [formats/pi-jsonl.md](formats/pi-jsonl.md) | Pi v3 session 树、compaction 与可见性 | 改 `providers/pi.ts` |
@@ -19,10 +19,10 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| Trajex / CLI / App | 0.3.0 |
-| Node.js | CLI ≥ 22.13；读取 DeepSeek 压缩日志需 ≥ 22.15 |
-| 索引位置 | `$TRAJEX_DIR/trajex.sqlite`，默认 `~/.trajex/trajex.sqlite` |
-| Provider 投影 marker | `__claude_canonical_transcript_v1.1__`、`__codex_canonical_transcript_v1.2__`、`__pi_canonical_transcript_v1.1__`、`__deepseek_canonical_transcript_v1__` |
+| Trajex / CLI / App | 0.4.0（SQLite `PRAGMA user_version = 1`） |
+| Node.js | CLI ≥ 22.13；读取 DeepSeek 与 Codex 压缩日志需 ≥ 22.15 |
+| 索引与快照位置 | `$TRAJEX_DIR/trajex.sqlite` 与 `$TRAJEX_DIR/snapshots/`，默认 `~/.trajex/` |
+| Provider 投影 marker | `__claude_canonical_transcript_v2__`、`__codex_canonical_transcript_v2__`、`__pi_canonical_transcript_v2__`、`__deepseek_canonical_transcript_v2__` |
 | 来源格式 | Claude Code 2.1.x（观测）；Codex rollout（观测，CLI 0.94–0.130 / Desktop 0.146–0.147）；Pi session v3；DeepSeek Harness session v0–v4 |
 
 Claude Code 与 Codex 没有公开稳定的 transcript schema，对应格式文档是观测性说明；Pi 与 DeepSeek Harness 文档以上游公开规范为准。

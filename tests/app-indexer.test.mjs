@@ -10,7 +10,7 @@ import { appendFileSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync 
 import { join, normalize } from 'node:path';
 
 const require = createRequire(import.meta.url);
-import { buildIndex } from '../app/src/main/indexer.ts';
+import { buildIndex, purgeMissing } from '../app/src/main/indexer.ts';
 import { CLAUDE_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/claude.ts';
 import { CODEX_CANONICAL_TRANSCRIPT_MARKER } from '../packages/core/src/providers/codex.ts';
 const { DatabaseSync } = require('node:sqlite');
@@ -115,6 +115,7 @@ test('app indexer records build success without claiming daemon ownership', () =
 
   const unresolvedDb = new TestDatabase(dbPath);
   unresolvedDb.prepare('UPDATE sessions SET project_path=NULL WHERE id=?').run('session-app-unaffected');
+  unresolvedDb.prepare("DELETE FROM index_state WHERE jsonl_path='__project_path_backfill_v1__'").run();
   unresolvedDb.close();
 
   buildIndex({
@@ -122,7 +123,6 @@ test('app indexer records build success without claiming daemon ownership', () =
     dbPath,
     DatabaseImpl: TestDatabase,
     changedPaths: [],
-    retrySessionIds: ['session-app-unaffected'],
   });
 
   const retryDb = new TestDatabase(dbPath);
@@ -276,7 +276,7 @@ test('force rebuild bypasses stale message FTS delete triggers', () => {
   db.close();
 });
 
-test('force rebuild into a new database preserves existing memories', () => {
+test('force rebuild in place preserves existing memories and archived missing sessions', () => {
   const home = makeTempDir('trajex-app-indexer-force-preserve-');
   const claudeDir = join(home, '.claude');
   const projectDir = join(claudeDir, 'projects', '-tmp-trajex-app');
@@ -294,7 +294,6 @@ test('force rebuild into a new database preserves existing memories', () => {
   ].join('\n'));
 
   const dbPath = join(home, '.trajex', 'trajex.sqlite');
-  const tempDbPath = join(home, '.trajex', 'trajex.rebuild.tmp');
   buildIndex({ claudeDir, dbPath, DatabaseImpl: TestDatabase });
 
   const sourceDb = new TestDatabase(dbPath);
@@ -318,13 +317,12 @@ test('force rebuild into a new database preserves existing memories', () => {
 
   buildIndex({
     claudeDir,
-    dbPath: tempDbPath,
+    dbPath,
     DatabaseImpl: TestDatabase,
     force: true,
-    preserveDbPath: dbPath,
   });
 
-  const db = new TestDatabase(tempDbPath);
+  const db = new TestDatabase(dbPath);
   const memory = db.prepare('SELECT id, summary FROM memories WHERE id=?').get('mem-preserve-1');
   assert.equal(memory.summary, 'Decision: preserve memories when rebuilding the session index.');
   assert.equal(db.prepare("SELECT id FROM memories_fts WHERE memories_fts MATCH 'preserve'").get().id, 'mem-preserve-1');
@@ -876,12 +874,18 @@ test('app Claude incrementally removes deleted transcripts but preserves the sna
   mkdirSync(projectDir, { recursive: true });
   assert.deepEqual(buildIndex({ ...options, changedPaths: [jsonlPath] }).affectedSessionIds, ['session-delete']);
   db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT source_status FROM sessions WHERE id=?').get('session-delete').source_status, 'missing');
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get('session-delete').c, 1);
+  db.close();
+
+  assert.equal(purgeMissing({ dbPath, DatabaseImpl: TestDatabase }).sessions, 1);
+  db = new TestDatabase(dbPath);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get('session-delete').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get('session-delete').c, 0);
   db.close();
 });
 
-test('app Codex incrementally removes deleted rollouts but preserves the snapshot while sessions is missing', () => {
+test('app Codex incrementally marks deleted rollouts missing while preserving the snapshot when sessions is missing', () => {
   const home = makeTempDir('trajex-app-codex-delete-');
   const codexDir = join(home, '.codex');
   const sessionDir = join(codexDir, 'sessions', '2026', '06', '15');
@@ -900,11 +904,17 @@ test('app Codex incrementally removes deleted rollouts but preserves the snapsho
   rmSync(join(codexDir, 'sessions'), { recursive: true });
   assert.deepEqual(buildIndex({ ...options, changedPaths: [jsonlPath] }).affectedSessionIds, []);
   let db = new TestDatabase(dbPath);
-  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 1);
+  assert.equal(db.prepare('SELECT source_status FROM sessions WHERE id=?').get(sessionId).source_status, 'present');
   db.close();
 
   mkdirSync(sessionDir, { recursive: true });
   assert.deepEqual(buildIndex({ ...options, changedPaths: [jsonlPath] }).affectedSessionIds, [sessionId]);
+  db = new TestDatabase(dbPath);
+  assert.equal(db.prepare('SELECT source_status FROM sessions WHERE id=?').get(sessionId).source_status, 'missing');
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(sessionId).c, 1);
+  db.close();
+
+  assert.equal(purgeMissing({ dbPath, DatabaseImpl: TestDatabase }).sessions, 1);
   db = new TestDatabase(dbPath);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages WHERE session_id=?').get(sessionId).c, 0);
@@ -959,7 +969,6 @@ test('app temp rebuild preflights Provider roots against provenance from the cur
   const rolloutDir = join(sessionsDir, '2026', '06', '15');
   const rolloutPath = join(rolloutDir, 'rollout-current.jsonl');
   const dbPath = join(home, '.trajex', 'trajex.sqlite');
-  const tempDbPath = join(home, '.trajex', 'trajex.rebuild.sqlite');
   const rawId = '019e8951-3e7d-7343-a3e3-05bff48a4001';
   const sessionId = `codex:${rawId}`;
   mkdirSync(rolloutDir, { recursive: true });
@@ -980,8 +989,7 @@ test('app temp rebuild preflights Provider roots against provenance from the cur
   assert.throws(
     () => buildIndex({
       ...options,
-      dbPath: tempDbPath,
-      preserveDbPath: dbPath,
+      dbPath,
       force: true,
     }),
     /Codex.*root.*unavailable|root.*unavailable.*Codex/i,
@@ -1049,6 +1057,6 @@ test('app Codex treats a missing descendant directory as an authoritative deleti
   buildIndex(options);
 
   const db = new TestDatabase(dbPath);
-  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?').get(sessionId).c, 0);
+  assert.equal(db.prepare('SELECT source_status FROM sessions WHERE id=?').get(sessionId).source_status, 'missing');
   db.close();
 });

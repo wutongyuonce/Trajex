@@ -5,33 +5,34 @@
 /**
  * SQLite 连接生命周期。
  *
- * 模块定位：为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂，并负责
- * schema 初始化。桌面 App 可通过结构接口复用上层逻辑。
+ * 模块定位：为 node:sqlite 提供可写、只读和 writer-lease 三种连接工厂；schema 安装与
+ * 迁移统一交给 schema-migrations.ts 的 installCoreSchema。
  */
-// node:sqlite lifecycle and migrations for the Core package.
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { configureConnection } from './tx.ts';
-import { migrateCoreSchemaColumns } from './schema-migrations.ts';
+import { installCoreSchema } from './schema-migrations.ts';
+import { readSnapshotSettings, snapshotDirFor } from './snapshots.ts';
 import type { NodeSqliteDb } from './sqlite-types.ts';
 
 // runner 在子进程中指定该目录，使评测索引不触碰用户的默认 ~/.trajex。
 const TRAJEX_DIR = process.env.TRAJEX_DIR || join(homedir(), '.trajex');
 const DB_PATH = join(TRAJEX_DIR, 'trajex.sqlite');
-// 将同目录下的 schema.sql 文件内容读取为字符串，存入常量 SCHEMA 。
-const SCHEMA = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'); // new URL('./schema.sql', import.meta.url) — ESM 中获取当前文件同目录下另一个文件的 绝对 URL 。
+const SCHEMA = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8');
 
-
-/** 打开（必要时创建）主索引连接：建目录 → 配置 busy_timeout → 双次加列迁移。 */
+/** 打开（必要时创建并迁移）主索引连接。调用方必须持有 writer lease。 */
 function openDb(): NodeSqliteDb {
   mkdirSync(dirname(DB_PATH), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
   configureConnection(db, { busyTimeoutMs: 250 });
-  migrateCoreSchemaColumns(db);
-  db.exec(SCHEMA);
-  migrateCoreSchemaColumns(db);
+  try {
+    installCoreSchema(db, SCHEMA, { snapshotDir: snapshotDirFor(DB_PATH), snapshotKeep: readSnapshotSettings(TRAJEX_DIR).keep });
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return db;
 }
 

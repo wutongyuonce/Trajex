@@ -45,6 +45,10 @@ function sessionProjectPath(db, id) {
 
 function* sessionRecords(text) {
   yield {
+    kind: 'source', provider: 'claude', session_id: 'persisted-session',
+    member: '', path: '/source/persisted.jsonl', replace: true,
+  };
+  yield {
     kind: 'message', uuid: 'persisted-message', session_id: 'persisted-session',
     type: 'assistant', parent_uuid: null, timestamp: '2026-08-31T00:00:00Z',
     role: 'assistant', text, content_type: 'text', is_meta: 0, visibility: 'visible',
@@ -61,7 +65,10 @@ function* sessionRecords(text) {
 }
 
 function* deletionRecords() {
-  yield { kind: 'delete-session', sessionId: 'persisted-session' };
+  yield {
+    kind: 'source', provider: 'claude', session_id: 'persisted-session',
+    member: '', path: '/source/persisted.jsonl', replace: true,
+  };
   return '2:1';
 }
 

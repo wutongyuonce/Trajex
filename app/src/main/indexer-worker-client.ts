@@ -65,11 +65,12 @@ function createWorkerBuildIndex({
     return active;
   };
 
-  const buildIndex = (args: Record<string, unknown> = {}) => new Promise((resolve, reject) => {
+  const call = (op: string, args: Record<string, unknown> = {}) => new Promise((resolve, reject) => {
     const id = nextId++;
     pending.set(id, { resolve, reject });
-    ensureWorker().postMessage({ id, args });
+    ensureWorker().postMessage({ id, op, args });
   });
+  const buildIndex = (args: Record<string, unknown> = {}) => call('build', args);
 
   const stop = () => {
     const current = worker;
@@ -79,7 +80,7 @@ function createWorkerBuildIndex({
     return termination;
   };
 
-  return { buildIndex, stop };
+  return { buildIndex, call, stop };
 }
 
 export { createWorkerBuildIndex };

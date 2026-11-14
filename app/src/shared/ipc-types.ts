@@ -59,6 +59,7 @@ export interface SessionMetadata {
   message_count?: number | null;
   jsonl_path?: string | null;
   source?: string | null;
+  source_status?: 'present' | 'partial' | 'missing' | null;
 }
 
 export interface SessionPatch {

@@ -285,11 +285,11 @@ event_msg
 - 递归枚举 `sessions/` 和 `archived_sessions/` 下全部 `*.jsonl` 与 `*.jsonl.zst`，按文件名里的 thread id 分组：一个 thread 的全部分段是一个单元，按文件名顺序连续读取，行号跨分段连续编号。同一分段的多个副本（压缩过渡时的 `.jsonl` 与 `.jsonl.zst`，或 `sessions/` 与 `archived_sessions/` 各一份）只读一份：优先仍在写入的 `.jsonl`，其次修改时间较新的副本。有 `changedPaths` 时只检查 watcher 指出的路径（`.jsonl` 与对应 `.jsonl.zst` 视为同一个变化）；否则用存储 cursor 与分段快照跳过未变更的 thread。
 - 对每个候选文件读首行 `session_meta`；**有父 ID 的 rollout 一律不索引**（`discoverAt` 直接跳过，与 Claude 把子代理转录也索引的做法不同）。
 - 产出 `IndexUnit`：`sessionId = codex:<rawId>`，携带 `indexedTitle` / `indexedUpdatedAt`。
-- 发现阶段同时读取已索引的 session 路径清单。只有当 `sessions/`（以及已存在或曾索引过会话的 `archived_sessions/`）可读，且旧路径从当前清单中明确消失时，才产出带 `retractSessionIds` 的 tombstone unit；根目录暂时不存在或不可读时不产出 tombstone，保留上一次快照。rollout 从 `sessions/` 归档到 `archived_sessions/` 时，同一轮会在新路径重新发布该会话，旧路径的 tombstone 被丢弃，不会删除它。
+- 发现阶段同时读取 `sources` 中的已知来源清单（ADR-0014）。只有当 `sessions/`（以及已存在或曾索引过会话的 `archived_sessions/`）可读，且旧路径从当前清单中明确消失时，才产出 `missing: true` 单元，将该来源标为 `missing`，会话与消息原样保留；根目录暂时不存在或不可读时不改变状态。rollout 从 `sessions/` 归档到 `archived_sessions/` 或被压缩为 `.jsonl.zst` 时，同一轮会在新路径重新声明该来源，状态保持 `present`。
 
 ### 9.2 全量重放（parse）
 
-这正是 Codex 是"全量重放"适配器的原因：去重需要整文件（双向）知识，无法像 Claude 那样按行增量续读。每次根 thread 的 parse 都重发全部记录并带 `countMode: 'total'`，且在记录流开头发出 `delete-session`，由 persist 先清理该 session 的旧派生投影，再写入当前完整结果。`delete-session` 是全量重建协议，不再是 guardian/auto-review 的特殊撤回协议。若全量读取遇到已换行结束的损坏 JSONL 记录，解析器消费该行并继续处理后续记录；未换行的文件尾可能仍在写入，因此 cursor 停在它之前，下次 replay 会从头重建。
+这正是 Codex 是"全量重放"适配器的原因：去重需要整文件（双向）知识，无法像 Claude 那样按行增量续读。每次根 thread 的 parse 都先发出 `source { replace: true }`，再重发全部记录并带 `countMode: 'total'`：persist 原地更新仍存在的消息（保持 rowid 稳定）并清理本次未再产出的旧记录。若全量读取遇到已换行结束的损坏 JSONL 记录，解析器消费该行并继续处理后续记录；未换行的文件尾可能仍在写入，因此 cursor 停在它之前，下次 replay 会从头重建。
 
 处理顺序（`providers/codex.ts`）：
 

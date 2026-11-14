@@ -17,8 +17,27 @@ const settingsRecovery = ref('');
 const saveError = ref('');
 const version = ref('');
 
+// 历史保留与快照（ADR-0014）。
+const autoSnapshot = ref(true);
+const snapshotKeep = ref(3);
+const retention = ref({ missingSources: 0, partialSessions: 0, missingSessions: 0, snapshots: [] });
+const purgeAge = ref(0);
+const confirmingPurge = ref(false);
+const confirmingRestore = ref('');
+const retentionBusy = ref('');
+const retentionError = ref('');
+const retentionNotice = ref('');
+const KEEP_OPTIONS = [1, 2, 3, 5, 7, 10, 20];
+const AGE_OPTIONS = [
+  { value: 0, label: 'any age' },
+  { value: 7, label: 'missing for 7+ days' },
+  { value: 30, label: 'missing for 30+ days' },
+  { value: 90, label: 'missing for 90+ days' },
+];
+
 onMounted(async () => {
   await loadSettings();
+  await loadRetention();
 });
 
 async function loadSettings() {
@@ -30,7 +49,89 @@ async function loadSettings() {
   memoryCount.value = s.memoryCount || 0;
   settingsRecovery.value = s.settingsRecovery || '';
   version.value = s.version || '';
+  autoSnapshot.value = s.autoSnapshot !== false;
+  snapshotKeep.value = s.snapshotKeep || 3;
 }
+
+async function loadRetention() {
+  if (!window.trajex?.getRetentionSummary) return;
+  try {
+    const summary = await window.trajex.getRetentionSummary(purgeAge.value);
+    if (summary?.ok !== false) retention.value = summary;
+  } catch (error) {
+    retentionError.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** 长时间的维护操作：同一时间只允许一个，完成后刷新概览。 */
+async function runRetention(label, work, notice) {
+  if (retentionBusy.value) return;
+  retentionBusy.value = label;
+  retentionError.value = '';
+  retentionNotice.value = '';
+  try {
+    const result = await work();
+    retentionNotice.value = notice(result);
+  } catch (error) {
+    retentionError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    retentionBusy.value = '';
+    confirmingPurge.value = false;
+    confirmingRestore.value = '';
+    await loadRetention();
+  }
+}
+
+function purgeMissing() {
+  return runRetention('purge', () => window.trajex.purgeMissingHistory(purgeAge.value), (r) => (
+  r.sources ? `Removed ${r.sessions} sessions and ${r.sources} missing sources. A snapshot was kept first.` : 'Nothing to remove.'
+  ));
+}
+
+function takeSnapshot() {
+  return runRetention('snapshot', () => window.trajex.takeSnapshot(), r => `Snapshot ${r.snapshot.name} saved.`);
+}
+
+function restoreSnapshot(name) {
+  return runRetention('restore', () => window.trajex.restoreSnapshot(name), r => (
+    `Restored ${r.restored}. Your current memories were kept${r.safety ? `, and the previous index was saved as ${r.safety.name}` : ''}.`
+  ));
+}
+
+async function toggleAutoSnapshot() {
+  autoSnapshot.value = !autoSnapshot.value;
+  await saveSetting('autoSnapshot', autoSnapshot.value);
+}
+
+async function changeSnapshotKeep(event) {
+  snapshotKeep.value = Number(event.target.value);
+  await saveSetting('snapshotKeep', snapshotKeep.value);
+}
+
+async function changePurgeAge(event) {
+  purgeAge.value = Number(event.target.value);
+  confirmingPurge.value = false;
+  await loadRetention();
+}
+
+function fmtBytes(bytes) {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+}
+
+function fmtSnapshotTime(ms) {
+  return new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function revealSnapshots() {
+  window.trajex?.revealSnapshots?.();
+}
+
+const REASON_LABELS = {
+  daily: 'daily', manual: 'manual', 'pre-upgrade': 'before upgrade', 'pre-rebuild': 'before rebuild',
+  'pre-replay': 'before re-index', 'pre-purge': 'before cleanup', 'pre-restore': 'before restore',
+};
 
 async function browseSourcePath(source) {
   if (!window.trajex?.browseFolder) return;
@@ -68,6 +169,7 @@ async function rebuildIndex() {
   try {
     await window.trajex.rebuildIndex();
     await loadSettings();
+    await loadRetention();
   } catch (error) {
     rebuildError.value = error instanceof Error ? error.message : String(error);
   } finally {
@@ -179,6 +281,93 @@ function fmtRelative(iso) {
         </label>
       </section>
 
+      <!-- History & snapshots -->
+      <section class="settings-section">
+        <div class="settings-section-head">
+          <h2>History &amp; snapshots</h2>
+          <p>Trajex keeps sessions after an agent deletes its own files. Snapshots let you go back.</p>
+        </div>
+
+        <div v-if="retentionError" class="status-row error settings-notice">
+          <span class="status-dot error"></span>
+          <span>{{ retentionError }}</span>
+        </div>
+        <div v-if="retentionNotice" class="status-row ok settings-notice">
+          <span class="status-dot ok"></span>
+          <span>{{ retentionNotice }}</span>
+        </div>
+
+        <div class="form-row">
+          <div class="form-label">
+            Kept history
+            <div class="form-label-hint">Sessions whose source files are gone.</div>
+          </div>
+          <div class="form-control">
+            <div class="retention-stats">
+              <span><strong>{{ retention.missingSessions }}</strong> sessions fully kept</span>
+              <span class="sep">·</span>
+              <span><strong>{{ retention.partialSessions }}</strong> partially kept</span>
+            </div>
+            <div class="retention-actions">
+              <select class="select" :value="purgeAge" :disabled="!!retentionBusy" @change="changePurgeAge">
+                <option v-for="option in AGE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+              <button v-if="!confirmingPurge" class="btn" :disabled="!!retentionBusy || !retention.missingSources" @click="confirmingPurge = true">
+                Remove {{ retention.missingSources }} missing sources…
+              </button>
+              <template v-else>
+                <button class="btn danger" :disabled="!!retentionBusy" @click="purgeMissing">
+                  {{ retentionBusy === 'purge' ? 'Removing…' : 'Remove permanently' }}
+                </button>
+                <button class="btn subtle" :disabled="!!retentionBusy" @click="confirmingPurge = false">Cancel</button>
+              </template>
+            </div>
+            <div class="reset-hint">
+              Removes indexed history whose files no longer exist. Memories are never removed, and a snapshot is taken first.
+            </div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-label">Snapshots</div>
+          <div class="form-control">
+            <label class="toggle-label" @click.prevent="toggleAutoSnapshot">
+              <span class="toggle-track" :class="{ on: autoSnapshot }"><span class="toggle-thumb"></span></span>
+              <span class="toggle-text">Take a snapshot every day</span>
+            </label>
+            <div class="retention-actions">
+              <span class="toggle-text">Keep</span>
+              <select class="select" :value="snapshotKeep" @change="changeSnapshotKeep">
+                <option v-for="n in KEEP_OPTIONS" :key="n" :value="n">{{ n }}</option>
+              </select>
+              <span class="toggle-text">newest</span>
+              <button class="btn" :disabled="!!retentionBusy" @click="takeSnapshot">
+                {{ retentionBusy === 'snapshot' ? 'Saving…' : 'Snapshot now' }}
+              </button>
+              <button class="btn subtle" @click="revealSnapshots">Show folder</button>
+            </div>
+            <div v-if="retention.snapshots?.length" class="snapshot-list">
+              <div v-for="snap in retention.snapshots" :key="snap.name" class="snapshot-row">
+                <span class="snapshot-time">{{ fmtSnapshotTime(snap.createdAt) }}</span>
+                <span class="snapshot-meta">{{ REASON_LABELS[snap.reason] || snap.reason }} · {{ fmtBytes(snap.bytes) }}</span>
+                <template v-if="confirmingRestore === snap.name">
+                  <button class="btn danger" :disabled="!!retentionBusy" @click="restoreSnapshot(snap.name)">
+                    {{ retentionBusy === 'restore' ? 'Restoring…' : 'Replace current index' }}
+                  </button>
+                  <button class="btn subtle" :disabled="!!retentionBusy" @click="confirmingRestore = ''">Cancel</button>
+                </template>
+                <button v-else class="btn subtle" :disabled="!!retentionBusy" @click="confirmingRestore = snap.name">Restore…</button>
+              </div>
+            </div>
+            <div v-else class="reset-hint">No snapshots yet.</div>
+            <div class="reset-hint">
+              Restoring replaces the index with the snapshot, keeps your current memories, saves the current index
+              as a snapshot first, and then catches up with your session files.
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- About -->
       <section class="settings-section last">
         <div class="settings-section-head">
@@ -200,7 +389,8 @@ function fmtRelative(iso) {
               </button>
             </div>
             <div class="reset-hint">
-              Rebuilding re-reads your coding agent session data. It does not delete memories.
+              Rebuilding re-reads your coding agent session data. It keeps memories and history whose files are gone,
+              and takes a snapshot first.
             </div>
             <div v-if="rebuildError" class="reset-error">{{ rebuildError }}</div>
           </div>
@@ -371,6 +561,30 @@ function fmtRelative(iso) {
 }
 
 .reset-error { margin-top: 8px; color: #f87171; font-size: 11.5px; }
+
+.retention-stats {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  font-size: 12.5px; color: var(--muted); padding-top: 6px;
+}
+.retention-stats strong { color: var(--fg-2); font-weight: 500; }
+.retention-stats .sep { color: var(--muted-3); }
+.retention-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.select {
+  height: 28px; padding: 0 8px; border-radius: 5px;
+  border: 1px solid rgba(255,255,255,0.24); background: var(--surface);
+  color: var(--fg-2); font-size: 12px;
+}
+[data-theme='light'] .select { border-color: var(--hairline-strong); }
+.btn.danger { border-color: rgba(248,113,113,0.45); color: #f87171; }
+.btn.danger:hover { background: rgba(248,113,113,0.10); color: #fca5a5; }
+.snapshot-list { display: flex; flex-direction: column; gap: 2px; }
+.snapshot-row {
+  display: grid; grid-template-columns: minmax(150px, auto) 1fr auto auto;
+  gap: 10px; align-items: center; padding: 4px 0;
+  font-size: 12px; color: var(--fg-2);
+}
+.snapshot-time { font-family: var(--font-mono); font-size: 11.5px; }
+.snapshot-meta { color: var(--muted); font-size: 11.5px; }
 .reset-actions { display: flex; gap: 8px; }
 .reset-hint {
   font-size: 11.5px; color: var(--muted); margin-top: 6px;

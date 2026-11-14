@@ -1,10 +1,20 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0]
+
+### Added
+
+- **来源清单与历史保留（ADR-0014）：** 索引从“镜像”升级为“档案”。新增 `sources` 来源清单表与各投影表的 `source_id` 归属列，`sessions.source_status`（`present` / `partial` / `missing`）由来源状态推导并在会话列表中展示标签。当 Agent 删除本地历史文件（如 Claude 30 天自动清理、主文件被删而子代理仍在）时，Trajex 只将来源标为 `missing`，会话与消息完整保留、可继续检索；子代理先于主文件出现时自动创建占位会话，不再产生孤儿数据。
+- **显式清理（Purge）：** 桌面设置页新增“Kept history”管理，可按“全部缺失 / 缺失满 7、30、90 天”显式清理来源已删除的历史（唯一会删除索引历史的操作），`memories` 永不删除，清理前自动保存快照。
+- **索引快照与恢复（Snapshots）：** 基于 `VACUUM INTO` 在 `~/.trajex/snapshots/` 生成完整一致的快照，默认保留最新 3 份（可在设置中选择 1–20 份），支持每日自动快照、手动快照，以及在 schema 升级、版本重放、强制重建、清理、恢复前自动保存快照；支持从任意快照一键恢复（校验完整性与 schema 版本、保留当前 `memories`、恢复后增量追平本地会话）。
+
+### Changed
+
+- **统一构建与原地安全重建：** CLI 与桌面 App 共用 `runProviderBuild` 构建管线；强制重建（`trajex --build` 与 App“Rebuild index”）改为原地重放仍存在的来源，保留已缺失来源的历史与 `memories`，不再构建到临时数据库或清空旧历史。各 Provider canonical marker 升至 `v2`，从 0.3.x 升级时自动拍 `pre-upgrade` 快照并回填来源清单。
 
 ### Fixed
 
-- Codex 新版会把不再活动的会话压缩成 `rollout-*.jsonl.zst`，此前 Trajex 只认 `.jsonl`，这类会话不会被索引，已索引的会话被压缩后还会被当作删除。现在发现、解析与原文回查都支持 `.jsonl.zst`（用 Node 内建 zstd 解压，需要 Node.js 22.15+），压缩时会话换到新路径而不被删除；长会话拆成的多个分段（`<thread>_<分段>.jsonl[.zst]`）以及重复副本合并为一个会话，不再互相覆盖。Codex marker 升至 `v1.2`，现有索引会在下次 build 时一次性重放 Codex。
+- Codex 新版会把不再活动的会话压缩成 `rollout-*.jsonl.zst`，此前 Trajex 只认 `.jsonl`，这类会话不会被索引，已索引的会话被压缩后还会被当作删除。现在发现、解析与原文回查都支持 `.jsonl.zst`（用 Node 内建 zstd 解压，需要 Node.js 22.15+），压缩时会话换到新路径而不被删除；长会话拆成的多个分段（`<thread>_<分段>.jsonl[.zst]`）以及重复副本合并为一个会话，不再互相覆盖。
 
 ## [0.3.0]
 

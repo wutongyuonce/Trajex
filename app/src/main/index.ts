@@ -15,10 +15,8 @@ import { previewLocalMarkdownLink, resolveExistingLocalMarkdownFile } from './lo
 import { createDeferredQuit } from './quit-teardown.ts';
 import { preserveRejectedSettings, readSettingsFile, type SettingsReadResult } from './settings-preservation.ts';
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
-import {
-  coreSchemaNeedsMigration,
-  migrateCoreSchemaColumns,
-} from '../../../packages/core/src/schema-migrations.ts';
+import { coreSchemaNeedsMigration, installCoreSchema } from '../../../packages/core/src/schema-migrations.ts';
+import { normalizeKeep, snapshotDirFor } from '../../../packages/core/src/snapshots.ts';
 import { createBuiltinProviderRegistry } from '../../../packages/core/src/providers/builtins.ts';
 import {
   buildSourceCatalog,
@@ -107,38 +105,13 @@ function getRuntimePaths(persisted = loadPersistedSettings()) {
   };
 }
 
-function rebuildTempDbPath(dbPath) {
-  return path.join(
-    path.dirname(dbPath),
-    `${path.basename(dbPath)}.rebuild-${process.pid}-${Date.now()}.tmp`,
-  );
-}
-
-function dbFileSet(dbPath) {
-  return [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
-}
-
-function cleanupDbFiles(dbPath) {
-  for (const filePath of dbFileSet(dbPath)) {
-    try {
-      fs.rmSync(filePath, { force: true });
-    } catch {}
-  }
-}
-
-function replaceDbWithTemp(tempDbPath, dbPath) {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  for (const sidecar of [`${dbPath}-wal`, `${dbPath}-shm`]) {
-    try {
-      fs.rmSync(sidecar, { force: true });
-    } catch {}
-  }
-  fs.renameSync(tempDbPath, dbPath);
-  for (const suffix of ['-wal', '-shm']) {
-    const tempSidecar = `${tempDbPath}${suffix}`;
-    if (!fs.existsSync(tempSidecar)) continue;
-    fs.renameSync(tempSidecar, `${dbPath}${suffix}`);
-  }
+/** 快照策略来自设置：存放在索引旁的 snapshots/，默认保留 3 份并每天自动拍一份（ADR-0014）。 */
+function snapshotOptions(persisted = loadPersistedSettings(), dbPath = getRuntimePaths(persisted).dbPath) {
+  return {
+    snapshotDir: snapshotDirFor(dbPath),
+    snapshotKeep: normalizeKeep(persisted.snapshotKeep),
+    autoSnapshot: persisted.autoSnapshot !== false,
+  };
 }
 
 function resolveSchemaPath() {
@@ -151,12 +124,14 @@ function resolveSchemaPath() {
   return candidates.find(p => fs.existsSync(p));
 }
 
-function migrateDb(db) {
+function migrateDb(db, dbPath) {
   if (typeof db.exec !== 'function' || typeof db.prepare !== 'function') return;
-  migrateCoreSchemaColumns(db);
   const schemaPath = resolveSchemaPath();
-  if (schemaPath) db.exec(fs.readFileSync(schemaPath, 'utf8'));
-  migrateCoreSchemaColumns(db);
+  if (!schemaPath) return;
+  installCoreSchema(db, fs.readFileSync(schemaPath, 'utf8'), {
+    snapshotDir: snapshotDirFor(dbPath),
+    snapshotKeep: normalizeKeep(loadPersistedSettings().snapshotKeep),
+  });
 }
 
 function closeDb() {
@@ -198,7 +173,7 @@ function openDb(
   if (writerLeaseMode === 'caller-held' || lease) {
     try {
       db.pragma('journal_mode = WAL');
-      migrateDb(db);
+      migrateDb(db, dbPath);
     } finally {
       lease?.release();
     }
@@ -253,16 +228,15 @@ function startIndexerService({ buildOnStart = false } = {}) {
   const service = createIndexerService({
     projectsDir: paths.projectsDir,
     watchTargets: paths.providerRegistry.watchTargets(),
-    buildIndex: async ({ reason, changedPaths, retrySessionIds }) => {
+    buildIndex: async ({ reason, changedPaths }) => {
       const result = await indexerWorker.buildIndex({
         reason,
         changedPaths,
-        retrySessionIds,
         providerRoots: paths.providerRoots,
         claudeDir: paths.claudeDir,
         codexDir: paths.codexDir,
-        projectsDir: paths.projectsDir,
         dbPath: paths.dbPath,
+        ...snapshotOptions(),
       });
       if (result?.deferred) {
         if (Array.isArray(result.affectedSessionIds) && result.affectedSessionIds.length) {
@@ -480,6 +454,7 @@ const SESSION_METADATA_COLUMNS = [
   'message_count',
   'jsonl_path',
   'source',
+  'source_status',
 ].join(', ');
 
 function querySessionMetadata(sessionId: string): SessionMetadata | null {
@@ -834,6 +809,8 @@ ipcMain.handle('settings:get', () => {
     codexDir,
     dbPath: dbFile,
     autoRefresh: persisted.autoRefresh !== false,
+    autoSnapshot: persisted.autoSnapshot !== false,
+    snapshotKeep: normalizeKeep(persisted.snapshotKeep),
     sources,
     memoryCount,
     sessionCount,
@@ -906,69 +883,115 @@ ipcMain.handle('win:control', (event, action: WindowControlAction) => {
   }
 });
 
-ipcMain.handle('settings:rebuildIndex', async () => {
-  if (!indexerWorker) return null;
-  const persisted = loadPersistedSettings();
-  const paths = getRuntimePaths(persisted);
-  const tempDbPath = rebuildTempDbPath(paths.dbPath);
+/**
+ * 在停止后台索引的状态下执行一次写维护（rebuild / purge / restore），结束后重新打开
+ * 索引并按设置恢复自动刷新。worker 是唯一的写入线程，维护操作在它上串行执行。
+ */
+async function runMaintenance<T>(work: (paths: ReturnType<typeof getRuntimePaths>) => Promise<T>, { closeIndex = false } = {}) {
+  const paths = getRuntimePaths();
   await stopIndexerServiceAndWait({ waitForIdle: false });
   if (indexerWorker) {
     await Promise.resolve(indexerWorker.stop());
-    indexerWorker = createWorkerBuildIndex();
   }
-  cleanupDbFiles(tempDbPath);
-  let writerLease: ReturnType<typeof acquireWriterLease> = null;
-  let rebuildWatchHints: string[] = [];
+  indexerWorker = createWorkerBuildIndex();
+  if (closeIndex) closeDb();
+  let watchHints: string[] = [];
   try {
-    const writerLeasePath = writerLockPathFor(paths.dbPath);
-    writerLease = acquireWriterLease({
-      lockPath: writerLeasePath,
-      openDb: lockPath => new Database(lockPath),
-      waitMs: 2000,
-    });
-    if (!writerLease) {
-      throw new Error('Trajex index writer is busy; rebuild was not started');
-    }
-    const result = await indexerWorker.buildIndex({
-      reason: 'manual-rebuild',
-      force: true,
-      providerRoots: paths.providerRoots,
-      claudeDir: paths.claudeDir,
-      codexDir: paths.codexDir,
-      projectsDir: paths.projectsDir,
-      dbPath: tempDbPath,
-      preserveDbPath: fs.existsSync(paths.dbPath) ? paths.dbPath : null,
-      writerLeasePath,
-      writerLeaseMode: 'caller-held',
-    });
-    if (result?.deferred) {
-      throw new Error(`Trajex rebuild was not completed: ${String(result.reason || 'indexing deferred').replaceAll('_', ' ')}`);
-    }
-    rebuildWatchHints = result?.watchHints ?? [];
-    closeDb();
-    replaceDbWithTemp(tempDbPath, paths.dbPath);
-    openDb(paths.dbPath, { writerLeaseMode: 'caller-held' });
-    notifyIndexUpdated(result);
+    const result = await work(paths);
+    watchHints = (result as { watchHints?: string[] } | null)?.watchHints ?? [];
+    if (!db) openDb(paths.dbPath);
+    notifyIndexUpdated(result as any);
     return result;
   } finally {
-    try {
-      cleanupDbFiles(tempDbPath);
-      if (!db) {
-        try {
-          openDb(paths.dbPath, {
-            writerLeaseMode: writerLease ? 'caller-held' : 'acquire',
-          });
-        } catch (error) {
-          console.warn?.(`Trajex DB reopen after rebuild failed: ${(error as Error).message}`);
-        }
-      }
-    } finally {
-      writerLease?.release();
-      if (loadPersistedSettings().autoRefresh !== false) {
-        const service = startIndexerService({ buildOnStart: false });
-        if (rebuildWatchHints.length) service?.promoteWatchHints?.(rebuildWatchHints);
-        else service?.runBuildNow?.('reconcile');
+    if (!db) {
+      try {
+        openDb(paths.dbPath);
+      } catch (error) {
+        console.warn?.(`Trajex DB reopen after maintenance failed: ${(error as Error).message}`);
       }
     }
+    if (loadPersistedSettings().autoRefresh !== false) {
+      const service = startIndexerService({ buildOnStart: false });
+      if (watchHints.length) service?.promoteWatchHints?.(watchHints);
+      else service?.runBuildNow?.('reconcile');
+    }
   }
+}
+
+function unwrapMaintenance<T extends { ok?: boolean; reason?: string }>(result: T, action: string): T {
+  if (result && result.ok === false) {
+    throw new Error(`Trajex ${action} was not completed: ${String(result.reason || 'writer busy').replaceAll('_', ' ')}`);
+  }
+  return result;
+}
+
+/**
+ * 重建索引：以空 cursor 重放全部来源，原地替换仍存在来源的投影；已缺失的历史与 memories
+ * 保留，开始前自动拍 `pre-rebuild` 快照（ADR-0014）。
+ */
+ipcMain.handle('settings:rebuildIndex', () => runMaintenance(async (paths) => {
+  const result = await indexerWorker.buildIndex({
+    reason: 'manual-rebuild',
+    force: true,
+    providerRoots: paths.providerRoots,
+    claudeDir: paths.claudeDir,
+    codexDir: paths.codexDir,
+    dbPath: paths.dbPath,
+    ...snapshotOptions(),
+  });
+  if (result?.deferred) {
+    throw new Error(`Trajex rebuild was not completed: ${String(result.reason || 'indexing deferred').replaceAll('_', ' ')}`);
+  }
+  return result;
+}));
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function missingBeforeFrom(olderThanDays: unknown): number | undefined {
+  const days = Number(olderThanDays);
+  return Number.isFinite(days) && days > 0 ? Date.now() - days * DAY_MS : undefined;
+}
+
+/** 设置页「历史保留」概览：缺失来源数、部分/全部缺失的会话数与快照列表。 */
+ipcMain.handle('retention:summary', async (_, olderThanDays?: number) => {
+  if (!indexerWorker) indexerWorker = createWorkerBuildIndex();
+  const paths = getRuntimePaths();
+  if (!fs.existsSync(paths.dbPath)) return { ok: true, missingSources: 0, partialSessions: 0, missingSessions: 0, snapshots: [] };
+  return indexerWorker.call('retention-summary', {
+    dbPath: paths.dbPath, ...snapshotOptions(), missingBefore: missingBeforeFrom(olderThanDays), writerLeaseWaitMs: 2000,
+  });
+});
+
+ipcMain.handle('retention:snapshot', async () => {
+  if (!indexerWorker) indexerWorker = createWorkerBuildIndex();
+  const paths = getRuntimePaths();
+  return unwrapMaintenance(await indexerWorker.call('snapshot', { dbPath: paths.dbPath, ...snapshotOptions(), writerLeaseWaitMs: 5000 }), 'snapshot');
+});
+
+/** 危险操作：删除来源已不存在的历史。开始前拍 `pre-purge` 快照，可从快照恢复。 */
+ipcMain.handle('retention:purge', (_, olderThanDays?: number) => runMaintenance(async (paths) => unwrapMaintenance(
+  await indexerWorker.call('purge', {
+    dbPath: paths.dbPath, ...snapshotOptions(), missingBefore: missingBeforeFrom(olderThanDays), writerLeaseWaitMs: 5000,
+  }),
+  'purge',
+)));
+
+/** 从快照恢复：关闭本进程连接后由 worker 替换索引，当前 memories 合并保留，之后增量同步。 */
+ipcMain.handle('retention:restore', (_, snapshotName: string) => runMaintenance(async (paths) => {
+  if (typeof snapshotName !== 'string' || !/^trajex-[0-9TZ]+-[a-z-]+\.sqlite$/.test(snapshotName)) {
+    throw new Error('Invalid snapshot name');
+  }
+  const options = snapshotOptions();
+  return unwrapMaintenance(await indexerWorker.call('restore', {
+    dbPath: paths.dbPath,
+    ...options,
+    snapshotPath: path.join(options.snapshotDir, snapshotName),
+    writerLeaseWaitMs: 5000,
+  }), 'restore');
+}, { closeIndex: true }));
+
+ipcMain.handle('retention:revealSnapshots', () => {
+  const dir = snapshotOptions().snapshotDir;
+  fs.mkdirSync(dir, { recursive: true });
+  shell.openPath(dir);
 });

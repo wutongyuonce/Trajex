@@ -1,7 +1,11 @@
 # Unified persistence, transaction safety, and SQLite concurrency
 
-> Revised 2026-09-01. This ADR also defines schema-readiness checks, bounded
-> derived-data finalization, and App database publication.
+> Revised 2026-11-14. This ADR defines transaction safety, schema-readiness
+> checks, bounded derived-data finalization, and writer ownership. Source
+> ownership (`source` records), retention on deletion, in-place rebuild, and
+> snapshots are defined in [ADR-0014](0014-source-ledger-retention-and-snapshots.md),
+> which supersedes the old `delete-session` / `retractSessionIds` and destructive
+> force-cleanup mechanics.
 
 ## Context
 
@@ -24,20 +28,18 @@ parse(unit, oldCursor)
 
 persist(db, unit, generator)
   -> BEGIN IMMEDIATE
-  -> retract unit.retractSessionIds first
-  -> consume canonical records as upserts/updates
-  -> delete-session removes one session's derived projection
-  -> tombstone has no records and only performs the retraction
+  -> declare source(s); if replace, clear un-emitted rows for that source_id
+  -> consume canonical records as upserts/updates owned by source_id
   -> write index_state only after generator completion
   -> COMMIT
 ```
 
-Retraction and `delete-session` remove regenerable transcript projections
-(`sessions`, `messages`, tools, workflows, subagents, and summaries), but
-never `memories`. A database or record-write failure aborts the unit and leaves
-its cursor unchanged. A provider's malformed-line boundary is different:
-records accepted under ADR-0002 are a normal committed result, while the cursor
-remains before any malformed tail that the Provider leaves unconsumed.
+Source replacement and supersession remove only the rows owned by that
+`source_id`, never other sources of the same session and never `memories`
+(ADR-0014). A database or record-write failure aborts the unit and leaves its
+cursor unchanged. A provider's malformed-line boundary is different: records
+accepted under ADR-0002 are a normal committed result, while the cursor remains
+before any malformed tail that the Provider leaves unconsumed.
 
 ### Transaction and retry policy
 

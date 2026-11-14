@@ -137,19 +137,22 @@ test('persist round-trips canonical workflow records and their tool relationship
   db.close();
 });
 
-test('delete-session clears transcript tables but preserves memories', () => {
+test('source replace clears only that source rows and preserves other sources and memories', () => {
   const db = freshDb();
   const unit = fixtureUnit();
   persist(db, unit, parse(unit, null));
-  db.prepare('INSERT INTO workflows (run_id,session_id) VALUES (?,?)').run('run-delete', 'sid-p');
-  db.prepare('INSERT INTO workflow_agents (agent_id,run_id,session_id) VALUES (?,?,?)').run('agent-delete', 'run-delete', 'sid-p');
-  db.prepare('INSERT INTO summaries (id,session_id,agent_id,source,content) VALUES (?,?,?,?,?)').run('summary-delete', 'sid-p', 'agent-delete', 'claude', 'child summary');
+  const mainSourceId = db.prepare("SELECT id FROM sources WHERE session_id='sid-p' AND member=''").get().id;
+  db.prepare('INSERT INTO workflows (run_id,session_id,source_id) VALUES (?,?,?)').run('run-delete', 'sid-p', mainSourceId);
+  db.prepare('INSERT INTO workflow_agents (agent_id,run_id,session_id,source_id) VALUES (?,?,?,?)').run('agent-delete', 'run-delete', 'sid-p', mainSourceId);
+  db.prepare('INSERT INTO summaries (id,session_id,agent_id,source,content,source_id) VALUES (?,?,?,?,?,?)').run('summary-delete', 'sid-p', 'agent-delete', 'claude', 'child summary', mainSourceId);
   db.prepare('INSERT INTO memories (id,session_id,path,summary,created_at) VALUES (?,?,?,?,?)').run('memory-delete', 'sid-p', '/tmp/deleted.md', 'delete with session', '2026-06-10T10:00:00Z');
   db.prepare('INSERT INTO memories (id,session_id,path,summary,created_at) VALUES (?,?,?,?,?)').run('memory-keep', 'other-session', '/tmp/kept.md', 'keep other session', '2026-06-10T10:00:00Z');
 
-  // Hand-roll a one-shot generator emitting a delete for the session.
-  function* del() { yield { kind: 'delete-session', sessionId: 'sid-p' }; return null; }
-  persist(db, { key: 'x', sessionId: 'sid-p' }, del());
+  function* replaceEmpty() {
+    yield { kind: 'source', provider: 'claude', session_id: 'sid-p', member: '', path: unit.key, replace: true };
+    return null;
+  }
+  persist(db, unit, replaceEmpty());
 
   assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions WHERE id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM messages WHERE session_id=?').get('sid-p').c, 0);
@@ -161,7 +164,7 @@ test('delete-session clears transcript tables but preserves memories', () => {
   assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE session_id=?').get('other-session').c, 1);
 });
 
-test('IndexUnit retractions clear prior projection before an empty replacement unit', () => {
+test('declaring a new identity at a held path supersedes the prior source and preserves memories', () => {
   const db = freshDb();
   const unit = fixtureUnit();
   persist(db, unit, parse(unit, null));
@@ -169,18 +172,20 @@ test('IndexUnit retractions clear prior projection before an empty replacement u
     'memory-retract', 'sid-p', '/tmp/retract.md', 'keep this memory', '2026-06-10T10:00:00Z',
   );
 
-  function* tombstone() { yield* []; return '0:0'; }
+  function* replacement() {
+    yield { kind: 'source', provider: 'pi', session_id: 'pi:new-identity', member: '', path: unit.key, replace: true };
+    return '0:0';
+  }
   persist(db, {
-    key: 'tombstone',
+    key: unit.key,
     sessionId: 'pi:new-identity',
-    retractSessionIds: ['sid-p'],
-  }, tombstone());
+  }, replacement());
 
   assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions WHERE id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM messages WHERE session_id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM tool_calls WHERE session_id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM summaries WHERE session_id=?').get('sid-p').c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM memories WHERE id=?').get('memory-retract').c, 1);
-  assert.equal(db.prepare('SELECT mtime, lines_processed FROM index_state WHERE jsonl_path=?').get('tombstone').mtime, 0);
-  assert.equal(db.prepare('SELECT mtime, lines_processed FROM index_state WHERE jsonl_path=?').get('tombstone').lines_processed, 0);
+  assert.equal(db.prepare('SELECT mtime, lines_processed FROM index_state WHERE jsonl_path=?').get(unit.key).mtime, 0);
+  assert.equal(db.prepare('SELECT mtime, lines_processed FROM index_state WHERE jsonl_path=?').get(unit.key).lines_processed, 0);
 });

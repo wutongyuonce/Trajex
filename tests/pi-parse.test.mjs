@@ -15,7 +15,7 @@ function drain(generator) { const records = []; for (let step = generator.next()
 const SESSION_ID = 'pi:session-1:96f38458f1d537ded0d6d3e46cc3c4f72f5b27817b3eca46e0142a3868e90aee';
 
 test('Pi indexes every tree branch and projects current context through visibility', () => {
-  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v1.1__');
+  assert.equal(PI_CANONICAL_TRANSCRIPT_MARKER, '__pi_canonical_transcript_v2__');
   const root = makeTempDir('trajex-pi-');
   const dir = join(root, 'sessions', '--tmp-project--');
   mkdirSync(dir, { recursive: true });
@@ -121,7 +121,7 @@ test('Pi discovery notices a same-mtime rewrite', () => {
   assert.deepEqual(provider.discover({ lastCursor: () => cursor }).map(found => found.key), [path]);
 });
 
-test('Pi discovery retracts a prior identity when a session file is reused', () => {
+test('Pi discovery emits the new identity at the reused path so persist can supersede the prior source', () => {
   const root = makeTempDir('trajex-pi-retract-');
   const dir = join(root, 'sessions', '--tmp-project--');
   const path = join(dir, 'fixture.jsonl');
@@ -135,11 +135,11 @@ test('Pi discovery retracts a prior identity when a session file is reused', () 
   const [replacement] = provider.discover({
     lastCursor: () => null,
     changedPaths: [path],
-    indexedSessions: () => [{ sessionId: oldUnit.sessionId, jsonlPath: path, source: 'pi' }],
+    knownSources: () => [{ path, sessionId: oldUnit.sessionId, member: '', status: 'present' }],
   });
 
   assert.equal(replacement.sessionId, oldUnit.sessionId.replace('old-identity', 'new-identity'));
-  assert.deepEqual(replacement.retractSessionIds, [oldUnit.sessionId]);
+  assert.equal(replacement.key, path);
 });
 
 test('Pi skips a malformed physical line and keeps later valid messages', () => {

@@ -209,10 +209,10 @@ export interface SessionDetailRows {
   summaries?: SessionSummaryRow[];
 }
 
-/** 剥掉记录上的 kind 判别字段，保留其余字段。 */
-function withoutKind<T extends { kind: string }>(record: T): WithoutKind<T> {
-  const { kind: _kind, ...value } = record;
-  return value;
+/** 剥掉记录上的 kind 判别字段与数据库内部 source_id，保留其余字段。 */
+function withoutKind<T extends { kind: string; source_id?: unknown }>(record: T): WithoutKind<T> {
+  const { kind: _kind, source_id: _sourceId, ...value } = record;
+  return value as WithoutKind<T>;
 }
 
 /**
@@ -476,8 +476,8 @@ function assembleTranscriptRecords(records: Iterable<TranscriptRecord>): Session
         if (message) message.turn_duration_ms = record.turn_duration_ms;
         break;
       }
-      case 'delete-session':
-        // 删除标记只影响持久化增量，详情组装直接忽略。
+      case 'source':
+        // 来源声明只影响持久化归属，详情组装直接忽略。
         break;
     }
   }

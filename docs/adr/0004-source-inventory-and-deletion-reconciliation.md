@@ -1,8 +1,10 @@
 # Source-root availability and deletion reconciliation
 
-> Revised 2026-08-29. This ADR defines the reliability boundary for Provider
-> discovery and the precondition for destructive rebuilds. It does not define
-> provider parsing or SQLite transaction mechanics; see ADR-0002 and ADR-0003.
+> Revised 2026-11-14. This ADR defines the reliability boundary for Provider
+> discovery and the precondition for rebuilds. Under
+> [ADR-0014](0014-source-ledger-retention-and-snapshots.md), an authoritative
+> absence marks the source `missing` in `sources` instead of deleting its
+> projection; only explicit purge deletes.
 
 ## Context
 
@@ -31,24 +33,20 @@ artifact but no readable supported generation keeps its last snapshot instead of
 being tombstoned (ADR-0013).
 
 - `discover()` remains responsible for source inventory and reconciliation.
-  The shared context exposes `indexedSessions()` so a provider can compare
-  previously indexed `{ sessionId, jsonlPath }` entries with its current
-  inventory.
+  The shared context exposes `knownSources()` so a provider can compare
+  previously declared `{ path, sessionId, member, status }` entries with its
+  current inventory.
 - If the source root is absent or its root-level enumeration fails, discovery
-  reports a root issue and emits no deletion tombstones for that Provider. A
-  normal build keeps the Provider's last persisted snapshot while other
-  Providers may continue updating.
+  reports a root issue and emits no missing units for that Provider. A normal
+  build keeps the Provider's last persisted state while other Providers may
+  continue updating.
 - Once root-level enumeration succeeds, the inventory is authoritative. A
   missing or unreadable descendant directory is treated as an empty subtree;
-  previously indexed sessions below it are retracted. This deliberately accepts
-  deletion on nested I/O failures in exchange for a simple, bounded fallback.
-- An indexed JSONL path missing from an authoritative inventory, or a path now
-  identifying a different session, may produce an `IndexUnit` with
-  `retractSessionIds`.
-- The emitted unit is a **tombstone**. It carries the old session identity and
-  source path, but does not pretend that a deleted file has parseable content.
-  The parser/persist behavior for that unit is specified separately in
-  ADR-0002 and ADR-0003.
+  previously present sources below it are marked `missing` (ADR-0014).
+- A known source path missing from an authoritative inventory produces a
+  missing `IndexUnit` (`{ key: path, sessionId, missing: true }`). Same-path
+  identity replacement is handled by supersession when the new identity
+  declares that path (ADR-0014).
 - `changedPaths` is only a scope hint. It may authorize reconciliation for the
   changed path or subtree, but it does not make unrelated paths disappear.
 

@@ -2,31 +2,40 @@
 // Copyright (C) 2026 wutongyuonce and contributors.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/**
+ * 桌面 App 的索引写入入口（运行在 indexer worker 线程里）。
+ *
+ * 模块定位：在 better-sqlite3 上取得 writer lease、打开并迁移索引，把一次构建交给
+ * Core 的 runProviderBuild；另外承载只有 App 才做的写操作：清理缺失来源、拍快照与
+ * 从快照恢复（ADR-0014）。所有写操作都在同一个 writer lease 下串行执行。
+ */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { createBuiltinProviderRegistry } from '../../../packages/core/src/providers/builtins.ts';
-import {
-  backfillUnresolvedSessionProjectPathsOnce,
-  dropMessageFtsTriggers,
-  ensureFtsReady,
-  refreshSessionProjectPaths,
-} from '../../../packages/core/src/index-finalize.ts';
-import { healWorkflowParentLinks } from '../../../packages/core/src/indexer.ts';
 import type { ProviderRegistry } from '../../../packages/core/src/providers/registry.ts';
-import {
-  assertRebuildRootsAvailable,
-  createProviderIndexPlan,
-  indexProviderPlan,
-  readRecentTranscriptHints,
-  readProviderSessionProvenance,
-  writeProviderIndexMarkers,
-} from '../../../packages/core/src/provider-indexing.ts';
+import { runProviderBuild } from '../../../packages/core/src/index-build.ts';
+import { readRecentTranscriptHints } from '../../../packages/core/src/provider-indexing.ts';
 import type { ProviderInventoryRootIssue } from '../../../packages/core/src/provider-indexing.ts';
+import { installCoreSchema } from '../../../packages/core/src/schema-migrations.ts';
+import {
+  createSnapshot,
+  createSnapshotUnlessRecent,
+  hasIndexedData,
+  listSnapshots,
+  normalizeKeep,
+  pruneSnapshots,
+  readDurableMemories,
+  replaceIndexWithSnapshot,
+  restoreDurableMemories,
+  snapshotDirFor,
+  validateSnapshot,
+  type SnapshotInfo,
+} from '../../../packages/core/src/snapshots.ts';
+import { purgeMissingSources, sourceLedgerSummary } from '../../../packages/core/src/sources.ts';
 import { runWriteTransaction, configureConnection, betterSqliteTransactionAdapter } from '../../../packages/core/src/tx.ts';
-import { migrateCoreSchemaColumns } from '../../../packages/core/src/schema-migrations.ts';
 import { acquireWriterLease, writerLockPathFor } from '../../../packages/core/src/writer-lease.ts';
 import { runRetryableWriteTransaction, isBeginBusyFailure, hasUnusableTransaction } from '../../../packages/core/src/write-coordinator.ts';
 import { inferProjectPath } from '../../../packages/core/src/parsing.ts';
@@ -37,100 +46,86 @@ const DEFAULT_CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const DEFAULT_TRAJEX_DIR = path.join(os.homedir(), '.trajex');
 const DEFAULT_DB_PATH = path.join(DEFAULT_TRAJEX_DIR, 'trajex.sqlite');
 
+type DatabaseCtor = new (dbPath: string, options?: { readonly?: boolean }) => any;
+
 function resolveSchemaPath() {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
   const candidates = [
     path.join(__dirname, 'schema.sql'),
     path.join(__dirname, '..', '..', '..', 'packages', 'core', 'src', 'schema.sql'),
-    process.resourcesPath ? path.join(process.resourcesPath, 'scripts', 'schema.sql') : null,
+    resourcesPath ? path.join(resourcesPath, 'scripts', 'schema.sql') : null,
   ].filter((c): c is string => Boolean(c));
   const found = candidates.find(p => fs.existsSync(p));
   if (!found) throw new Error('Trajex schema.sql not found');
   return found;
 }
 
-function installSchema(db, schemaPath = resolveSchemaPath()) {
-  db.exec(fs.readFileSync(schemaPath, 'utf8'));
-  migrateCoreSchemaColumns(db);
-}
-
-
-function openIndexDb({ dbPath = DEFAULT_DB_PATH, schemaPath = resolveSchemaPath(), DatabaseImpl = Database }: { dbPath?: string; schemaPath?: string; DatabaseImpl?: new (dbPath: string) => any } = {}) {
+/** 打开（必要时创建并迁移）索引。调用方必须持有 writer lease。 */
+function openIndexDb({
+  dbPath = DEFAULT_DB_PATH,
+  schemaPath = resolveSchemaPath(),
+  DatabaseImpl = Database,
+  snapshotDir,
+  snapshotKeep,
+}: {
+  dbPath?: string; schemaPath?: string; DatabaseImpl?: DatabaseCtor; snapshotDir?: string | null; snapshotKeep?: number;
+} = {}) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new DatabaseImpl(dbPath);
   configureConnection(db, { busyTimeoutMs: 250 });
-  installSchema(db, schemaPath);
-  return db;
-}
-
-function copyMemoriesFromDb(db, sourceDbPath) {
-  if (!sourceDbPath || !fs.existsSync(sourceDbPath)) return false;
-  db.prepare('ATTACH DATABASE ? AS previous_trajex').run(sourceDbPath);
   try {
-    const hasMemories = db.prepare(`
-      SELECT name FROM previous_trajex.sqlite_master
-      WHERE type='table' AND name='memories'
-    `).get();
-    if (!hasMemories) return false;
-
-    const sourceColumns = new Set(
-      db.prepare('PRAGMA previous_trajex.table_info(memories)').all().map(column => column.name),
-    );
-    const targetColumns = [
-      'id',
-      'session_id',
-      'project',
-      'message_start',
-      'message_end',
-      'path',
-      'summary',
-      'created_at',
-      'deleted_at',
-      'deleted_reason',
-    ];
-    const selectList = targetColumns
-      .map(column => sourceColumns.has(column) ? column : `NULL AS ${column}`)
-      .join(',');
-    db.exec(`
-      INSERT OR REPLACE INTO memories (${targetColumns.join(',')})
-      SELECT ${selectList} FROM previous_trajex.memories
-    `);
-    return true;
-  } finally {
-    db.exec('DETACH DATABASE previous_trajex');
+    installCoreSchema(db, fs.readFileSync(schemaPath, 'utf8'), {
+      snapshotDir: snapshotDir === undefined ? snapshotDirFor(dbPath) : (snapshotDir ?? undefined),
+      snapshotKeep,
+    });
+  } catch (error) {
+    db.close();
+    throw error;
   }
-}
-
-function normalizeChangedPath(projectsDir, changedPath) {
-  if (!changedPath) return null;
-  const raw = String(changedPath);
-  return path.isAbsolute(raw) ? path.normalize(raw) : path.normalize(path.join(projectsDir, raw));
-}
-
-function sessionIdFromChangedPath(projectsDir, changedPath) {
-  const fp = normalizeChangedPath(projectsDir, changedPath);
-  if (!fp) return null;
-  const rel = path.relative(projectsDir, fp);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
-  const parts = rel.split(path.sep);
-  if (parts.length === 2 && parts[1].endsWith('.jsonl')) {
-    return fs.existsSync(fp) ? parts[1].slice(0, -6) : null;
-  }
-  if (parts.length >= 3) return fs.existsSync(fp) ? parts[1] || null : null;
-  return null;
+  return db;
 }
 
 // PASSIVE by default: it checkpoints what it can without blocking concurrent
 // readers/writers, so it is safe to run after every build. A blocking TRUNCATE
 // (which reclaims the -wal file but needs exclusive access and can contend with
 // the daemon + queries) is reserved for maintenance/exit — pass mode explicitly.
-function checkpointDb(db, mode = 'PASSIVE') {
+function checkpointDb(db: { pragma: (statement: string) => void }, mode = 'PASSIVE') {
   try {
     db.pragma(`wal_checkpoint(${mode})`);
   } catch {}
 }
 
-function writeIndexMarker(db, key, value = Date.now()) {
+function writeIndexMarker(db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } }, key: string, value = Date.now()) {
   db.prepare('INSERT OR REPLACE INTO index_state (jsonl_path, mtime, lines_processed) VALUES (?, ?, 0)').run(key, value);
+}
+
+interface LeaseOptions {
+  dbPath?: string;
+  writerLeasePath?: string;
+  writerLeaseWaitMs?: number;
+  writerLeaseMode?: 'acquire' | 'caller-held';
+  LockDatabaseImpl?: DatabaseCtor;
+  DatabaseImpl?: DatabaseCtor;
+}
+
+/** 在 writer lease 下执行 work；拿不到锁时返回 null（调用方据此报告 writer_busy）。 */
+function withWriterLease<T>(
+  { dbPath = DEFAULT_DB_PATH, writerLeasePath = writerLockPathFor(dbPath), writerLeaseWaitMs = 2000,
+    writerLeaseMode = 'acquire', DatabaseImpl = Database, LockDatabaseImpl = DatabaseImpl }: LeaseOptions,
+  work: () => T,
+): T | null {
+  if (writerLeaseMode !== 'acquire' && writerLeaseMode !== 'caller-held') {
+    throw new Error(`Unknown writer lease mode: ${writerLeaseMode}`);
+  }
+  const lease = writerLeaseMode === 'acquire'
+    ? acquireWriterLease({ lockPath: writerLeasePath, openDb: lockPath => new LockDatabaseImpl(lockPath), waitMs: writerLeaseWaitMs })
+    : null;
+  if (writerLeaseMode === 'acquire' && !lease) return null;
+  try {
+    return work();
+  } finally {
+    lease?.release();
+  }
 }
 
 function writeHeartbeat({
@@ -138,14 +133,9 @@ function writeHeartbeat({
   writerLeasePath = writerLockPathFor(dbPath),
   DatabaseImpl = Database,
   LockDatabaseImpl = DatabaseImpl,
-} = {}) {
+}: LeaseOptions = {}) {
   if (!fs.existsSync(dbPath)) return;
-  const lease = acquireWriterLease({
-    lockPath: writerLeasePath,
-    openDb: lockPath => new LockDatabaseImpl(lockPath),
-  });
-  if (!lease) return false;
-  try {
+  const written = withWriterLease({ dbPath, writerLeasePath, writerLeaseWaitMs: 0, DatabaseImpl, LockDatabaseImpl }, () => {
     const db = new DatabaseImpl(dbPath);
     configureConnection(db, { busyTimeoutMs: 0 });
     const txDb = betterSqliteTransactionAdapter(db);
@@ -155,28 +145,22 @@ function writeHeartbeat({
     } finally {
       db.close();
     }
-  } finally {
-    lease.release();
-  }
+  });
+  return written ?? false;
 }
 
-interface BuildIndexOptions {
+interface BuildIndexOptions extends LeaseOptions {
   providerRoots?: Record<string, string>;
   providerRegistry?: ProviderRegistry;
   claudeDir?: string;
   codexDir?: string;
-  projectsDir?: string;
-  dbPath?: string;
   schemaPath?: string;
-  DatabaseImpl?: new (dbPath: string) => any;
-  LockDatabaseImpl?: new (dbPath: string) => any;
   force?: boolean;
   changedPaths?: string[];
-  retrySessionIds?: string[];
-  preserveDbPath?: string | null;
-  writerLeasePath?: string;
-  writerLeaseWaitMs?: number;
-  writerLeaseMode?: 'acquire' | 'caller-held';
+  /** 快照策略；snapshotDir 为空时不拍快照。 */
+  snapshotDir?: string | null;
+  snapshotKeep?: number;
+  autoSnapshot?: boolean;
 }
 
 interface SkippedFile {
@@ -216,239 +200,225 @@ function deferredBuildResult(
   };
 }
 
+/** 兼容测试注入的 `claudeDir`：其余默认根随之相对重定位，显式 providerRoots 优先。 */
+function resolveProviderRoots(claudeDir: string, codexDir: string, providerRoots: Record<string, string>) {
+  const defaultHome = os.homedir();
+  const compatibilityHome = path.dirname(claudeDir);
+  const relocatedDefaults = Object.fromEntries(
+    createBuiltinProviderRegistry().catalog().map((descriptor) => {
+      const relativeDefault = path.relative(defaultHome, descriptor.defaultRoot);
+      const root = compatibilityHome !== defaultHome
+        && relativeDefault
+        && !relativeDefault.startsWith('..')
+        && !path.isAbsolute(relativeDefault)
+        ? path.join(compatibilityHome, relativeDefault)
+        : descriptor.defaultRoot;
+      return [descriptor.id, root];
+    }),
+  );
+  return { ...relocatedDefaults, claude: claudeDir, codex: codexDir, ...providerRoots };
+}
+
 function buildIndex({
   providerRoots = {},
   providerRegistry,
   claudeDir = DEFAULT_CLAUDE_DIR,
   codexDir = path.join(path.dirname(claudeDir), '.codex'),
-  projectsDir = path.join(claudeDir, 'projects'),
   dbPath = DEFAULT_DB_PATH,
   schemaPath = resolveSchemaPath(),
   DatabaseImpl = Database,
   LockDatabaseImpl = DatabaseImpl,
   force = false,
   changedPaths = undefined,
-  retrySessionIds = [],
-  preserveDbPath = null,
+  snapshotDir = null,
+  snapshotKeep,
+  autoSnapshot = true,
   writerLeasePath = writerLockPathFor(dbPath),
   writerLeaseWaitMs = 2000,
   writerLeaseMode = 'acquire',
 }: BuildIndexOptions = {}): BuildIndexResult {
-  if (writerLeaseMode !== 'acquire' && writerLeaseMode !== 'caller-held') {
-    throw new Error(`Unknown writer lease mode: ${writerLeaseMode}`);
-  }
-  let lease: ReturnType<typeof acquireWriterLease> = null;
-  if (writerLeaseMode === 'acquire') {
-    lease = acquireWriterLease({
-      lockPath: writerLeasePath,
-      openDb: lockPath => new LockDatabaseImpl(lockPath),
-      waitMs: writerLeaseWaitMs,
-    });
-    if (!lease) {
-      return deferredBuildResult('writer_busy');
-    }
-  }
-  try {
-    const db = openIndexDb({ dbPath, schemaPath, DatabaseImpl });
+  const built = withWriterLease({ dbPath, writerLeasePath, writerLeaseWaitMs, writerLeaseMode, DatabaseImpl, LockDatabaseImpl }, () => {
+    const keep = normalizeKeep(snapshotKeep);
+    const db = openIndexDb({ dbPath, schemaPath, DatabaseImpl, snapshotDir, snapshotKeep: keep });
     const txDb = betterSqliteTransactionAdapter(db);
-    let messageFtsTriggersDropped = false;
     try {
-      if (preserveDbPath && path.resolve(preserveDbPath) !== path.resolve(dbPath)) {
-        copyMemoriesFromDb(db, preserveDbPath);
-      }
-      const defaultHome = os.homedir();
-      const compatibilityHome = path.dirname(claudeDir);
-      const relocatedDefaults = Object.fromEntries(
-        createBuiltinProviderRegistry().catalog().map((descriptor) => {
-          const relativeDefault = path.relative(defaultHome, descriptor.defaultRoot);
-          const root = compatibilityHome !== defaultHome
-            && relativeDefault
-            && !relativeDefault.startsWith('..')
-            && !path.isAbsolute(relativeDefault)
-            ? path.join(compatibilityHome, relativeDefault)
-            : descriptor.defaultRoot;
-          return [descriptor.id, root];
-        }),
-      );
-      const roots = {
-        ...relocatedDefaults,
-        claude: claudeDir,
-        codex: codexDir,
-        ...providerRoots,
-      };
-      const registry = providerRegistry ?? createBuiltinProviderRegistry(roots);
-      let priorSessions;
-      if (force && preserveDbPath && path.resolve(preserveDbPath) !== path.resolve(dbPath)) {
-        const previousDb = new DatabaseImpl(preserveDbPath);
-        try {
-          priorSessions = readProviderSessionProvenance(previousDb);
-        } finally {
-          previousDb.close();
-        }
-      }
-      const providerPlan = createProviderIndexPlan(db, registry, {
-        force,
-        changedPaths,
-        priorSessions,
-      });
-      assertRebuildRootsAvailable(providerPlan);
-      let latestSourceMtime = providerPlan.items.reduce((latest, { unit }) => {
-        try {
-          return Math.max(latest, fs.statSync(unit.key).mtimeMs);
-        } catch {
-          return latest;
-        }
-      }, 0);
-
-      try {
-        if (providerPlan.fullRebuild) {
-          runRetryableWriteTransaction(txDb, () => {
-            dropMessageFtsTriggers(db);
-            db.prepare("DELETE FROM index_state WHERE substr(jsonl_path, 1, 2) != '__'").run();
-            // 触发器已删；若本次 build 中途停止，下一次 build 必须重建 FTS，而不是信任旧的就绪标记。
-            db.prepare("DELETE FROM index_state WHERE jsonl_path = '__fts_triggers_ready__'").run();
-            db.prepare("DELETE FROM messages").run();
-            db.prepare("DELETE FROM tool_calls").run();
-            db.prepare("DELETE FROM tool_results").run();
-            db.prepare("DELETE FROM sessions").run();
-            db.prepare("DELETE FROM summaries").run();
-            db.prepare("DELETE FROM subagents").run();
-            db.prepare("DELETE FROM workflows").run();
-            db.prepare("DELETE FROM workflow_agents").run();
-          }, { label: 'force-cleanup' });
-          messageFtsTriggersDropped = true;
-        }
-      } catch (error) {
-        if (isBeginBusyFailure(error)) {
-          return deferredBuildResult('database_busy', {
-            files: providerPlan.items.length,
-            latestSourceMtime,
-            inventoryIssues: providerPlan.inventoryIssues,
-          });
-        }
-        throw error;
-      }
+      const registry = providerRegistry ?? createBuiltinProviderRegistry(resolveProviderRoots(claudeDir, codexDir, providerRoots));
       const affectedSessionIds = new Set<string>();
-      const finalizeAffectedSessionIds = new Set<string>();
-      const changedMetaJsonlPaths = new Set<string>();
-      if (Array.isArray(changedPaths)) {
-        for (const changedPath of changedPaths) {
-          const sessionId = sessionIdFromChangedPath(projectsDir, changedPath);
-          const normalizedChangedPath = normalizeChangedPath(projectsDir, changedPath);
-          const isMetaChange = normalizedChangedPath?.toLowerCase().endsWith('.meta.json');
-          if (isMetaChange && normalizedChangedPath) {
-            changedMetaJsonlPaths.add(
-              normalizedChangedPath.slice(0, -'.meta.json'.length) + '.jsonl',
-            );
-          }
-          // Transcript files report their session only after their own transaction
-          // commits. Workflow changes are applied during finalize, so stage those
-          // IDs until the finalize transaction commits. Meta files map back to their
-          // transcript transaction and are reported only after that commit.
-          if (sessionId && !changedPath.toLowerCase().endsWith('.jsonl') && !isMetaChange) {
-            finalizeAffectedSessionIds.add(sessionId);
-          }
-        }
-      }
       const skipped: SkippedFile[] = [];
-      const providerResult = indexProviderPlan({
-        db,
-        plan: providerPlan,
-        runTransaction: (label, work) => runRetryableWriteTransaction(txDb, work, { label }),
-        onCommitted: ({ unit }, nextCursor) => {
-          if (nextCursor) latestSourceMtime = Math.max(latestSourceMtime, Number(nextCursor.split(':')[0]) || 0);
-          if (unit.sessionId) affectedSessionIds.add(unit.sessionId);
-          for (const sessionId of unit.retractSessionIds ?? []) affectedSessionIds.add(sessionId);
-        },
-        onError: (error, { provider, unit }) => {
-          if (isBeginBusyFailure(error)) return 'stop';
-          if (hasUnusableTransaction(error)) throw error;
-          skipped.push({
-            path: unit.key,
-            error: (error as Error).message,
-            diagnostics: (error as { trajex?: unknown }).trajex,
-          });
-          console.warn(`Warning: failed to index ${provider.name} unit ${unit.key}: ${(error as Error).message}`);
-          return 'skip';
-        },
+      let latestSourceMtime = 0;
+      let files = 0;
+      const partial = (reason: string, inventoryIssues: readonly ProviderInventoryRootIssue[] = []) => deferredBuildResult(reason, {
+        files, latestSourceMtime, affectedSessionIds: [...affectedSessionIds], skipped: skipped.length, skippedFiles: skipped, inventoryIssues,
       });
-      if (providerResult.stopped) {
-        return deferredBuildResult('database_busy', {
-          files: providerPlan.items.length,
-          latestSourceMtime,
-          affectedSessionIds: [...affectedSessionIds],
-          skipped: skipped.length,
-          skippedFiles: skipped,
-          inventoryIssues: providerPlan.inventoryIssues,
-        });
-      }
-      let ftsRebuilt = false;
-      // Finalize is one transaction; a failure here fails the whole build (the
-      // index would otherwise be left inconsistent).
+      let run;
       try {
-        runRetryableWriteTransaction(txDb, () => {
-          if (force) {
-            refreshSessionProjectPaths(db, null);
-          } else {
-            refreshSessionProjectPaths(
-              db,
-              new Set([...retrySessionIds, ...affectedSessionIds, ...finalizeAffectedSessionIds]),
-            );
-            backfillUnresolvedSessionProjectPathsOnce(db);
-          }
-          healWorkflowParentLinks(db);
-          if (messageFtsTriggersDropped) installSchema(db, schemaPath);
-          ftsRebuilt = ensureFtsReady(db, { force });
-          writeIndexMarker(db, '__last_build__');
-          writeIndexMarker(db, '__app_last_successful_build__');
-          writeIndexMarker(db, '__indexer_owner_app__');
-          writeProviderIndexMarkers(db, providerPlan, providerResult);
-          if (latestSourceMtime) writeIndexMarker(db, '__last_source_mtime__', latestSourceMtime);
-        }, { label: 'finalize' });
+        run = runProviderBuild({
+          db,
+          registry,
+          force,
+          changedPaths,
+          snapshots: { dir: snapshotDir ?? undefined, keep, daily: autoSnapshot },
+          runTransaction: (label, work) => runRetryableWriteTransaction(txDb, work, { label }),
+          onCommitted: (_item, cursor, sessionIds) => {
+            files++;
+            if (cursor) latestSourceMtime = Math.max(latestSourceMtime, Number(cursor.split(':')[0]) || 0);
+            for (const sessionId of sessionIds) affectedSessionIds.add(sessionId);
+          },
+          onUnitError: (error, { provider, unit }) => {
+            if (isBeginBusyFailure(error)) return 'stop';
+            if (hasUnusableTransaction(error)) throw error;
+            skipped.push({
+              path: unit.key,
+              error: (error as Error).message,
+              diagnostics: (error as { trajex?: unknown }).trajex,
+            });
+            console.warn(`Warning: failed to index ${provider.name} unit ${unit.key}: ${(error as Error).message}`);
+            return 'skip';
+          },
+        });
       } catch (error) {
-        if (isBeginBusyFailure(error)) {
-          return deferredBuildResult('database_busy', {
-            files: providerPlan.items.length,
-            latestSourceMtime,
-            affectedSessionIds: [...affectedSessionIds],
-            skipped: skipped.length,
-            skippedFiles: skipped,
-            inventoryIssues: providerPlan.inventoryIssues,
-          });
-        }
+        if (isBeginBusyFailure(error)) return partial('database_busy');
         throw error;
       }
-      for (const sessionId of finalizeAffectedSessionIds) affectedSessionIds.add(sessionId);
+      if (!run.finalized) return partial('database_busy', run.plan.inventoryIssues);
+      runRetryableWriteTransaction(txDb, () => {
+        writeIndexMarker(db, '__app_last_successful_build__');
+        if (latestSourceMtime) writeIndexMarker(db, '__last_source_mtime__', latestSourceMtime);
+      }, { label: 'app-markers' });
       return {
-        files: providerPlan.items.length,
+        files: run.plan.items.length,
         latestSourceMtime,
         affectedSessionIds: [...affectedSessionIds],
-        ftsRebuilt,
+        ftsRebuilt: run.ftsRebuilt,
         skipped: skipped.length,
         skippedFiles: skipped,
-        inventoryIssues: providerPlan.inventoryIssues,
+        inventoryIssues: run.plan.inventoryIssues,
         deferred: false,
         watchHints: readRecentTranscriptHints(db),
       };
     } finally {
-      if (messageFtsTriggersDropped) {
-        try {
-          installSchema(db, schemaPath);
-        } catch (error) {
-          console.warn(`Warning: failed to restore message FTS triggers: ${(error as Error).message}`);
-        }
-      }
       checkpointDb(db);
       db.close();
     }
-  } finally {
-    lease?.release();
-  }
+  });
+  return built ?? deferredBuildResult('writer_busy');
+}
+
+interface MaintenanceOptions extends LeaseOptions {
+  schemaPath?: string;
+  snapshotDir?: string;
+  snapshotKeep?: number;
+}
+
+type MaintenanceResult<T> = ({ ok: true } & T) | { ok: false; reason: 'writer_busy' };
+
+function maintenance<T>(options: MaintenanceOptions, work: (db: any, dir: string, keep: number) => T): MaintenanceResult<T> {
+  const dbPath = options.dbPath ?? DEFAULT_DB_PATH;
+  const dir = options.snapshotDir ?? snapshotDirFor(dbPath);
+  const keep = normalizeKeep(options.snapshotKeep);
+  const result = withWriterLease({ ...options, dbPath }, () => {
+    const db = openIndexDb({
+      dbPath,
+      schemaPath: options.schemaPath ?? resolveSchemaPath(),
+      DatabaseImpl: options.DatabaseImpl ?? Database,
+      snapshotDir: dir,
+      snapshotKeep: keep,
+    });
+    try {
+      return { ok: true as const, ...work(db, dir, keep) };
+    } finally {
+      checkpointDb(db);
+      db.close();
+    }
+  });
+  return result ?? { ok: false, reason: 'writer_busy' };
+}
+
+/** 设置页概览：来源清单状态与现有快照。 */
+function getRetentionSummary(options: MaintenanceOptions & { missingBefore?: number } = {}) {
+  return maintenance(options, (db, dir) => ({
+    ...sourceLedgerSummary(db, { missingBefore: options.missingBefore }),
+    snapshots: listSnapshots(dir),
+  }));
+}
+
+/** 手动拍快照。 */
+function takeSnapshot(options: MaintenanceOptions = {}) {
+  return maintenance(options, (db, dir, keep) => ({ snapshot: createSnapshot(db, { dir, keep, reason: 'manual' }) }));
+}
+
+/**
+ * 显式清理缺失来源（ADR-0014 唯一的删除操作）。先拍 `pre-purge` 快照，拍不成就不清理；
+ * 删除与 FTS 由触发器同步维护。
+ */
+function purgeMissing(options: MaintenanceOptions & { missingBefore?: number } = {}) {
+  return maintenance(options, (db, dir, keep) => {
+    const preview = sourceLedgerSummary(db, { missingBefore: options.missingBefore });
+    if (preview.missingSources === 0) return { sources: 0, sessions: 0, snapshot: null as SnapshotInfo | null };
+    const snapshot = hasIndexedData(db) ? createSnapshotUnlessRecent(db, { dir, keep, reason: 'pre-purge' }) : null;
+    const txDb = betterSqliteTransactionAdapter(db);
+    const purged = runRetryableWriteTransaction(txDb, () => purgeMissingSources(db, { missingBefore: options.missingBefore }), { label: 'purge' });
+    return { ...purged, snapshot };
+  });
+}
+
+/**
+ * 从快照恢复。调用方（主进程）必须已停止 indexer 并关闭所有本进程连接；本函数持有
+ * writer lease 完成：校验 → pre-restore 快照 → 替换文件 → 合并当前 memories → 迁移。
+ * 校验失败时当前索引不变。
+ */
+function restoreSnapshot(options: MaintenanceOptions & { snapshotPath: string }) {
+  const dbPath = options.dbPath ?? DEFAULT_DB_PATH;
+  const DatabaseImpl = options.DatabaseImpl ?? Database;
+  const dir = options.snapshotDir ?? snapshotDirFor(dbPath);
+  const keep = normalizeKeep(options.snapshotKeep);
+  const schemaPath = options.schemaPath ?? resolveSchemaPath();
+  const target = path.resolve(options.snapshotPath);
+  if (path.dirname(target) !== path.resolve(dir)) throw new Error('Only snapshots in the Trajex snapshot directory can be restored');
+  const result = withWriterLease({ ...options, dbPath, writerLeaseWaitMs: options.writerLeaseWaitMs ?? 5000 }, () => {
+    validateSnapshot(target, p => new DatabaseImpl(p, { readonly: true }));
+    let safety: SnapshotInfo | null = null;
+    let preservedMemories: Array<Record<string, unknown>> = [];
+    if (fs.existsSync(dbPath)) {
+      const current = new DatabaseImpl(dbPath);
+      configureConnection(current, { busyTimeoutMs: 1000 });
+      try {
+        // 先不修剪，以免在复制 target 之前把旧快照 target 自己修剪掉；复制完成后再按 keep 修剪。
+        if (hasIndexedData(current)) safety = createSnapshot(current, { dir, keep, reason: 'pre-restore', prune: false });
+        preservedMemories = readDurableMemories(current);
+      } finally {
+        current.close();
+      }
+    }
+    replaceIndexWithSnapshot(target, dbPath);
+    pruneSnapshots(dir, keep);
+    const db = new DatabaseImpl(dbPath);
+    configureConnection(db, { busyTimeoutMs: 1000 });
+    try {
+      installCoreSchema(db, fs.readFileSync(schemaPath, 'utf8'), { snapshotDir: undefined, snapshotKeep: keep });
+      const txDb = betterSqliteTransactionAdapter(db);
+      runRetryableWriteTransaction(txDb, () => {
+        restoreDurableMemories(db, preservedMemories);
+        // 恢复后的索引用当前设置的快照数量修剪；cursor 原样保留，下一次构建增量同步。
+        db.prepare("DELETE FROM index_state WHERE jsonl_path = '__last_build__'").run();
+      }, { label: 'restore' });
+      db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
+    } finally {
+      checkpointDb(db, 'TRUNCATE');
+      db.close();
+    }
+    return { ok: true as const, restored: path.basename(target), safety };
+  });
+  return result ?? { ok: false as const, reason: 'writer_busy' as const };
 }
 
 export {
   buildIndex,
-  writeHeartbeat,
-  openIndexDb,
+  getRetentionSummary,
   inferProjectPath,
+  openIndexDb,
+  purgeMissing,
+  restoreSnapshot,
+  takeSnapshot,
+  writeHeartbeat,
 };

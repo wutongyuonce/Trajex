@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, normalize, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, relative } from 'node:path';
 
 import {
   extractText, extractContentType, extractMessageIsMeta, isSkillInstructions,
@@ -44,8 +44,8 @@ function cursorToSkip(cursor: Cursor, snapshot: FileSnapshot): number {
 }
 
 export const name = 'claude';
-// v1.1：一次性重放旧投影，补齐 custom-title 标题并把时间戳规范为 UTC 毫秒形态。
-export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v1.1__';
+// v2：来源清单（ADR-0014），一次性重放旧投影以声明精确来源与路径。
+export const CLAUDE_CANONICAL_TRANSCRIPT_MARKER = '__claude_canonical_transcript_v2__';
 
 interface ClaudeWorkflowUnitMeta {
   readonly kind: 'workflow';
@@ -127,6 +127,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   }));
 
   const workflowUnits: IndexUnit[] = [];
+  const currentWorkflowPaths = new Set<string>();
   if (!inventoryComplete) return transcriptUnits;
   let projects: string[];
   try { projects = readdirSync(projectsDir); } catch (error) {
@@ -151,6 +152,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
         if (!file.endsWith('.json')) continue;
         const workflowPath = join(workflowDir, file);
         const normalizedPath = normalize(workflowPath);
+        currentWorkflowPaths.add(normalizedPath);
         const relationshipChanged = changedTranscriptPaths.has(normalize(mainTranscriptPath));
         if (
           ctx.changedPaths !== undefined
@@ -168,20 +170,17 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
       }
     }
   }
-  const tombstones = (ctx.indexedSessions?.() ?? [])
-    .filter(session => {
-      const path = normalize(session.jsonlPath);
-      if (!pathWithin(normalize(projectsDir), path) || currentTranscriptPaths.has(path)) return false;
+  // 根层可读时 inventory 是权威的：已知但不再存在的主会话、子代理与 workflow 文件报告为缺失。
+  const missing = (ctx.knownSources?.() ?? [])
+    .filter(source => {
+      const path = normalize(source.path);
+      if (source.status !== 'present' || !pathWithin(normalize(projectsDir), path)) return false;
+      if (currentTranscriptPaths.has(path) || currentWorkflowPaths.has(path)) return false;
       return ctx.changedPaths === undefined || changedPathCovers(changedScopes, path);
     })
-    .map(session => ({
-      key: normalize(session.jsonlPath),
-      sessionId: session.sessionId,
-      retractSessionIds: [session.sessionId],
-      meta: { kind: 'claude-tombstone' as const },
-    }));
+    .map(source => ({ key: normalize(source.path), sessionId: source.sessionId, missing: true as const }));
 
-  return [...transcriptUnits, ...workflowUnits, ...tombstones];
+  return [...transcriptUnits, ...workflowUnits, ...missing];
 }
 
 function toolResultText(content: unknown): string {
@@ -232,6 +231,8 @@ function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
   try { workflow = JSON.parse(readFileSync(unit.key, 'utf8')); } catch { return outCursor; }
   if (!workflow?.runId) return outCursor;
   const meta = unit.meta as ClaudeWorkflowUnitMeta;
+  // 一个 workflow 文件是独立来源，每次整份重读；只有成功解析后才替换它的旧投影。
+  yield { kind: 'source', provider: name, session_id: unit.sessionId, member: `workflow:${basename(unit.key)}`, path: unit.key, replace: true };
   const progress = Array.isArray(workflow.workflowProgress) ? workflow.workflowProgress : [];
   const agents = progress.filter((item: any) => item?.type === 'workflow_agent' && item.agentId);
   yield {
@@ -276,7 +277,6 @@ function* parseWorkflow(unit: IndexUnit): Generator<TranscriptRecord, Cursor> {
  */
 export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRecord, Cursor> {
   const kind = (unit.meta as { kind?: string } | undefined)?.kind;
-  if (kind === 'claude-tombstone') return '0:0';
   if (kind === 'workflow') {
     return yield* parseWorkflow(unit);
   }
@@ -443,6 +443,11 @@ export function* parse(unit: IndexUnit, cursor: Cursor): Generator<TranscriptRec
     });
   }
 
+  // 从第 1 行开始的解析（新文件、rewind、同路径替换）替换该文件的旧投影；增量续读只追加。
+  yield {
+    kind: 'source', provider: name, session_id: unit.sessionId, member: isSubagent ? unit.agentId ?? '' : '', path: unit.key,
+    replace: skip === 0,
+  };
   yield* records;
   return snapshotCursor(snapshot, processedLineCount);
 }

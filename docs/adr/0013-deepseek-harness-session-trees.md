@@ -40,30 +40,22 @@ the spawning tool call. The cursor is
 `maxMtime:lines:dsh-tree-v1:<sha256 of member path + snapshot>`. Every discovery
 compares each tree's current signature, not just the trees inside watcher-hinted
 directories: adding or removing one member changes the shape of a tree whose
-other directories were not touched. A tree is skipped only when its signature
-matches and its root is already indexed under the same path; deletion
-tombstones remain scoped to watcher hints or a full reconcile.
+other directories were not touched. A tree is skipped when its signature
+matches and every member's path is already declared in `sources` under this
+root; missing units remain scoped to watcher hints or a full reconcile.
 
-A session directory with no readable supported generation freezes the tree it
-belongs to, so replaying that tree cannot delete the member's last snapshot.
-Membership is taken from the blocked header when it is still readable. Trees
-whose root names the blocked session as parent are frozen too, so they are not
-published as separate roots. If the header itself is unreadable, every already
-indexed tree with a member in that project directory is frozen; trees that were
-never indexed have no snapshot to lose and are still published.
-
-Any member change fully replays the tree: the unit emits `delete-session` for
-the root, then every member. This follows ADR-0002's full-replay rule instead of
-upstream Obelisk's append fast path, which needs per-member prefix hashes,
-checkpointed parent chains and anchor state that Trajex does not otherwise
-carry. Each member is snapshotted before and after its read.
+Each member of a tree is an independent source in `sources` (`member = ''` for
+the root, `member = <child id>` for each attached child; ADR-0014). Any member
+change replays the live members of the tree, replacing only their own rows; a
+member whose directory is deleted is marked `missing` and its rows stay in the
+session (`source_status = 'partial'`), and a directory with only unsupported or
+unreadable artifacts is protected so its source stays `present` with its last
+projection intact.
 
 When a session that was indexed as its own root gains an ancestor, the tree
-that adopts it lists the old identity in `retractSessionIds`, so the retraction
-happens inside the same transaction as the re-emission. Such identities are
-never tombstoned separately, because a tombstone's cascade on `agent_id` would
-delete the rows the tree just wrote. Old identities whose path now sits in one
-of the tree's session directories are retracted the same way.
+that adopts it declares the child's path under `(parentId, childId)`. That
+declaration supersedes the old `(childId, '')` source at the same path and
+removes the old standalone session in the same transaction (ADR-0014).
 
 ## Projection
 

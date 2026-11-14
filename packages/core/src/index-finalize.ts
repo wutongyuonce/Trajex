@@ -19,11 +19,31 @@ const MESSAGE_FTS_TRIGGERS = [
   'messages_fts_au',
 ] as const;
 
-/** 批量替换消息前临时移除 FTS trigger，完成后由 schema 恢复。 */
+/** 批量替换消息前临时移除 FTS trigger，完成后由 ensureMessageFtsTriggers 恢复。 */
 export function dropMessageFtsTriggers(db: SqliteDb): void {
   for (const trigger of MESSAGE_FTS_TRIGGERS) {
     db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
   }
+}
+
+/** 恢复 messages_fts 的触发器（与 schema.sql 定义一致）。 */
+export function ensureMessageFtsTriggers(db: SqliteDb): void {
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, uuid, session_id, text)
+        VALUES (new.rowid, new.uuid, new.session_id, new.text);
+    END;
+    CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, uuid, session_id, text)
+        VALUES('delete', old.rowid, old.uuid, old.session_id, old.text);
+    END;
+    CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, uuid, session_id, text)
+        VALUES('delete', old.rowid, old.uuid, old.session_id, old.text);
+      INSERT INTO messages_fts(rowid, uuid, session_id, text)
+        VALUES (new.rowid, new.uuid, new.session_id, new.text);
+    END;
+  `);
 }
 
 /** 普通构建依赖 trigger 增量维护；首次初始化或 force 时才全量修复 FTS。 */
@@ -31,6 +51,7 @@ export function ensureFtsReady(db: SqliteDb, { force = false }: { force?: boolea
   const ready = db.prepare('SELECT jsonl_path FROM index_state WHERE jsonl_path = ?')
     .get(FTS_TRIGGERS_READY_MARKER);
   if (ready && !force) return false;
+  ensureMessageFtsTriggers(db);
   db.exec("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')");
   db.exec("INSERT INTO memories_fts(memories_fts) VALUES('rebuild')");
   db.prepare(

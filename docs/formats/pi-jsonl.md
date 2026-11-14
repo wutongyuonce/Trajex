@@ -20,8 +20,8 @@ Trajex 的 Pi provider 接收配置后的最终 session directory，不再追加
 
 Trajex 对 Pi 文件采用全量 replay：active context 依赖 durable `leaf`、分支和 compaction checkpoint，不能只从上次行号继续解析。每次 replay 先删除该 session 的旧投影，再写入完整事实，`session.countMode` 为 `total`。
 
-- 根目录暂时不可枚举时，保留上一次快照。
-- 根目录可枚举但某个 session 文件消失时，发出 tombstone，清理该文件的可再生索引数据。
+- 根目录暂时不可枚举时，保留上一次状态。
+- 根目录可枚举但某个已知 session 文件消失时，发出 `missing: true` 单元，将该来源标为 `missing`，已索引的会话与消息原样保留（ADR-0014）。
 - JSONL 中单行语法损坏时跳过该物理行并继续解析；合法 JSON 的 entry/message 结构不可信时整份 session 原子失败，保留上一次成功投影。
 
 ## 2. 树结构

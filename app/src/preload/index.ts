@@ -64,4 +64,9 @@ contextBridge.exposeInMainWorld('trajex', {
   setSetting: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
   revealPath: (p: string) => ipcRenderer.invoke('settings:revealPath', p),
   rebuildIndex: () => ipcRenderer.invoke('settings:rebuildIndex'),
+  getRetentionSummary: (olderThanDays?: number) => ipcRenderer.invoke('retention:summary', olderThanDays),
+  takeSnapshot: () => ipcRenderer.invoke('retention:snapshot'),
+  purgeMissingHistory: (olderThanDays?: number) => ipcRenderer.invoke('retention:purge', olderThanDays),
+  restoreSnapshot: (name: string) => ipcRenderer.invoke('retention:restore', name),
+  revealSnapshots: () => ipcRenderer.invoke('retention:revealSnapshots'),
 });

@@ -65,7 +65,7 @@ test('a forced CLI rebuild keeps provider version markers, so the next build doe
   try {
     const markers = db.prepare("SELECT jsonl_path FROM index_state WHERE jsonl_path LIKE '\\_\\_%canonical%' ESCAPE '\\'").all()
       .map(row => row.jsonl_path).sort();
-    assert.ok(markers.includes('__claude_canonical_transcript_v1.1__'), markers.join(','));
+    assert.ok(markers.includes('__claude_canonical_transcript_v2__'), markers.join(','));
     assert.equal(markers.length, 4, 'every built-in provider marker survives the force cleanup');
   } finally {
     db.close();

@@ -13,13 +13,13 @@ import {
 } from '../parsing.ts';
 import { cursorMatchesSnapshot, fileSnapshot, sameSnapshot, snapshotCursor } from './file-snapshot.ts';
 import type {
-  Cursor, DiscoverContext, IndexUnit, IndexedSession, MessageRecord, ProviderAdapter,
+  Cursor, DiscoverContext, IndexUnit, MessageRecord, ProviderAdapter,
   RawLookup, RawRecord, TranscriptRecord,
 } from './types.ts';
 
 export const name = 'pi';
-// v1.1：一次性重放旧投影，把消息、摘要与 session 边界时间戳规范为 UTC 毫秒形态。
-export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v1.1__';
+// v2：来源清单（ADR-0014），一次性重放旧投影以声明精确来源与路径。
+export const PI_CANONICAL_TRANSCRIPT_MARKER = '__pi_canonical_transcript_v2__';
 
 type PiEntry = Record<string, any>;
 type PiToolOccurrence = {
@@ -91,15 +91,6 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
   }
   const files = sessionFiles(sessionDir, rootEntries).map(normalize);
   const currentFiles = new Set(files);
-  const indexedByPath = new Map<string, IndexedSession[]>();
-  for (const session of ctx.indexedSessions?.() ?? []) {
-    const path = normalize(session.jsonlPath);
-    const inside = relative(normalizedSessionDir, path);
-    if (!inside || inside.startsWith('..') || isAbsolute(inside)) continue;
-    const rows = indexedByPath.get(path) ?? [];
-    rows.push(session);
-    indexedByPath.set(path, rows);
-  }
 
   const units = files.flatMap((path) => {
     if (ctx.changedPaths !== undefined && !changed.has(path) && !changedRoot) return [];
@@ -116,38 +107,27 @@ function discoverAt(sessionDir: string, ctx: DiscoverContext): IndexUnit[] {
     if (!header || header.type !== 'session' || header.version !== 3 || typeof header.id !== 'string') return [];
     const project = projectSlugFromPath(header.cwd);
     const sessionId = piSessionId(header.id, header.cwd);
-    const retractSessionIds = (indexedByPath.get(path) ?? [])
-      .map(session => session.sessionId)
-      .filter(id => id !== sessionId);
     return [{
       key: path,
       sessionId,
       ...(project ? { project } : {}),
-      ...(retractSessionIds.length ? { retractSessionIds } : {}),
       meta: { sessionId: header.id, cwd: header.cwd ?? null },
     }];
   });
 
-  // A readable Pi root gives us a complete inventory. If a previously indexed
-  // session file disappeared from that inventory, emit an empty tombstone unit
-  // so persist can retract its old projection without touching other sessions.
-  const tombstones = (ctx.indexedSessions?.() ?? [])
-    .filter(session => {
-      const path = normalize(session.jsonlPath);
+  // A readable Pi root gives us a complete inventory. A known session file that
+  // disappeared from it is reported as missing; its projection is retained (ADR-0014).
+  const missing = (ctx.knownSources?.() ?? [])
+    .filter(source => {
+      const path = normalize(source.path);
       const inside = relative(normalizedSessionDir, path);
-      const pathChanged = changed.has(path);
-      return inside && !inside.startsWith('..') && !isAbsolute(inside)
+      return source.status === 'present' && inside && !inside.startsWith('..') && !isAbsolute(inside)
         && !currentFiles.has(path)
-        && (ctx.changedPaths === undefined || changedRoot || pathChanged);
+        && (ctx.changedPaths === undefined || changedRoot || changed.has(path));
     })
-    .map(session => ({
-      key: normalize(session.jsonlPath),
-      sessionId: session.sessionId,
-      retractSessionIds: [session.sessionId],
-      meta: { kind: 'pi-tombstone' as const },
-    }));
+    .map(source => ({ key: normalize(source.path), sessionId: source.sessionId, missing: true as const }));
 
-  return [...units, ...tombstones];
+  return [...units, ...missing];
 }
 
 function piSessionId(rawId: string, cwd: unknown): string {
@@ -221,8 +201,6 @@ function findToolOccurrence(
 
 /** Full replay is required because the current Pi transcript is a tree path. */
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
-  const meta = unit.meta as { kind?: string } | undefined;
-  if (meta?.kind === 'pi-tombstone') return '0:0';
   const before = fileSnapshot(unit.key);
   const raw = readFileSync(unit.key, 'utf8');
   const after = fileSnapshot(unit.key);
@@ -465,7 +443,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
     return model;
   };
   const records: TranscriptRecord[] = [{
-    kind: 'delete-session', sessionId,
+    kind: 'source', provider: name, session_id: sessionId, member: '', path: unit.key, replace: true,
   }];
   const firstUserTitle = physicalEntries
     .map(entry => entry.type === 'message' ? physicalUserTitle(entry.message) : null)

@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { buildIndex } from '../app/src/main/indexer.ts';
+import { buildIndex, purgeMissing } from '../app/src/main/indexer.ts';
 
 const require = createRequire(import.meta.url);
 const { DatabaseSync } = require('node:sqlite');
@@ -100,6 +100,12 @@ test('app Pi replay retracts a replaced identity and a deleted readable session 
   rmSync(sessionPath);
   assert.deepEqual(buildIndex({ ...options, changedPaths: [sessionPath] }).affectedSessionIds, [newId]);
   db = new TestDatabase(dbPath);
+  assert.equal(db.prepare("SELECT source_status FROM sessions WHERE id=?").get(newId).source_status, 'missing');
+  assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages').get().c, 1, 'deleted file rows are retained until purged');
+  db.close();
+
+  assert.equal(purgeMissing({ dbPath, DatabaseImpl: TestDatabase }).sessions, 1);
+  db = new TestDatabase(dbPath);
   assert.equal(db.prepare("SELECT COUNT(*) AS c FROM sessions WHERE source='pi'").get().c, 0);
   assert.equal(db.prepare('SELECT COUNT(*) AS c FROM messages').get().c, 0);
   db.close();
@@ -189,6 +195,6 @@ test('app Pi treats an unreadable descendant directory as an authoritative delet
   }
 
   const db = new TestDatabase(dbPath);
-  assert.equal(db.prepare("SELECT COUNT(*) AS c FROM sessions WHERE source='pi'").get().c, 0);
+  assert.equal(db.prepare("SELECT source_status FROM sessions WHERE source='pi'").get().source_status, 'missing');
   db.close();
 });

@@ -102,7 +102,7 @@ test('schema migration is not skipped by a recent build marker', () => {
   assert.deepEqual(JSON.parse(result.stdout), [{ visibility: 'visible', is_sidechain: 0 }]);
 });
 
-test('force build purges sessions for deleted files and preserves memories', () => {
+test('force build retains sessions for deleted files as missing and preserves memories', () => {
   const home = makeTempDir('trajex-force-');
   const projDir = join(home, '.claude', 'projects', '-tmp-proj');
   mkdirSync(projDir, { recursive: true });
@@ -119,18 +119,18 @@ test('force build purges sessions for deleted files and preserves memories', () 
   assert.equal(db.prepare('SELECT COUNT(*) c FROM sessions').get().c, 2, 'both sessions indexed initially');
   db.close();
 
-  // Delete one transcript, then force a clean rebuild (`--build` is always force).
+  // Delete one transcript, then force a rebuild (`--build` is always force).
   rmSync(gone);
   clearBuildDebounce(home);
   assert.equal(runRuntime(['--build'], home).status, 0);
 
   db = new DatabaseSync(dbPath);
-  const sessionIds = db.prepare('SELECT id FROM sessions ORDER BY id').all().map(r => r.id);
+  const sessions = db.prepare('SELECT id, source_status FROM sessions ORDER BY id').all().map(r => [r.id, r.source_status]);
   const messageCount = db.prepare('SELECT COUNT(*) c FROM messages').get().c;
   const memoryAlive = db.prepare("SELECT COUNT(*) c FROM memories WHERE id='mem-keep' AND deleted_at IS NULL").get().c;
   db.close();
 
-  assert.deepEqual(sessionIds, ['keep'], 'stale session for the deleted file is purged');
-  assert.equal(messageCount, 1, 'only the surviving file\'s message remains');
+  assert.deepEqual(sessions, [['gone', 'missing'], ['keep', 'present']], 'deleted file is marked missing, never deleted by rebuild');
+  assert.equal(messageCount, 2, 'archived messages for the deleted file remain');
   assert.equal(memoryAlive, 1, 'the durable memory survived the force rebuild');
 });

@@ -3,33 +3,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Core 索引构建协调器。
+ * CLI 侧索引构建入口。
  *
- * 模块定位：组织一次发现 → Provider 解析 → persist → FTS 收尾的 build。它负责
- * daemon heartbeat 判断、跨进程 writer lease、事务重试和最终派生数据一致性；
- * 不理解任何具体 Provider JSONL 格式。
+ * 模块定位：在 node:sqlite 上取得写入所有权（App heartbeat 软所有权 + 跨进程 writer
+ * lease），探测索引可写，再把一次构建交给 index-build.ts 的共享流程；不理解任何具体
+ * Provider 格式。
  */
-// Passive-pull indexing orchestration for the Core package.
 import { existsSync } from 'node:fs';
-import { DB_PATH, openDb, openReadDb, openWriterLeaseDb } from './db.ts';
-import {
-  backfillUnresolvedSessionProjectPathsOnce,
-  ensureFtsReady,
-  refreshSessionProjectPaths,
-} from './index-finalize.ts';
+import { DB_PATH, TRAJEX_DIR, openDb, openReadDb, openWriterLeaseDb } from './db.ts';
+import { healWorkflowParentLinks, runProviderBuild } from './index-build.ts';
+import { refreshSessionProjectPaths } from './index-finalize.ts';
 import { inferProjectPath } from './parsing.ts';
-import {
-  assertRebuildRootsAvailable,
-  createProviderIndexPlan,
-  indexProviderPlan,
-  writeProviderIndexMarkers,
-} from './provider-indexing.ts';
+import { createBuiltinProviderRegistry } from './providers/builtins.ts';
+import { coreSchemaNeedsMigration } from './schema-migrations.ts';
+import { readSnapshotSettings, snapshotDirFor } from './snapshots.ts';
 import { nodeSqliteTransactionAdapter } from './tx.ts';
 import { acquireWriterLease, writerLockPathFor } from './writer-lease.ts';
 import { runRetryableWriteTransaction, isBeginBusyFailure, hasUnusableTransaction } from './write-coordinator.ts';
-import { createBuiltinProviderRegistry } from './providers/builtins.ts';
-import { coreSchemaNeedsMigration } from './schema-migrations.ts';
-import type { NodeSqliteDb, SqliteDb } from './sqlite-types.ts';
+import type { NodeSqliteDb } from './sqlite-types.ts';
 
 /** 单个失败 unit 的摘要：路径 + 错误消息 + 可选 trajex 诊断。 */
 interface SkippedFile {
@@ -98,37 +89,6 @@ function rethrowIfIndexWriterReadOnly(db: NodeSqliteDb, error: unknown): void {
     // 探测以其他方式失败时归因未知：保留原始错误并中止，而不是掩盖它继续执行。
     throw error;
   }
-}
-
-
-/**
- * 补齐 workflow → Workflow tool_use 的延迟关联。
- * workflow JSON 可能先于主 transcript 的 tool_result 入库；此时首次解析只能留下 null。
- * finalize 时 tool_results 已经是完整投影，因此用 run_id 做一次幂等补偿。
- */
-function healWorkflowParentLinks(db: SqliteDb): void {
-  db.prepare(`
-    UPDATE workflows
-    SET parent_tool_use_id = (
-      SELECT tr.tool_use_id
-      FROM tool_results tr
-      JOIN tool_calls tc ON tc.id = tr.tool_use_id AND tc.session_id = tr.session_id
-      WHERE tr.session_id = workflows.session_id
-        AND tc.name = 'Workflow'
-        AND instr(tr.content, workflows.run_id) > 0
-      ORDER BY tr.rowid
-      LIMIT 1
-    )
-    WHERE parent_tool_use_id IS NULL
-      AND EXISTS (
-        SELECT 1
-        FROM tool_results tr
-        JOIN tool_calls tc ON tc.id = tr.tool_use_id AND tc.session_id = tr.session_id
-        WHERE tr.session_id = workflows.session_id
-          AND tc.name = 'Workflow'
-          AND instr(tr.content, workflows.run_id) > 0
-      )
-  `).run();
 }
 
 const BUILD_DEBOUNCE_MS = 30000;
@@ -219,8 +179,12 @@ function ensureReadableSchema(): { ready: boolean; reason?: string } {
   try {
     state = inspect();
     if (state.ready || state.reason) return state;
-    const db = openDb();
-    db.close();
+    try {
+      const db = openDb();
+      db.close();
+    } catch (error) {
+      throw indexAccessFailure(error);
+    }
     return { ready: true };
   } finally {
     lease.release();
@@ -228,8 +192,8 @@ function ensureReadableSchema(): { ready: boolean; reason?: string } {
 }
 
 /**
- * 执行发现 → parse → persist → finalize 的完整索引流程。force 时只清除可再生的
- * transcript 数据，人工确认的 memories 永远保留。
+ * 执行一次 CLI 构建。force 以空 cursor 重放全部来源；任何时候都不删除历史，
+ * 已缺失的来源及人工确认的 memories 原样保留（ADR-0014）。
  */
 function buildIndex({ force = false }: { force?: boolean } = {}) {
   const ownership = inspectBuildOwnership({ force });
@@ -257,84 +221,42 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
     }
     const txDb = nodeSqliteTransactionAdapter(db);
     const skippedFiles: SkippedFile[] = [];
+    const busy = () => ({ skip: true, reason: 'database_busy', skipped: skippedFiles.length, skippedFiles });
     try {
       try {
         // 只读 SQLite 文件也能以读写模式打开：在发现/解析来源前先实际写一次，避免逐个 transcript 重试。
         probeIndexWritability(db);
       } catch (error) {
-        if (isBeginBusyFailure(error)) return { skip: true, reason: 'database_busy', skipped: 0, skippedFiles };
+        if (isBeginBusyFailure(error)) return busy();
         throw indexAccessFailure(error);
       }
-      const providerPlan = createProviderIndexPlan(db, createBuiltinProviderRegistry(), { force });
-      assertRebuildRootsAvailable(providerPlan);
+      const settings = readSnapshotSettings(TRAJEX_DIR);
+      let built;
       try {
-        if (providerPlan.fullRebuild) {
-          runRetryableWriteTransaction(txDb, () => {
-            // 系统 marker（`__` 前缀，含各 Provider 的版本 marker）不是来源进度；删掉它们会让下一次
-            // 普通 build 把刚重建的索引当作旧语义再全量重放一次。
-            db.prepare("DELETE FROM index_state WHERE substr(jsonl_path, 1, 2) != '__'").run();
-            // Clearing index_state alone re-indexes existing files but leaves rows for
-            // files that no longer exist on disk (stale sessions accumulate). A force
-            // build is a clean rebuild: drop every derived table, then re-index from the
-            // current files. `memories` is the durable, human-approved layer and is never
-            // cleared; messages_fts is repopulated by the 'rebuild' command in finalize.
-            for (const table of ['messages', 'tool_calls', 'tool_results', 'sessions', 'summaries', 'subagents', 'workflows', 'workflow_agents']) {
-              db.prepare(`DELETE FROM ${table}`).run();
-            }
-          }, { label: 'force-cleanup' });
-        }
+        built = runProviderBuild({
+          db,
+          registry: createBuiltinProviderRegistry(),
+          force,
+          // CLI 只拍变更前快照；每日快照由 App 负责，避免短命令都去 VACUUM。
+          snapshots: { dir: snapshotDirFor(DB_PATH), keep: settings.keep, daily: false },
+          runTransaction: (label, work) => runRetryableWriteTransaction(txDb, work, { label }),
+          onUnitError: (error, { provider, unit }) => {
+            // 确认是共享 writer 还是单个来源失败；初始探测之后的权限变化也必须中止本批。
+            rethrowIfIndexWriterReadOnly(db, error);
+            if (isBeginBusyFailure(error)) return 'stop';
+            if (hasUnusableTransaction(error)) throw error;
+            const detail = error as { message?: unknown; trajex?: unknown } | null;
+            const message = errorMessage(error);
+            skippedFiles.push({ path: unit.key, error: message, diagnostics: detail?.trajex });
+            process.stderr.write(`Warning: failed to index ${provider.name} unit ${unit.key}: ${message}\n`);
+            return 'skip';
+          },
+        });
       } catch (error) {
-        if (isBeginBusyFailure(error)) {
-          return { skip: true, reason: 'database_busy', skipped: skippedFiles.length, skippedFiles };
-        }
+        if (isBeginBusyFailure(error)) return busy();
         throw indexAccessFailure(error);
       }
-
-      const providerResult = indexProviderPlan({
-        db,
-        plan: providerPlan,
-        runTransaction: (label, work) => runRetryableWriteTransaction(txDb, work, { label }),
-        onPersisted: ({ unit }) => {
-          refreshSessionProjectPaths(db, new Set([
-            unit.sessionId,
-            ...(unit.retractSessionIds ?? []),
-          ]));
-        },
-        onError: (error, { provider, unit }) => {
-          // 确认是共享 writer 还是单个来源失败；初始探测之后的权限变化也必须中止本批。
-          rethrowIfIndexWriterReadOnly(db, error);
-          if (isBeginBusyFailure(error)) return 'stop';
-          if (hasUnusableTransaction(error)) throw error;
-          const detail = error as { message?: unknown; trajex?: unknown } | null;
-          const message = errorMessage(error);
-          skippedFiles.push({ path: unit.key, error: message, diagnostics: detail?.trajex });
-          process.stderr.write(`Warning: failed to index ${provider.name} unit ${unit.key}: ${message}\n`);
-          return 'skip';
-        },
-      });
-      if (providerResult.stopped) {
-        return { skip: true, reason: 'database_busy', skipped: skippedFiles.length, skippedFiles };
-      }
-      // 收尾必须是不可吞错的单一事务，否则 FTS、project_path 与 cursor 会处于不同版本。
-      try {
-        runRetryableWriteTransaction(txDb, () => {
-          if (providerPlan.fullRebuild) {
-            refreshSessionProjectPaths(db, null);
-            backfillUnresolvedSessionProjectPathsOnce(db);
-          } else {
-            backfillUnresolvedSessionProjectPathsOnce(db);
-          }
-          healWorkflowParentLinks(db);
-          ensureFtsReady(db, { force: providerPlan.fullRebuild });
-          db.prepare("INSERT OR REPLACE INTO index_state (jsonl_path, mtime, lines_processed) VALUES ('__last_build__', ?, 0)").run(Date.now());
-          writeProviderIndexMarkers(db, providerPlan, providerResult);
-        }, { label: 'finalize' });
-      } catch (error) {
-        if (isBeginBusyFailure(error)) {
-          return { skip: true, reason: 'database_busy', skipped: skippedFiles.length, skippedFiles };
-        }
-        throw indexAccessFailure(error);
-      }
+      if (!built.finalized) return busy();
       return { skip: false, skipped: skippedFiles.length, skippedFiles };
     } finally {
       db.close();
@@ -344,4 +266,11 @@ function buildIndex({ force = false }: { force?: boolean } = {}) {
   }
 }
 
-export { buildIndex, ensureReadableSchema, healWorkflowParentLinks, inferProjectPath, refreshSessionProjectPaths, shouldSkipBuild };
+export {
+  buildIndex,
+  ensureReadableSchema,
+  healWorkflowParentLinks,
+  inferProjectPath,
+  refreshSessionProjectPaths,
+  shouldSkipBuild,
+};

@@ -1066,13 +1066,12 @@ test('settings rebuild accepts skipped files without overriding newer auto-refre
   const openedDbPaths = [];
   const buildCalls = [];
   const serviceEvents = [];
-  let competingLeaseDuringBuild;
 
   class FakeDatabase {
     function() {}
     constructor(dbPath) {
       this.lockDb = dbPath.endsWith('writer.lock.sqlite') ? new DatabaseSync(dbPath) : null;
-      openedDbPaths.push(dbPath);
+      if (!this.lockDb) openedDbPaths.push(dbPath);
     }
     pragma() {}
     exec(sql) { return this.lockDb?.exec(sql); }
@@ -1125,13 +1124,7 @@ test('settings rebuild accepts skipped files without overriding newer auto-refre
             serviceEvents.push('build');
             buildCalls.push(args);
             await ipcHandlers.get('settings:set')(null, 'autoRefresh', false);
-            const competingLease = acquireWriterLease({
-              lockPath: args.writerLeasePath,
-              openDb: lockPath => new DatabaseSync(lockPath),
-            });
-            competingLeaseDuringBuild = Boolean(competingLease);
-            competingLease?.release();
-            writeFileSync(args.dbPath, 'rebuilt temp db');
+            writeFileSync(args.dbPath, 'rebuilt index in place');
             return {
               files: 2,
               affectedSessionIds: ['session-1', 'session-2'],
@@ -1153,17 +1146,13 @@ test('settings rebuild accepts skipped files without overriding newer auto-refre
     await rebuild();
 
     assert.equal(buildCalls.at(-1).claudeDir, customClaudeDir);
-    assert.equal(buildCalls.at(-1).projectsDir, join(customClaudeDir, 'projects'));
     assert.equal(buildCalls.at(-1).codexDir, customCodexDir);
-    assert.notEqual(buildCalls.at(-1).dbPath, join(home, '.trajex', 'trajex.sqlite'));
-    assert.equal(buildCalls.at(-1).preserveDbPath, join(home, '.trajex', 'trajex.sqlite'));
-    assert.equal(buildCalls.at(-1).writerLeasePath, join(home, '.trajex', 'writer.lock.sqlite'));
-    assert.equal(buildCalls.at(-1).writerLeaseMode, 'caller-held');
-    assert.equal(competingLeaseDuringBuild, false);
+    assert.equal(buildCalls.at(-1).dbPath, join(home, '.trajex', 'trajex.sqlite'));
+    assert.equal(buildCalls.at(-1).force, true);
     assert.equal(openedDbPaths.at(-1), join(home, '.trajex', 'trajex.sqlite'));
     assert.equal(
       require('node:fs').readFileSync(join(home, '.trajex', 'trajex.sqlite'), 'utf8'),
-      'rebuilt temp db',
+      'rebuilt index in place',
     );
     assert.ok(serviceEvents.indexOf('build') > serviceEvents.indexOf('stop'));
     assert.ok(serviceEvents.lastIndexOf('start') < serviceEvents.indexOf('build'));

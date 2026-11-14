@@ -51,7 +51,6 @@ interface IndexerBuildResult {
 type IndexerBuild = (args: {
   reason?: string;
   changedPaths?: string[];
-  retrySessionIds?: string[];
 }) => IndexerBuildResult | void | Promise<IndexerBuildResult | void>;
 
 interface IndexerServiceOptions {
@@ -143,7 +142,6 @@ function createIndexerService({
   let pending = false;
   let lastReason: string | null = null;
   let changedPaths = new Set<string>();
-  const deferredSessionIds = new Set<string>();
   let fullInventoryPending = false;
   let nextInventoryRetryMs = heartbeatMs;
   let idlePromise = Promise.resolve();
@@ -206,18 +204,9 @@ function createIndexerService({
     pending = false;
     const buildChangedPaths = batch.kind === 'full' ? undefined : batch.paths;
     idlePromise = (async () => {
-      const retrySessionIds = [...deferredSessionIds];
-      const result = await buildIndex({
-        reason,
-        changedPaths: buildChangedPaths,
-        ...(retrySessionIds.length ? { retrySessionIds } : {}),
-      });
+      // project_path 与单元在同一事务提交，延迟的构建只需要重试剩余单元，不必记住会话。
+      const result = await buildIndex({ reason, changedPaths: buildChangedPaths });
       promoteWatchHints(result?.watchHints);
-      if (result?.deferred) {
-        for (const sessionId of result.affectedSessionIds ?? []) deferredSessionIds.add(sessionId);
-      } else {
-        deferredSessionIds.clear();
-      }
       const inventoryIssues = result?.inventoryIssues ?? [];
       for (const issue of inventoryIssues) {
         logger.warn?.(`Trajex indexed a partial ${issue.provider} inventory at ${issue.path}: ${issue.error}`);
@@ -337,7 +326,6 @@ function createIndexerService({
     if (stopPromise) return stopPromise;
     stopped = true;
     pending = false;
-    deferredSessionIds.clear();
     clearBurstTimers();
     if (watchRetryTimer) timers.clearTimeout(watchRetryTimer);
     if (retryTimer) timers.clearTimeout(retryTimer);

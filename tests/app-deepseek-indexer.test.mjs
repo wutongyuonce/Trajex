@@ -9,7 +9,7 @@ import { appendFileSync, cpSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildIndex } from '../app/src/main/indexer.ts';
+import { buildIndex, purgeMissing } from '../app/src/main/indexer.ts';
 import { createQueryApi } from '../packages/core/src/query.ts';
 import { deepseekSessionId } from '../packages/core/src/providers/deepseek.ts';
 import { zstdDecoder } from '../packages/core/src/vendor/dsh-zstd.ts';
@@ -86,9 +86,20 @@ test('DeepSeek Harness trees index into sessions, subagents, FTS and the query A
   try {
     const api = createQueryApi(after.db);
     assert.equal(api.search('"appended after build"', { source: 'deepseek' }).length, 1);
-    assert.equal(after.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?')
-      .get(deepseekSessionId('v4-retry-resume', '/dsh-fixtures')).c, 0, 'a deleted session is retracted');
+    const deletedId = deepseekSessionId('v4-retry-resume', '/dsh-fixtures');
+    assert.equal(after.prepare('SELECT source_status FROM sessions WHERE id=?')
+      .get(deletedId).source_status, 'missing', 'a deleted session is marked missing and retained');
   } finally {
     after.close();
+  }
+  const purged = purgeMissing({ dbPath: env.dbPath, DatabaseImpl: TestDatabase });
+  assert.equal(purged.ok, true);
+  assert.equal(purged.sessions, 1);
+  const afterPurge = new TestDatabase(env.dbPath);
+  try {
+    assert.equal(afterPurge.prepare('SELECT COUNT(*) AS c FROM sessions WHERE id=?')
+      .get(deepseekSessionId('v4-retry-resume', '/dsh-fixtures')).c, 0, 'explicit purge removes the missing session');
+  } finally {
+    afterPurge.close();
   }
 });

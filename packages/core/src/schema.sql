@@ -4,9 +4,11 @@
 
 -- Trajex 统一 SQLite 数据模型。
 --
--- 此文件保存可再生 transcript 索引与人工确认的 memories。Provider 先输出
+-- 此文件保存 transcript 索引与人工确认的 memories。Provider 先输出
 -- TranscriptRecord，persist 再按本 schema 写表；FTS 虚表与 trigger 由 SQLite
 -- 从 messages/memories 自动维护，查询层使用 MATCH 而不是扫描原表。
+-- 索引是档案而非镜像（ADR-0014）：每条投影行由 sources 中的一个来源拥有，
+-- 来源消失只标记 missing，只有显式 purge 才删除。版本号见 PRAGMA user_version。
 
 -- ============================================================
 -- 1. 会话表：每次 AI 工具对话作为一个 session
@@ -21,8 +23,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   git_branch TEXT,                 -- 会话期间的 git 分支
   version TEXT,                    -- 生成该会话的 CLI 版本
   message_count INTEGER DEFAULT 0, -- 消息总数
-  jsonl_path TEXT,                 -- 来源 JSONL 文件的绝对路径
-  source TEXT DEFAULT 'claude');   -- 来源标识：claude / codex / pi
+  jsonl_path TEXT,                 -- 主来源文件的绝对路径（占位会话为空）
+  source TEXT DEFAULT 'claude',    -- 来源标识：claude / codex / pi / deepseek
+  source_status TEXT DEFAULT 'present', -- present / partial / missing，由 sources 推导
+  device_id TEXT,                  -- 本机会话为空；同步导入的会话为来源设备 ID
+  device_name TEXT);               -- 同步导入会话的设备展示名称
 
 -- ============================================================
 -- 2. 消息表：单条对话消息，是搜索和展示的核心实体
@@ -45,7 +50,8 @@ CREATE TABLE IF NOT EXISTS messages (
   cwd TEXT,                        -- 该消息发出时的工作目录
   skill TEXT,                      -- 该消息关联的 skill 名（如 "Skill" 调用）
   turn_duration_ms INTEGER,        -- 该轮次耗时（由 MessageTurnDurationRecord 填充）
-  source TEXT DEFAULT 'claude');   -- 来源标识
+  source TEXT DEFAULT 'claude',    -- 来源标识
+  source_id INTEGER);              -- 拥有该行的来源（FK -> sources.id）
 
 -- ============================================================
 -- 3. 工具调用表：AI 在执行代码、读文件等操作时的工具调用
@@ -56,7 +62,8 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   session_id TEXT,                 -- 所属会话
   name TEXT,                       -- 工具名：Read / Edit / Bash / Write 等
   input_json TEXT,                 -- 调用参数 JSON 字符串
-  file_path TEXT);                 -- 操作的目标文件路径（部分工具适用）
+  file_path TEXT,                  -- 操作的目标文件路径（部分工具适用）
+  source_id INTEGER);              -- 拥有该行的来源
 
 -- ============================================================
 -- 4. 工具结果表：对应工具调用的执行输出
@@ -67,7 +74,8 @@ CREATE TABLE IF NOT EXISTS tool_results (
   session_id TEXT,                 -- 所属会话
   content TEXT,                    -- 执行结果文本内容
   file_path TEXT,                  -- 操作的目标文件路径
-  is_error INTEGER DEFAULT 0);     -- 1 = 执行错误
+  is_error INTEGER DEFAULT 0,      -- 1 = 执行错误
+  source_id INTEGER);              -- 拥有该行的来源
 
 -- ============================================================
 -- 5. 子代理表：AI 发起的子对话/子任务
@@ -79,7 +87,8 @@ CREATE TABLE IF NOT EXISTS subagents (
   agent_type TEXT,                 -- 代理类型描述（如 "codex-auto-review"）
   description TEXT,                -- 代理任务描述
   duration_ms INTEGER,             -- 执行耗时
-  total_tokens INTEGER);           -- 消耗的总 token 数
+  total_tokens INTEGER,            -- 消耗的总 token 数
+  source_id INTEGER);              -- 拥有该行的来源（合并行归最后写入者）
 
 -- ============================================================
 -- 6. 工作流表：Task/Workflow 粒度的运行记录
@@ -96,7 +105,8 @@ CREATE TABLE IF NOT EXISTS workflows (
   duration_ms INTEGER,             -- 总耗时
   total_tokens INTEGER,            -- 总 token 数
   status TEXT,                     -- 状态（success / failure / running 等）
-  workflow_name TEXT);             -- 工作流名称
+  workflow_name TEXT,              -- 工作流名称
+  source_id INTEGER);              -- 拥有该行的来源
 
 -- ============================================================
 -- 7. 工作流代理表：工作流中每个子代理的详细阶段信息
@@ -115,14 +125,33 @@ CREATE TABLE IF NOT EXISTS workflow_agents (
   state TEXT,                      -- 状态
   duration_ms INTEGER,             -- 耗时
   tokens INTEGER,                  -- token 数
-  tool_calls INTEGER);             -- 工具调用次数
+  tool_calls INTEGER,              -- 工具调用次数
+  source_id INTEGER);              -- 拥有该行的来源（合并行归最后写入者）
 
 -- ============================================================
--- 8. 索引进度表：记录每个文件/特殊标记的索引状态
+-- 8. 来源清单：每个逻辑来源一行（ADR-0014），是“来源是否还在、拥有哪些行”的唯一权威
+--     member '' 为会话自身的来源，其余为子代理 / 子会话 id 或 workflow:<文件名>
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sources (
+  id INTEGER PRIMARY KEY,          -- 被投影行的 source_id 引用
+  provider TEXT NOT NULL,          -- 产出该来源的 Provider
+  session_id TEXT NOT NULL,        -- 所属会话
+  member TEXT NOT NULL,            -- 会话内的成员键（'' = 主来源）
+  path TEXT,                       -- 当前所在路径；迁移遗留且尚未重新声明时为空
+  status TEXT NOT NULL DEFAULT 'present', -- present / missing
+  first_seen_at INTEGER,           -- 首次读取时间（毫秒）
+  last_seen_at INTEGER,            -- 最近一次读取时间（毫秒）
+  missing_since INTEGER,           -- 被发现缺失的时间（毫秒）；present 时为空
+  device_id TEXT,                  -- 本机来源为空；同步导入的来源为设备 ID
+  device_name TEXT,                -- 同步导入来源的设备展示名称
+  UNIQUE (session_id, member));
+
+-- ============================================================
+-- 9. 索引进度表：记录每个 unit 的 cursor 与特殊标记
 --     jsonl_path 特殊值：
 --       __last_build__     → 上次构建时间（用于防抖）
 --       __app_heartbeat__  → 桌面 App 心跳时间（判断 daemon 存活）
---       __claude/__codex/__pi_canonical_transcript_v*__ → 适配器迁移标记
+--       __<provider>_canonical_transcript_v*__ → 适配器投影版本标记
 -- ============================================================
 CREATE TABLE IF NOT EXISTS index_state (
   jsonl_path TEXT PRIMARY KEY,     -- 文件路径 或 系统标记
@@ -131,7 +160,7 @@ CREATE TABLE IF NOT EXISTS index_state (
   cursor TEXT);                    -- Provider 原样 cursor；旧库为 null 时回退到 mtime:lines
 
 -- ============================================================
--- 9. 摘要表：会话摘要（来自 compact、工作流等）
+-- 10. 摘要表：会话摘要（来自 compact、工作流等）
 -- ============================================================
 CREATE TABLE IF NOT EXISTS summaries (
   id TEXT PRIMARY KEY,             -- 摘要 ID
@@ -142,10 +171,11 @@ CREATE TABLE IF NOT EXISTS summaries (
   content TEXT,                    -- 摘要文本
   visibility TEXT DEFAULT 'visible', -- 当前分支可见性
   input_tokens INTEGER,            -- 生成摘要消耗的输入 token
-  output_tokens INTEGER);          -- 生成摘要消耗的输出 token
+  output_tokens INTEGER,           -- 生成摘要消耗的输出 token
+  source_id INTEGER);              -- 拥有该行的来源
 
 -- ============================================================
--- 10. 消息全文搜索（FTS5 虚拟表，content-backed）
+-- 11. 消息全文搜索（FTS5 虚拟表，content-backed）
 --     外挂 messages 表，触发器自动同步，查询用 MATCH
 -- ============================================================
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -176,7 +206,7 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
 END;
 
 -- ============================================================
--- 11. B-Tree 索引：加速 messages 的常用查询路径
+-- 12. B-Tree 索引：加速常用查询路径与按来源替换
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_agent ON messages(agent_id);
@@ -206,9 +236,21 @@ CREATE INDEX IF NOT EXISTS idx_sa_session ON subagents(session_id);
 CREATE INDEX IF NOT EXISTS idx_wf_session ON workflows(session_id);
 CREATE INDEX IF NOT EXISTS idx_wa_run ON workflow_agents(run_id);
 CREATE INDEX IF NOT EXISTS idx_summaries_session ON summaries(session_id);
+CREATE INDEX IF NOT EXISTS idx_sources_path ON sources(path);
+CREATE INDEX IF NOT EXISTS idx_sources_missing ON sources(status, missing_since) WHERE status = 'missing';
+CREATE INDEX IF NOT EXISTS idx_messages_source_id ON messages(source_id);
+CREATE INDEX IF NOT EXISTS idx_tc_source_id ON tool_calls(source_id);
+CREATE INDEX IF NOT EXISTS idx_tr_source_id ON tool_results(source_id);
+CREATE INDEX IF NOT EXISTS idx_sa_source_id ON subagents(source_id);
+CREATE INDEX IF NOT EXISTS idx_wf_source_id ON workflows(source_id);
+CREATE INDEX IF NOT EXISTS idx_wa_source_id ON workflow_agents(source_id);
+CREATE INDEX IF NOT EXISTS idx_summaries_source_id ON summaries(source_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_source_status ON sessions(source_status) WHERE source_status != 'present';
+CREATE INDEX IF NOT EXISTS idx_sources_device ON sources(device_id) WHERE device_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_device ON sessions(device_id) WHERE device_id IS NOT NULL;
 
 -- ============================================================
--- 12. 记忆表：用户通过 attune API (remember/forget) 创建的持久记忆
+-- 13. 记忆表：用户通过 attune API (remember/forget) 创建的持久记忆
 --     不受索引重建影响，软删除（deleted_at 非空表示已删除）
 -- ============================================================
 CREATE TABLE IF NOT EXISTS memories (
@@ -225,7 +267,7 @@ CREATE TABLE IF NOT EXISTS memories (
   deleted_reason TEXT);            -- 删除原因
 
 -- ============================================================
--- 13. 记忆全文搜索（FTS5，去变音符号分词器）
+-- 14. 记忆全文搜索（FTS5，去变音符号分词器）
 --     外挂 memories 表，支持 path 和 summary 的全文检索
 -- ============================================================
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -253,7 +295,7 @@ CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
 END;
 
 -- ============================================================
--- 14. memories 表的 B-Tree 索引
+-- 15. memories 表的 B-Tree 索引
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);

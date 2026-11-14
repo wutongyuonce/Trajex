@@ -81,7 +81,7 @@ test('a failed force cleanup leaves the existing index intact', () => {
   class FailingCleanupDatabase extends TestDatabase {
     prepare(sql) {
       const statement = super.prepare(sql);
-      if (!sql.includes('DELETE FROM sessions')) return statement;
+      if (!sql.includes("DELETE FROM index_state WHERE substr(jsonl_path, 1, 2) != '__'")) return statement;
       return {
         get: (...args) => statement.get(...args),
         all: (...args) => statement.all(...args),

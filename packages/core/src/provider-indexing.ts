@@ -6,7 +6,8 @@
  * Provider 索引计划模块。
  *
  * 模块定位：将 registry 发现的 IndexUnit 排成计划，取回 Provider 私有 cursor，
- * 并在调用方提供的事务中执行 parse → persist。它不绑定具体 SQLite 驱动。
+ * 并在调用方提供的事务中执行 parse → persist，或把缺失单元记入来源清单（ADR-0014）。
+ * 它不绑定具体 SQLite 驱动。
  */
 import { statSync } from 'node:fs';
 import { persist } from './persist.ts';
@@ -15,9 +16,10 @@ import type {
   Cursor,
   IndexUnit,
   InventoryRootIssue,
+  KnownSource,
   ProviderAdapter,
-  IndexedSession,
 } from './providers/types.ts';
+import { markSourcesMissing, readKnownSources, refreshSessionSourceStatus } from './sources.ts';
 import type { SqliteDb } from './sqlite-types.ts';
 
 /** 计划中的单个执行单元：哪个 Provider 解析哪个 unit，以及从哪个 cursor 续读（null 为全量）。 */
@@ -31,23 +33,19 @@ export interface ProviderIndexItem {
 export interface ProviderIndexPlan {
   readonly items: ProviderIndexItem[];
   readonly pendingMarkers: ReadonlyMap<string, string>;
+  /** 版本标记缺失且已有来源的 Provider：这些 unit key 的 cursor 需在重放前清除。 */
   readonly replayKeys: ReadonlyMap<string, readonly string[]>;
-  /** 仅 force 为 true。缺 version marker 只让该 Provider 的 unit 用空 cursor 重放。 */
+  /** 仅 force 为 true：所有 unit 用空 cursor 重放。缺 version marker 只重放该 Provider。 */
   readonly fullRebuild: boolean;
   readonly inventoryIssues: readonly ProviderInventoryRootIssue[];
 }
 
-/** 带 Provider 身份的来源根诊断，供 build 决定是否允许破坏性清理。 */
+/** 带 Provider 身份的来源根诊断，供 build 决定是否允许全量重放。 */
 export interface ProviderInventoryRootIssue extends InventoryRootIssue {
   readonly provider: string;
 }
 
-/** 旧数据库中的 Provider session provenance，供临时库 rebuild 预检使用。 */
-export interface ProviderSessionProvenance extends IndexedSession {
-  readonly source: string;
-}
-
-/** force/canonical rebuild 的来源根预检失败；抛出前数据库尚未执行清理。 */
+/** 来源根不可用时拒绝 force 重放；抛出前数据库未被修改。 */
 export class ProviderRootUnavailableError extends Error {
   readonly issues: readonly ProviderInventoryRootIssue[];
 
@@ -77,10 +75,11 @@ export function readRecentTranscriptHints(db: SqliteDb, limit = 64): string[] {
   return hints;
 }
 
-/** 执行结果：已提交项、失败项；stopped 表示数据库忙等原因中途停止的位置。 */
+/** 执行结果：已提交项、失败项、状态变化的会话；stopped 表示数据库忙等原因中途停止的位置。 */
 export interface ProviderIndexResult {
   readonly committed: ProviderIndexItem[];
   readonly failedItems: ProviderIndexItem[];
+  readonly affectedSessionIds: ReadonlySet<string>;
   readonly stopped?: { item: ProviderIndexItem; error: unknown };
 }
 
@@ -91,67 +90,31 @@ export function storedProviderCursor(db: SqliteDb, key: string): Cursor {
   return typeof row.cursor === 'string' ? row.cursor : `${String(row.mtime)}:${String(row.lines_processed)}`;
 }
 
-/** 读取已有 session 的来源与路径，不携带 transcript 内容。 */
-export function readProviderSessionProvenance(db: SqliteDb): ProviderSessionProvenance[] {
-  return db.prepare(`
-    SELECT id, jsonl_path, COALESCE(source, 'claude') AS source
-    FROM sessions
-    WHERE jsonl_path IS NOT NULL AND jsonl_path != ''
-  `).all().map((row) => ({
-    sessionId: String(row.id),
-    jsonlPath: String(row.jsonl_path),
-    source: String(row.source),
-  }));
-}
-
 /**
- * 创建本次 build 的 IndexUnit 计划。版本标记缺失且已存在该 Provider 的旧数据时，
+ * 创建本次 build 的 IndexUnit 计划。版本标记缺失且已存在该 Provider 的旧来源时，
  * 以 null cursor 全量回放，防止旧解析语义与新 schema/逻辑混用。
  */
 export function createProviderIndexPlan(
   db: SqliteDb,
   registry: ProviderRegistry,
-  {
-    force = false,
-    changedPaths,
-    priorSessions,
-  }: {
-    force?: boolean;
-    changedPaths?: string[];
-    priorSessions?: readonly ProviderSessionProvenance[];
-  } = {},
+  { force = false, changedPaths }: { force?: boolean; changedPaths?: string[] } = {},
 ): ProviderIndexPlan {
   const items: ProviderIndexItem[] = [];
   const pendingMarkers = new Map<string, string>();
   const replayKeys = new Map<string, readonly string[]>();
   const inventoryIssues: ProviderInventoryRootIssue[] = [];
-  const providers = registry.list();
-  const provenance = priorSessions ?? readProviderSessionProvenance(db);
-  const markerMissing = new Map<string, boolean>();
-  for (const provider of providers) {
+  for (const provider of registry.list()) {
+    const known: readonly KnownSource[] = readKnownSources(db, provider.name);
     const marker = provider.indexVersionMarker;
-    const missing = marker !== undefined && !db.prepare(
-      'SELECT jsonl_path FROM index_state WHERE jsonl_path = ?',
-    ).get(marker);
-    markerMissing.set(provider.name, missing);
-    if (missing) pendingMarkers.set(provider.name, marker);
-  }
-  const fullRebuild = force;
-  for (const provider of providers) {
-    const providerSessions = provenance
-      .filter(session => session.source === provider.name)
-      .map(({ sessionId, jsonlPath }) => ({ sessionId, jsonlPath }));
-    const indexedSessions = (): readonly IndexedSession[] => providerSessions;
-    const missingMarker = markerMissing.get(provider.name) === true && providerSessions.length > 0;
-    const fullReindex = force || missingMarker;
-    if (missingMarker) {
-      replayKeys.set(provider.name, [
-        ...new Set(providerSessions.map(session => session.jsonlPath)),
-      ]);
-    }
+    const markerMissing = marker !== undefined
+      && !db.prepare('SELECT jsonl_path FROM index_state WHERE jsonl_path = ?').get(marker);
+    if (markerMissing) pendingMarkers.set(provider.name, marker);
+    const replay = markerMissing && known.length > 0;
+    const fullReindex = force || replay;
+    if (replay) replayKeys.set(provider.name, [...new Set(known.map(source => source.path))]);
     const reportIssue = (issue: InventoryRootIssue) => {
-      // 没有旧快照的内建 Provider 是可选来源，不阻断 force rebuild。
-      if (indexedSessions().length === 0) return;
+      // 没有已知来源的内建 Provider 是可选来源，不阻断 force 重放。
+      if (known.length === 0) return;
       inventoryIssues.push({ provider: provider.name, ...issue });
     };
     let units: IndexUnit[];
@@ -159,7 +122,7 @@ export function createProviderIndexPlan(
       units = provider.discover({
         lastCursor: fullReindex ? () => null : (key) => storedProviderCursor(db, key),
         changedPaths: fullReindex ? undefined : changedPaths,
-        indexedSessions,
+        knownSources: () => known,
         reportUnavailableRoot: reportIssue,
       });
     } catch (error) {
@@ -169,32 +132,33 @@ export function createProviderIndexPlan(
       reportIssue({ path: provider.descriptor.defaultRoot, error: message });
       units = [];
     }
-    // tombstone 以自身身份为撤回目标。同一轮里另一个单元重新发布了这个身份（文件移动、
-    // 归档），来源并未消失，并且 tombstone 排在后面会删掉刚写入的投影。
-    const isTombstone = (unit: IndexUnit) => unit.retractSessionIds?.includes(unit.sessionId) === true;
-    const republished = new Set(units.filter(unit => !isTombstone(unit)).map(unit => unit.sessionId));
-    units = units.filter(unit => !isTombstone(unit) || !republished.has(unit.sessionId));
-    for (const unit of units) {
+    // 缺失单元排在最后：同一轮里移动到新路径的来源先被重新声明，之后旧路径上已无该来源。
+    for (const unit of [...units.filter(unit => !unit.missing), ...units.filter(unit => unit.missing)]) {
       items.push({
         provider,
         unit,
-        cursor: fullReindex ? null : storedProviderCursor(db, unit.key),
+        cursor: fullReindex || unit.missing ? null : storedProviderCursor(db, unit.key),
       });
     }
   }
-  return { items, pendingMarkers, replayKeys, fullRebuild, inventoryIssues };
+  return { items, pendingMarkers, replayKeys, fullRebuild: force, inventoryIssues };
 }
 
-/** 任何全量清理都必须在写入前通过现有 Provider 来源根预检。 */
+/** force 重放要求每个已有来源的 Provider 来源根都可读。 */
 export function assertRebuildRootsAvailable(plan: ProviderIndexPlan): void {
   if (plan.fullRebuild && plan.inventoryIssues.length > 0) {
     throw new ProviderRootUnavailableError(plan.inventoryIssues);
   }
 }
 
+/** 计划是否会重写已有投影（force 或版本升级重放），供调用方决定是否先拍快照。 */
+export function planRewritesExistingProjections(plan: ProviderIndexPlan): boolean {
+  return plan.fullRebuild || plan.replayKeys.size > 0;
+}
+
 /**
- * 在调用方给定的事务中逐 unit 执行 provider.parse() → persist()。坏文件可跳过，
- * 数据库忙则通过 onError 通知上层停止，避免把 SQLite binding 细节泄漏进 Provider。
+ * 在调用方给定的事务中逐 unit 执行：普通单元 parse → persist，缺失单元只更新来源清单。
+ * 坏文件可跳过，数据库忙则通过 onError 通知上层停止，避免把 SQLite binding 细节泄漏进 Provider。
  */
 export function indexProviderPlan({
   db,
@@ -203,22 +167,28 @@ export function indexProviderPlan({
   onPersisted = () => {},
   onCommitted = () => {},
   onError,
+  now = Date.now,
 }: {
   db: SqliteDb;
   plan: ProviderIndexPlan;
   runTransaction: <T>(label: string, work: () => T) => T;
-  /** persist 成功后、同一事务提交前运行派生数据收尾。 */
-  onPersisted?: (item: ProviderIndexItem, cursor: Cursor) => void;
-  onCommitted?: (item: ProviderIndexItem, cursor: Cursor) => void;
+  /** 写入成功后、同一事务提交前运行派生数据收尾；sessionIds 为本单元影响的会话。 */
+  onPersisted?: (item: ProviderIndexItem, sessionIds: ReadonlySet<string>) => void;
+  onCommitted?: (item: ProviderIndexItem, cursor: Cursor, sessionIds: ReadonlySet<string>) => void;
   onError: (error: unknown, item: ProviderIndexItem) => 'skip' | 'stop';
+  now?: () => number;
 }): ProviderIndexResult {
   const committed: ProviderIndexItem[] = [];
   const failedItems: ProviderIndexItem[] = [];
+  const failedSessionIds = new Set<string>();
+  const affectedSessionIds = new Set<string>();
   const blocked = new Set(plan.inventoryIssues.map(issue => issue.provider));
   let replayScheduleCommitted = plan.pendingMarkers.size === 0 && plan.replayKeys.size === 0;
   for (const item of plan.items) {
+    // 同一会话的新路径在本轮解析失败时，不执行旧路径的 missing 单元，避免误标 missing。
+    if (item.unit.missing && item.unit.sessionId && failedSessionIds.has(item.unit.sessionId)) continue;
     try {
-      const cursor = runTransaction(`provider:${item.provider.name}:${item.unit.key}`, () => {
+      const { cursor, sessionIds } = runTransaction(`provider:${item.provider.name}:${item.unit.key}`, () => {
         // Commit the replay schedule with its first completed unit. After an
         // interruption, newly written cursors identify exactly what can resume.
         if (!replayScheduleCommitted) {
@@ -235,21 +205,42 @@ export function indexProviderPlan({
           for (const key of keysToReplay) clear.run(key);
           writePendingMarkers(db, plan);
         }
-        const nextCursor = persist(db, item.unit, item.provider.parse(item.unit, item.cursor));
-        onPersisted(item, nextCursor);
-        return nextCursor;
+        let result: { cursor: Cursor; sessionIds: ReadonlySet<string> };
+        if (item.unit.missing) {
+          result = markMissing(db, item.provider.name, item.unit.key, now());
+        } else {
+          let persistedSessions: ReadonlySet<string> = new Set([item.unit.sessionId]);
+          const nextCursor = persist(db, item.unit, item.provider.parse(item.unit, item.cursor), {
+            provider: item.provider.name,
+            now: now(),
+            onSessionIds: (ids) => { persistedSessions = ids; },
+          });
+          result = { cursor: nextCursor, sessionIds: persistedSessions };
+        }
+        onPersisted(item, result.sessionIds);
+        return result;
       });
       replayScheduleCommitted = true;
       committed.push(item);
-      onCommitted(item, cursor);
+      for (const sessionId of sessionIds) affectedSessionIds.add(sessionId);
+      onCommitted(item, cursor, sessionIds);
     } catch (error) {
       failedItems.push(item);
+      if (!item.unit.missing && item.unit.sessionId) failedSessionIds.add(item.unit.sessionId);
       if (onError(error, item) === 'stop') {
-        return { committed, failedItems, stopped: { item, error } };
+        return { committed, failedItems, affectedSessionIds, stopped: { item, error } };
       }
     }
   }
-  return { committed, failedItems };
+  return { committed, failedItems, affectedSessionIds };
+}
+
+/** 缺失单元：路径上的来源标记 missing，丢弃它的 cursor；不删除任何投影。 */
+function markMissing(db: SqliteDb, provider: string, path: string, now: number) {
+  const sessionIds = new Set(markSourcesMissing(db, provider, path, now));
+  refreshSessionSourceStatus(db, sessionIds);
+  db.prepare('DELETE FROM index_state WHERE jsonl_path = ?').run(path);
+  return { cursor: null, sessionIds };
 }
 
 /** Write every pending version marker, so the first-unit transaction and finalize share one marker row shape. */
@@ -266,8 +257,8 @@ function writePendingMarkers(db: SqliteDb, plan: ProviderIndexPlan): void {
 }
 
 /**
- * 计划完整跑完才写 version marker。单个坏文件 skip 不挡标记；
- * 中途 stop（数据库忙 / 连接不可用）或该 Provider 来源根不可用时不写，
+ * 计划完整跑完才写 version marker。单个坏文件 skip 不挡标记，但它的 cursor 被清除以便
+ * 下次以新语义重试；中途 stop（数据库忙 / 连接不可用）或该 Provider 来源根不可用时不写，
  * 以免把未完成的投影升级宣布为完成。
  */
 export function writeProviderIndexMarkers(

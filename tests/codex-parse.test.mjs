@@ -53,8 +53,14 @@ test('codex parse() yields a deduped, tool-aware record stream with a total sess
   const { values } = drain(parse({ key: path, sessionId: '' }, null));
   const byKind = k => values.filter(r => r.kind === k);
 
-  assert.equal(values[0].kind, 'delete-session', 'root full replay starts by clearing its old projection');
-  assert.equal(values[0].sessionId, `codex:${META.id}`);
+  assert.deepEqual(values[0], {
+    kind: 'source',
+    provider: 'codex',
+    session_id: `codex:${META.id}`,
+    member: '',
+    path,
+    replace: true,
+  }, 'root full replay starts by declaring and replacing its source');
 
   // Four messages: user, assistant text, assistant tool_use, tool result user.
   // The duplicate
@@ -286,7 +292,7 @@ test('codex provider discovers, watches, and reads archived sessions', () => {
   assert.match(raw.text, /archived Codex sentinel/);
 });
 
-test('codex discovery emits a tombstone for a deleted indexed rollout', () => {
+test('codex discovery emits a missing unit for a deleted known rollout', () => {
   const root = makeTempDir('trajex-codex-retract-');
   const sessionsDir = join(root, 'sessions', '2026', '06', '10');
   const path = join(sessionsDir, 'rollout-deleted.jsonl');
@@ -296,14 +302,14 @@ test('codex discovery emits a tombstone for a deleted indexed rollout', () => {
   const [indexed] = provider.discover({ lastCursor: () => null });
   rmSync(path);
 
-  const [tombstone] = provider.discover({
+  const [missing] = provider.discover({
     lastCursor: () => null,
     changedPaths: [path],
-    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'codex' }],
+    knownSources: () => [{ path, sessionId: indexed.sessionId, member: '', status: 'present' }],
   });
-  assert.equal(tombstone.meta.kind, 'codex-tombstone');
-  assert.equal(tombstone.sessionId, indexed.sessionId);
-  assert.deepEqual(tombstone.retractSessionIds, [indexed.sessionId]);
+  assert.equal(missing.missing, true);
+  assert.equal(missing.key, path);
+  assert.equal(missing.sessionId, indexed.sessionId);
 });
 
 test('codex discovery keeps the last snapshot when its sessions root is missing', () => {
@@ -319,7 +325,7 @@ test('codex discovery keeps the last snapshot when its sessions root is missing'
   assert.deepEqual(provider.discover({
     lastCursor: () => null,
     changedPaths: [path],
-    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'codex' }],
+    knownSources: () => [{ path, sessionId: indexed.sessionId, member: '', status: 'present' }],
   }), []);
 });
 
@@ -345,9 +351,10 @@ test('archiving a rollout moves its session instead of tombstoning the new proje
 
   const db = new DatabaseSync(':memory:');
   db.exec(readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8'));
-  db.prepare("INSERT INTO sessions (id, jsonl_path, source) VALUES (?, ?, 'codex')").run(indexed.sessionId, live);
+  db.prepare("INSERT INTO sources (provider, session_id, member, path, status) VALUES ('codex', ?, '', ?, 'present')")
+    .run(indexed.sessionId, live);
   const plan = createProviderIndexPlan(db, createProviderRegistry([provider]), { changedPaths: [live, archived] });
-  assert.deepEqual(plan.items.map(item => item.unit.key), [archived]);
+  assert.deepEqual(plan.items.map(item => [item.unit.key, Boolean(item.unit.missing)]), [[archived, false]]);
   db.close();
 });
 
@@ -363,7 +370,7 @@ test('codex keeps archived snapshots when an indexed archived_sessions root disa
   const issues = [];
   assert.deepEqual(provider.discover({
     lastCursor: () => null,
-    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: archived, source: 'codex' }],
+    knownSources: () => [{ path: archived, sessionId: indexed.sessionId, member: '', status: 'present' }],
     reportUnavailableRoot: issue => issues.push(issue),
   }), []);
   assert.equal(issues.length, 1);
@@ -399,10 +406,11 @@ function codexHome() {
 function planKeys(provider, indexed, changedPaths) {
   const db = new DatabaseSync(':memory:');
   db.exec(readFileSync(new URL('../packages/core/src/schema.sql', import.meta.url), 'utf8'));
-  db.prepare("INSERT INTO sessions (id, jsonl_path, source) VALUES (?, ?, 'codex')").run(indexed.sessionId, indexed.key);
+  db.prepare("INSERT INTO sources (provider, session_id, member, path, status) VALUES ('codex', ?, '', ?, 'present')")
+    .run(indexed.sessionId, indexed.key);
   const plan = createProviderIndexPlan(db, createProviderRegistry([provider]), changedPaths ? { changedPaths } : {});
   db.close();
-  return plan.items.map(item => [item.unit.key, item.unit.meta?.kind ?? 'rollout']);
+  return plan.items.filter(item => !item.unit.missing).map(item => [item.unit.key, item.unit.meta?.kind ?? 'rollout']);
 }
 
 test('compressed rollouts are discovered, parsed and raw-read like plain ones', skipWithoutZstd, () => {
@@ -413,7 +421,11 @@ test('compressed rollouts are discovered, parsed and raw-read like plain ones', 
   const [unit] = provider.discover({ lastCursor: () => null });
   assert.equal(unit.key, zst);
   const { values, ret } = drain(parse(unit, null));
-  const project = records => records.map(record => (record.kind === 'session' ? { ...record, jsonl_path: null } : record));
+  const project = records => records.map(record => (
+    record.kind === 'session' ? { ...record, jsonl_path: null }
+      : record.kind === 'source' ? { ...record, path: null }
+        : record
+  ));
   assert.deepEqual(project(values), project(expected), 'the compressed rollout projects exactly like the plain one');
   assert.deepEqual(provider.discover({ lastCursor: () => ret }), [], 'an unchanged compressed rollout is skipped by its cursor');
   const answer = values.find(record => record.kind === 'message' && record.text === 'compressed answer');

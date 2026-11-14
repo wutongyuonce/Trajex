@@ -28,12 +28,12 @@ import { filePath, projectSlugFromPath, trunc, truncJson, truncToolResult } from
 import { decodeZstdFrames, scanZstdFrames, zstdDecoder } from '../vendor/dsh-zstd.ts';
 import { fileSnapshot, sameSnapshot, type FileSnapshot } from './file-snapshot.ts';
 import type {
-  Cursor, DiscoverContext, IndexUnit, IndexedSession, MessageRecord, MessageVisibility, ProviderAdapter,
+  Cursor, DiscoverContext, IndexUnit, MessageRecord, MessageVisibility, ProviderAdapter,
   RawLookup, RawRecord, TranscriptRecord,
 } from './types.ts';
 
 export const name = 'deepseek';
-export const DEEPSEEK_CANONICAL_TRANSCRIPT_MARKER = '__deepseek_canonical_transcript_v1__';
+export const DEEPSEEK_CANONICAL_TRANSCRIPT_MARKER = '__deepseek_canonical_transcript_v2__';
 
 /** DSH 规范 artifact 文件名；`session.v0.*`、`session.lock`、`*.tmp` 都不匹配。 */
 const SESSION_FILE_RE = /^session(?:\.v([1-9][0-9]*))?\.jsonl(\.zstd)?$/;
@@ -76,9 +76,6 @@ interface TreeMeta {
   members: MemberMeta[];
 }
 
-interface TombstoneMeta {
-  kind: 'deepseek-tombstone';
-}
 
 interface DshEvent {
   seq: number;
@@ -175,15 +172,15 @@ function validHeader(value: unknown, artifact: Artifact): Json | null {
   return version === artifact.version ? header : null;
 }
 
-/** 按文件快照缓存 header 行的解析结果（未校验版本）。 */
+/** 按文件快照缓存可索引的 header（版本已校验）。 */
 const headerCache = new Map<string, { signature: string; header: Json | null }>();
 
 function snapshotSignature(snapshot: FileSnapshot): string {
   return `${snapshot.mtimeMs}:${snapshot.size}:${snapshot.ctimeMs}:${snapshot.ino}`;
 }
 
-/** 读取 artifact 的 session header（不论版本是否受支持）；同一文件快照只解析一次。 */
-function peekHeader(artifact: Artifact): Json | null {
+/** 可索引的 header：版本必须与文件名 generation 一致；同一文件快照只解析一次。不可读或未完成时为 null。 */
+function cachedHeader(artifact: Artifact): Json | null {
   let snapshot: FileSnapshot;
   try { snapshot = fileSnapshot(artifact.path); } catch { return null; }
   const signature = snapshotSignature(snapshot);
@@ -192,17 +189,12 @@ function peekHeader(artifact: Artifact): Json | null {
   let header: Json | null = null;
   try {
     const line = readHeaderLine(artifact, snapshot.size);
-    if (line !== null) header = sessionHeader(JSON.parse(line));
+    if (line !== null) header = validHeader(JSON.parse(line), artifact);
   } catch {
     header = null;
   }
   headerCache.set(artifact.path, { signature, header });
   return header;
-}
-
-/** 可索引的 header：版本必须与文件名 generation 一致。不可读或未完成时返回 null。 */
-function cachedHeader(artifact: Artifact): Json | null {
-  return validHeader(peekHeader(artifact), artifact);
 }
 
 /**
@@ -278,18 +270,13 @@ function inside(root: string, path: string): boolean {
   return Boolean(rel) && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-/** 有规范 artifact 却没有可读的受支持 generation 的会话目录；header 仍可读时用于判断归属。 */
-interface BlockedSession {
-  sessionDir: string;
-  projectDir: string;
-  header: Json | null;
-}
-
-/** 列出来源根下所有可用会话；有规范 artifact 但都不可用的目录记入 protectedDirs / blocked。 */
+/**
+ * 列出来源根下所有可用会话。有规范 artifact 但没有可读的受支持 generation 的目录记入
+ * protectedDirs：其中的已知来源既不重放也不标记缺失，旧投影原样保留。
+ */
 function inventory(root: string, rootEntries: readonly Dirent[]) {
   const sessions: DiscoveredSession[] = [];
   const protectedDirs = new Set<string>();
-  const blocked: BlockedSession[] = [];
   const seen = new Set<string>();
   const seenArtifacts = new Set<string>();
   for (const project of listDirs(root, rootEntries)) {
@@ -311,11 +298,7 @@ function inventory(root: string, rootEntries: readonly Dirent[]) {
         break;
       }
       if (found === null) {
-        if (artifacts.length > 0) {
-          protectedDirs.add(sessionDir);
-          const header = artifacts.map(peekHeader).find(value => value !== null) ?? null;
-          blocked.push({ sessionDir, projectDir: normalize(projectDir), header });
-        }
+        if (artifacts.length > 0) protectedDirs.add(sessionDir);
         continue;
       }
       // 同一作用域身份的副本只保留路径序最靠前的一份。
@@ -328,34 +311,27 @@ function inventory(root: string, rootEntries: readonly Dirent[]) {
   for (const path of headerCache.keys()) {
     if (inside(root, path) && !seenArtifacts.has(path)) headerCache.delete(path);
   }
-  return {
-    sessions: sessions.sort((a, b) => a.artifact.path.localeCompare(b.artifact.path)),
-    protectedDirs,
-    blocked,
-  };
+  return { sessions: sessions.sort((a, b) => a.artifact.path.localeCompare(b.artifact.path)), protectedDirs };
 }
 
-/** 沿 `parentSession` 在同一项目作用域内找到最上层仍存在的祖先；防环。没有可用祖先时返回 null。 */
-function ancestorRoot(
-  byKey: ReadonlyMap<string, DiscoveredSession>, scope: string, parentId: unknown, start?: DiscoveredSession,
-): DiscoveredSession | null {
-  let root: DiscoveredSession | null = start ?? null;
-  let nextParent = parentId;
-  const visited = new Set<string>(start ? [start.memberId] : []);
+/** 沿 `parentSession` 在同一项目作用域内找到最上层仍存在的祖先；防环。 */
+function ancestorRoot(byKey: ReadonlyMap<string, DiscoveredSession>, start: DiscoveredSession): DiscoveredSession {
+  let root = start;
+  const visited = new Set<string>([start.memberId]);
   for (;;) {
-    if (typeof nextParent !== 'string' || !nextParent) return root;
-    const parent = byKey.get(`${scope}\0${nextParent}`);
+    const parentId = root.header.parentSession;
+    if (typeof parentId !== 'string' || !parentId) return root;
+    const parent = byKey.get(`${start.scope}\0${parentId}`);
     if (!parent || visited.has(parent.memberId)) return root;
     visited.add(parent.memberId);
     root = parent;
-    nextParent = parent.header.parentSession;
   }
 }
 
 function groupTrees(sessions: readonly DiscoveredSession[], byKey: ReadonlyMap<string, DiscoveredSession>): DiscoveredSession[][] {
   const trees = new Map<string, DiscoveredSession[]>();
   for (const session of sessions) {
-    const root = ancestorRoot(byKey, session.scope, session.header.parentSession, session)!;
+    const root = ancestorRoot(byKey, session);
     const members = trees.get(root.memberId) ?? [];
     members.push(session);
     trees.set(root.memberId, members);
@@ -402,52 +378,20 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
     path === sessionDir || inside(sessionDir, path) || inside(path, sessionDir)
   ));
 
-  const { sessions, protectedDirs, blocked } = inventory(normalizedRoot, rootEntries);
-  const indexed = (ctx.indexedSessions?.() ?? []).filter(session => inside(normalizedRoot, normalize(session.jsonlPath)));
-  const indexedById = new Map<string, IndexedSession[]>();
-  const indexedByDir = new Map<string, IndexedSession[]>();
-  for (const session of indexed) {
-    indexedById.set(session.sessionId, [...(indexedById.get(session.sessionId) ?? []), session]);
-    const dir = dirname(normalize(session.jsonlPath));
-    indexedByDir.set(dir, [...(indexedByDir.get(dir) ?? []), session]);
-  }
+  const { sessions, protectedDirs } = inventory(normalizedRoot, rootEntries);
+  const known = (ctx.knownSources?.() ?? []).filter(source => inside(normalizedRoot, normalize(source.path)));
+  const knownByPath = new Map(known.map(source => [normalize(source.path), source]));
   const byKey = new Map(sessions.map(session => [`${session.scope}\0${session.rawId}`, session]));
-
-  // 受保护的会话目录不能参与重放，但它可能属于某棵树：重放那棵树会把它上次的快照一并删除。
-  // header 仍可读时冻结它所属的树；header 完全不可读时无法判断归属，冻结同项目目录下
-  // 已有快照的树（尚未索引的树没有可丢失的证据）。以受保护会话为父的树同样冻结，
-  // 否则子会话会被重复发布为独立根。
-  const frozenRoots = new Set<string>();
-  const frozenProjects = new Set<string>();
-  const blockedKeys = new Set<string>();
-  for (const entry of blocked) {
-    if (entry.header === null) { frozenProjects.add(entry.projectDir); continue; }
-    const scope = deepseekProjectScope(entry.header.cwd);
-    blockedKeys.add(`${scope}\0${entry.header.id}`);
-    const owner = ancestorRoot(byKey, scope, entry.header.parentSession);
-    if (owner) frozenRoots.add(owner.memberId);
-  }
-
-  const liveRootIds = new Set<string>();
-  const memberIds = new Set(sessions.map(session => session.memberId));
-  const retracted = new Set<string>();
+  const livePaths = new Set(sessions.map(session => session.artifact.path));
+  const liveDirs = new Set(sessions.map(session => session.sessionDir));
   const units: IndexUnit[] = [];
 
+  // 每个成员是独立来源（ADR-0014）：重放一棵树只替换仍可读成员的投影，受保护或已缺失的
+  // 成员保留各自的旧行，因此不再需要冻结整棵树。成员换了归属（例如子会话被父树收编）
+  // 由 persist 在同一路径上取代旧来源完成。
   for (const members of groupTrees(sessions, byKey)) {
     const rootSession = members[0]!;
-    liveRootIds.add(rootSession.memberId);
-    if (frozenRoots.has(rootSession.memberId)
-      || blockedKeys.has(`${rootSession.scope}\0${rootSession.header.parentSession}`)
-      || (indexedById.has(rootSession.memberId) && members.some(member => frozenProjects.has(dirname(member.sessionDir))))) continue;
     const key = rootSession.artifact.path;
-    // 这棵树现在拥有的旧身份：曾作为独立根索引的成员，或同目录下已被替换的旧 session。
-    const retractSessionIds = new Set<string>();
-    for (const member of members) {
-      for (const session of [...(indexedById.get(member.memberId) ?? []), ...(indexedByDir.get(member.sessionDir) ?? [])]) {
-        if (session.sessionId !== rootSession.memberId) retractSessionIds.add(session.sessionId);
-      }
-    }
-
     let snapshots: Array<{ path: string; snapshot: FileSnapshot }>;
     try {
       snapshots = members.map(member => ({ path: member.artifact.path, snapshot: fileSnapshot(member.artifact.path) }));
@@ -456,18 +400,18 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
       continue;
     }
     // 每轮都按成员快照签名判断，而不是只看 watcher 提示的目录：删除或新增一个成员会改变
-    // 其他成员所在树的形状。根身份尚未以自身路径索引时也必须重放。
-    const indexedRoot = indexedById.get(rootSession.memberId) ?? [];
-    const projectedHere = indexedRoot.some(session => normalize(session.jsonlPath) === key);
-    if (retractSessionIds.size === 0 && projectedHere
-      && cursorSignature(ctx.lastCursor(key)) === treeSignature(snapshots)) continue;
-    for (const id of retractSessionIds) retracted.add(id);
+    // 其他成员所在树的形状。任一成员的当前路径尚未以这个身份登记时也必须重放。
+    const declared = members.every((member) => {
+      const source = knownByPath.get(member.artifact.path);
+      return source !== undefined && source.status === 'present' && source.sessionId === rootSession.memberId
+        && source.member === (member === rootSession ? '' : member.memberId);
+    });
+    if (declared && cursorSignature(ctx.lastCursor(key)) === treeSignature(snapshots)) continue;
     const project = projectSlugFromPath(rootSession.header.cwd);
     units.push({
       key,
       sessionId: rootSession.memberId,
       ...(project ? { project } : {}),
-      ...(retractSessionIds.size ? { retractSessionIds: [...retractSessionIds] } : {}),
       meta: {
         kind: 'deepseek-tree',
         members: members.map(member => ({
@@ -482,25 +426,21 @@ function discoverAt(root: string, ctx: DiscoverContext): IndexUnit[] {
     });
   }
 
-  // 根层可读时 inventory 是权威的：已索引但不再存在的身份生成 tombstone。仍有规范
-  // artifact 却暂不可读/格式未知的目录受保护，保留上次快照。
-  const tombstones = indexed
-    .filter(session => {
-      const path = normalize(session.jsonlPath);
-      return !liveRootIds.has(session.sessionId)
-        && !memberIds.has(session.sessionId)
-        && !retracted.has(session.sessionId)
+  // 根层可读时 inventory 是权威的：已知但不再存在的成员报告为缺失。仍有规范 artifact
+  // 却暂不可读/格式未知的目录受保护，不改变状态。generation 升级后旧文件仍在磁盘上，
+  // 新 generation 以同一身份声明时会把来源移过去。
+  const missing = known
+    .filter(source => {
+      const path = normalize(source.path);
+      return source.status === 'present'
+        && !livePaths.has(path)
+        && !liveDirs.has(dirname(path))
         && !protectedDirs.has(dirname(path))
         && touched(dirname(path));
     })
-    .map(session => ({
-      key: normalize(session.jsonlPath),
-      sessionId: session.sessionId,
-      retractSessionIds: [session.sessionId],
-      meta: { kind: 'deepseek-tombstone' } satisfies TombstoneMeta,
-    }));
+    .map(source => ({ key: normalize(source.path), sessionId: source.sessionId, missing: true as const }));
 
-  return [...units, ...tombstones];
+  return [...units, ...missing];
 }
 
 // ──────────────────────────────────────────────
@@ -614,13 +554,15 @@ function inheritedCut(header: Json, version: number, events: readonly DshEvent[]
 }
 
 function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
-  const meta = unit.meta as TreeMeta | TombstoneMeta | undefined;
-  if (meta?.kind === 'deepseek-tombstone') return '0:0';
+  const meta = unit.meta as TreeMeta | undefined;
   if (meta?.kind !== 'deepseek-tree') throw new Error(`Unknown DeepSeek Harness unit: ${unit.key}`);
 
   const sessionId = unit.sessionId;
-  const records: TranscriptRecord[] = [{ kind: 'delete-session', sessionId }];
-  const messages: MessageRecord[] = [];
+  // 每个成员是一个来源（ADR-0014）：先完整读完全部成员（读取失败则整单元不写），再按成员
+  // 依次产出 `source` 与它拥有的记录；子代理记录属于各自的子会话来源，session 行属于根。
+  const batches: Array<{ member: string; path: string; records: TranscriptRecord[] }> = [];
+  let records: TranscriptRecord[] = [];
+  let messages: MessageRecord[] = [];
   const emitted = new Set<string>();
   const snapshots: Array<{ path: string; snapshot: FileSnapshot }> = [];
   const subagentParents = new Map<string, string>();
@@ -642,6 +584,8 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
     }
     snapshots.push({ path: member.path, snapshot });
     totalLines += lines;
+    records = [];
+    messages = [];
     const agentId = isRoot ? null : member.memberId;
     const cwd = typeof header.cwd === 'string' ? header.cwd : null;
     const version = member.version;
@@ -870,14 +814,17 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
     }
 
     if (!isRoot) subagents.push({ agentId: member.memberId, descriptor, startedAt: header.createdAt, lastTime });
+    // 消息先于工具调用/结果写入，与锁定的 tool_use 锚点顺序一致。
+    batches.push({ member: isRoot ? '' : member.memberId, path: member.path, records: [...messages, ...records] });
   }
 
+  // 子代理记录需要全部成员读完后才知道发起它的父调用，归入各自子会话的批次。
   for (const child of subagents) {
     const descriptor = child.descriptor ?? {};
     const agentType = [descriptor.agentProvider, descriptor.agentModel, descriptor.provider]
       .find(value => typeof value === 'string' && value) ?? null;
     const started = typeof child.startedAt === 'number' ? child.startedAt : null;
-    records.push({
+    batches.find(batch => batch.member === child.agentId)!.records.push({
       kind: 'subagent', agent_id: child.agentId, session_id: sessionId,
       parent_tool_use_id: subagentParents.get(child.agentId) ?? null,
       agent_type: agentType,
@@ -888,15 +835,17 @@ function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, C
   }
 
   const rootHeader = rootMember.header;
-  records.push({
+  batches[0]!.records.push({
     kind: 'session', id: sessionId, title: title ?? fallbackTitle,
     project: projectSlugFromPath(typeof rootHeader.cwd === 'string' ? rootHeader.cwd : null),
     started_at: timestampOf(rootHeader.createdAt), ended_at: endedAt, git_branch: null,
     version: String(rootMember.version), message_count: count, countMode: 'total',
     jsonl_path: unit.key, source: name,
   });
-  yield* records;
-  yield* messages;
+  for (const batch of batches) {
+    yield { kind: 'source', provider: name, session_id: sessionId, member: batch.member, path: batch.path, replace: true };
+    yield* batch.records;
+  }
   const maxMtime = Math.max(...snapshots.map(entry => entry.snapshot.mtimeMs));
   return `${maxMtime}:${totalLines}:${CURSOR_TAG}:${treeSignature(snapshots)}`;
 }

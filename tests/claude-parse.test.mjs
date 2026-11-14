@@ -153,8 +153,9 @@ test('claude parse() resumes from a cursor, skipping already-indexed lines', () 
   const path = writeFixture();
   // Cursor with 6 lines already processed → nothing new to parse.
   const { values } = drain(parse({ key: path, sessionId: 'sid-x', project: 'quiet-zero' }, '0:6'));
-  // Only the (empty-chunk) session record, with message_count 0.
-  assert.deepEqual(values.filter(r => r.kind !== 'session'), []);
+  // Only the source declaration and the (empty-chunk) session record, with message_count 0.
+  assert.deepEqual(values.filter(r => r.kind !== 'session' && r.kind !== 'source'), []);
+  assert.deepEqual(values[0], { kind: 'source', provider: 'claude', session_id: 'sid-x', member: '', path, replace: false });
   assert.equal(values.find(r => r.kind === 'session').message_count, 0);
   assert.equal(values.find(r => r.kind === 'session').title, 'My Session');
 });
@@ -289,7 +290,7 @@ test('claude discovery notices an append even when mtime is unchanged', () => {
   assert.deepEqual(provider.discover({ lastCursor: () => cursor }).map(found => found.key), [transcript]);
 });
 
-test('claude discovery emits a tombstone for a deleted indexed transcript', () => {
+test('claude discovery emits a missing unit for a deleted known source', () => {
   const root = makeTempDir('trajex-claude-retract-');
   const projectDir = join(root, 'projects', '-proj');
   const path = join(projectDir, 'sid-deleted.jsonl');
@@ -299,14 +300,14 @@ test('claude discovery emits a tombstone for a deleted indexed transcript', () =
   const [indexed] = provider.discover({ lastCursor: () => null });
   rmSync(path);
 
-  const [tombstone] = provider.discover({
+  const [missing] = provider.discover({
     lastCursor: () => null,
     changedPaths: [path],
-    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'claude' }],
+    knownSources: () => [{ path, sessionId: indexed.sessionId, member: '', status: 'present' }],
   });
-  assert.equal(tombstone.meta.kind, 'claude-tombstone');
-  assert.equal(tombstone.sessionId, indexed.sessionId);
-  assert.deepEqual(tombstone.retractSessionIds, [indexed.sessionId]);
+  assert.equal(missing.missing, true);
+  assert.equal(missing.key, path);
+  assert.equal(missing.sessionId, indexed.sessionId);
 });
 
 test('claude discovery keeps the last snapshot when its projects root is missing', () => {
@@ -322,7 +323,7 @@ test('claude discovery keeps the last snapshot when its projects root is missing
   assert.deepEqual(provider.discover({
     lastCursor: () => null,
     changedPaths: [path],
-    indexedSessions: () => [{ sessionId: indexed.sessionId, jsonlPath: path, source: 'claude' }],
+    knownSources: () => [{ path, sessionId: indexed.sessionId, member: '', status: 'present' }],
   }), []);
 });
 

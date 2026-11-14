@@ -40,8 +40,8 @@ import type {
 } from './types.ts';
 
 export const name = 'codex';
-// v1.2：读取 Codex 压缩的 `.jsonl.zst`，并把长会话的分段合并为一个会话；一次性重放旧投影。
-export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v1.2__';
+// v2：来源清单（ADR-0014），读取 `.jsonl.zst` 并合并分段；一次性重放旧投影以声明精确来源。
+export const CODEX_CANONICAL_TRANSCRIPT_MARKER = '__codex_canonical_transcript_v2__';
 const CODEX_TRANSCRIPT_DIRS = ['sessions', 'archived_sessions'] as const;
 
 const HIDDEN_CONTEXT_ENVELOPE_RE = /^\s*<(environment_context|codex_internal_context)\b[^>]*>[\s\S]*<\/\1>\s*$/;
@@ -201,14 +201,15 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     // archived_sessions 是可选目录：从未存在且没有索引过其中的会话时不算来源缺失；
     // 否则与 sessions 一样，不可读时保留上次快照（ADR-0004）。
     ...discoverCodexJsonlFiles(archivedSessionsDir, (issue) => {
-      const indexedHere = (ctx.indexedSessions?.() ?? [])
-        .some(session => pathWithin(normalize(archivedSessionsDir), normalize(session.jsonlPath)));
+      const indexedHere = (ctx.knownSources?.() ?? [])
+        .some(source => pathWithin(normalize(archivedSessionsDir), normalize(source.path)));
       if (!existsSync(archivedSessionsDir) && !indexedHere) return;
       inventoryComplete = false;
       ctx.reportUnavailableRoot?.(issue);
     }),
   ];
   const currentFiles = new Set(discoveredFiles.map(file => normalize(file.path)));
+  const changedThreadKeys = new Set([...changedFiles].map(threadKey));
   // 一个 thread 的所有分段合成一个单元；分开索引时各分段会互相覆盖同一个会话。
   const threads = new Map<string, string[]>();
   for (const file of discoveredFiles) {
@@ -219,7 +220,7 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
   const units = [...threads.values()].flatMap((paths) => {
     const members = threadMembers(paths);
     const key = members[0]!;
-    const fileChanged = paths.some(path => changedFiles.has(path));
+    const fileChanged = paths.some(path => changedFiles.has(path)) || changedThreadKeys.has(threadKey(key));
     if (ctx.changedPaths !== undefined && !sessionIndexChanged && !fileChanged) return [];
     if (members.some(isCompressed) && zstdDecoder() === null) { warnZstdUnavailable(); return []; }
     let meta: any = null;
@@ -256,20 +257,18 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
     }];
   });
   if (!inventoryComplete) return units;
-  const tombstones = (ctx.indexedSessions?.() ?? [])
-    .filter(session => {
-      const path = normalize(session.jsonlPath);
-      if (!codexTranscriptDirs(rootDir).some((dir) => pathWithin(normalize(dir), path)) || currentFiles.has(path)) return false;
+  // 已知但不再存在的 rollout 报告为缺失；若同一 thread 仍有 rollout 在磁盘上（例如已归档或
+  // 压缩为 `.jsonl.zst`，哪怕新文件还在写入而本轮暂未重放），绝不把旧路径标为 missing（ADR-0014）。
+  const missing = (ctx.knownSources?.() ?? [])
+    .filter(source => {
+      const path = normalize(source.path);
+      if (source.status !== 'present' || currentFiles.has(path) || threads.has(threadKey(path))) return false;
+      if (!codexTranscriptDirs(rootDir).some((dir) => pathWithin(normalize(dir), path))) return false;
       return ctx.changedPaths === undefined || changedPathCovers(changedScopes, path);
     })
-    .map(session => ({
-      key: normalize(session.jsonlPath),
-      sessionId: session.sessionId,
-      retractSessionIds: [session.sessionId],
-      meta: { kind: 'codex-tombstone' as const },
-    }));
+    .map(source => ({ key: normalize(source.path), sessionId: source.sessionId, missing: true as const }));
 
-  return [...units, ...tombstones];
+  return [...units, ...missing];
 }
 
 /**
@@ -277,7 +276,6 @@ function discoverAt(rootDir: string, ctx: DiscoverContext): IndexUnit[] {
  * event_msg，再处理 response_item，才能双向去重这两种可能乱序的消息镜像。
  */
 export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRecord, Cursor> {
-  if ((unit.meta as { kind?: string } | undefined)?.kind === 'codex-tombstone') return '0:0';
   // 分段按顺序连续读取，行号跨分段连续编号：单文件 thread 的消息 id 与以前完全一致。
   const members = (unit.meta as { members?: string[] } | undefined)?.members ?? [unit.key];
   const snapshots: Array<{ path: string; snapshot: FileSnapshot }> = [];
@@ -318,7 +316,7 @@ export function* parse(unit: IndexUnit, _cursor: Cursor): Generator<TranscriptRe
   const project = projectSlugFromPath(normalizeObservedCwd(meta.cwd));
   const lineUuid = (n: number): string => codexLineUuid(threadRawId, n) as string;
 
-  const out: TranscriptRecord[] = [{ kind: 'delete-session', sessionId }];
+  const out: TranscriptRecord[] = [{ kind: 'source', provider: name, session_id: sessionId, member: '', path: unit.key, replace: true }];
   const msgByUuid = new Map<string, MessageRecord>();
   const indexedMeta = unit.meta as { indexedTitle?: string; indexedUpdatedAt?: string | null } | undefined;
   const initialTimestamp = normalizeTranscriptTimestamp(meta.timestamp || metaRecord.obj.timestamp);

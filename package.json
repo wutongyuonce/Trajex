@@ -1,6 +1,6 @@
 {
   "name": "trajex",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Explicit memory infrastructure for coding agents — a queryable SQLite evidence layer over local Claude Code, Codex, Pi, and DeepSeek Harness history, plus human-approved durable memory.",

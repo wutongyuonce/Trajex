@@ -7,7 +7,8 @@ import { computed, ref, shallowRef, watch, nextTick, onMounted, onUnmounted } fr
 import { useVirtualizer } from '@tanstack/vue-virtual';
 import { useRouter } from 'vue-router';
 import { state } from '../store.js';
-import { highlightPlain, escapeHTML, formatProjectLabel, fmtListTime, fmtRelative } from '../utils.js';
+import { highlightPlain, escapeHTML, formatProjectLabel, fmtListTime } from '../utils.js';
+import { sourceColor } from '../source-catalog.mjs';
 import { t } from '../i18n.js';
 
 defineOptions({ name: 'SessionList' });
@@ -142,36 +143,17 @@ function timeLabel(session) {
   return fmtListTime(ts);
 }
 
-function lastActiveLabel(session) {
-  const ts = new Date(session.ended_at || session.started_at || 0).getTime();
-  return fmtListTime(ts);
-}
-
-function createdLabel(session) {
-  const ts = new Date(session.started_at || 0).getTime();
-  return fmtRelative(ts);
-}
-
 function openSession(session) {
   router.push({ name: 'SessionDetail', params: { id: session.id } });
 }
 
 function trajexStyle(session) {
-  const created = new Date(session.started_at || 0).getTime();
-  const days = Math.max(0, (Date.now() - created) / 86400000);
-  const ratio = Math.min(1, Math.log(1 + days) / Math.log(1 + 365));
-
-  let color;
-  if (days < 7) color = '#a855f7';
-  else if (days < 30) color = '#6366f1';
-  else if (days < 90) color = '#64748b';
-  else color = '#475569';
-
-  const glow = days < 7 ? `0 0 4px ${color}` : 'none';
+  const color = sourceColor(session.source, state.sources);
+  const activeAt = new Date(session.ended_at || session.started_at || 0).getTime();
+  const days = Math.max(0, (Date.now() - activeAt) / 86400000);
   return {
-    height: `${Math.round(20 + ratio * 14)}px`,
     background: color,
-    boxShadow: glow,
+    boxShadow: days < 7 ? `0 0 6px ${color}` : 'none',
   };
 }
 </script>
@@ -225,7 +207,7 @@ function trajexStyle(session) {
         <div v-for="item in virtualRows" :key="item.key" :data-index="item.index"
           class="virtual-row" :style="{ transform: `translateY(${item.start}px)` }">
           <template v-if="rowAt(item.index)">
-            <div :class="['srow', { noise: item.index > totals.normal, cursor: state.cursorId === rowAt(item.index).id }]"
+            <div :class="['srow', { noise: item.index > totals.normal }]"
               :data-session-id="rowAt(item.index).id" @click="openSession(rowAt(item.index))">
               <div v-if="item.index < totals.normal" class="srow-trajex" :style="trajexStyle(rowAt(item.index))"></div>
               <div class="srow-body">
@@ -302,22 +284,11 @@ function trajexStyle(session) {
   top: 50%;
   transform: translateY(-50%);
   width: 3px;
+  height: 28px;
   border-radius: 0 2px 2px 0;
 }
 .srow:hover {
   background: rgba(255, 255, 255, 0.025);
-}
-.srow.cursor {
-  background: var(--surface);
-}
-.srow.cursor::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--muted-2);
 }
 
 .srow-body {

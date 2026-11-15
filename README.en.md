@@ -22,10 +22,6 @@ Parses JSONL history from different providers — Codex, Claude Code, Pi — int
 * Built on the **CodeAct agent design paradigm**, with a programmable JS Query API that lets agents make **“writing executable code”** their core mode of action
 * Ships with an Electron + Vue desktop app that turns the same index into a readable session timeline for humans to browse
 
-## Acknowledgements
-
-Trajex is derived from [tommy0103/obelisk](https://github.com/tommy0103/obelisk), based on the upstream `07f975d` snapshot dated 2026-07-22. In the future, Trajex may sync subsequent changes from [obelisk](https://github.com/tommy0103/obelisk) where doing so preserves existing functionality and compatibility.
-
 ## Two Sides of One Index
 
 Trajex has two sides sharing the same SQLite index:
@@ -351,6 +347,10 @@ docs/                         # Docs index, architecture overview, ADRs (0001–
 - `packages/core/dist/` is produced by `npm run build:core`. It is the compiled internal `@trajex/core` workspace: JavaScript, type declarations, and `schema.sql`.
 - `packages/cli/dist/` is produced by `npm run build:cli`. It is the publishable `@trajex-apps/cli` payload: a thin command shell, readable compiled Core, and `schema.sql`.
 - `packages/cli/dist/` is generated — do not edit manually. The Electron app imports `packages/core/src/` directly so that electron-vite can bundle Core.
+
+## Acknowledgements
+
+Trajex is derived from [tommy0103/obelisk](https://github.com/tommy0103/obelisk), based on the upstream `07f975d` snapshot dated 2026-07-22. In the future, Trajex may sync subsequent changes from [obelisk](https://github.com/tommy0103/obelisk) selectively where doing so preserves existing functionality and compatibility.
 
 ## License and copyright
 

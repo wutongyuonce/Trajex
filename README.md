@@ -341,7 +341,7 @@ docs/                         # 文档索引、架构总览、ADR（0001–0013�
 
 ## Acknowledgements
 
-Trajex 源自 [tommy0103/obelisk](https://github.com/tommy0103/obelisk)，基于上游 `07f975d`（2026-07-22）快照发展而来。未来 Trajex 会在不破坏现有功能与兼容性的前提下，同步 [obelisk](https://github.com/tommy0103/obelisk) 的后续改动。
+Trajex 源自 [tommy0103/obelisk](https://github.com/tommy0103/obelisk)，基于上游 `07f975d`（2026-07-22）快照发展而来。未来 Trajex 会在不破坏现有功能与兼容性的前提下，选择性同步 [obelisk](https://github.com/tommy0103/obelisk) 的后续改动。
 
 ## 许可证与版权
 
